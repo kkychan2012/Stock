@@ -1,0 +1,1469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stock Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #f1f5f9;
+      --surface:   #ffffff;
+      --border:    #e2e8f0;
+      --text:      #1e293b;
+      --muted:     #64748b;
+      --accent:    #2563eb;
+      --accent-h:  #1d4ed8;
+      --green:     #15803d;
+      --green-bg:  #dcfce7;
+      --red:       #dc2626;
+      --red-bg:    #fee2e2;
+      --neutral:   #f8fafc;
+      --header-h:  54px;
+      --tabs-h:    42px;
+    }
+
+    html, body {
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 13px; color: var(--text); background: var(--bg);
+    }
+
+    /* ── Header ── */
+    header {
+      position: fixed; top: 0; left: 0; right: 0;
+      height: var(--header-h); background: #0f172a; color: #fff;
+      display: flex; align-items: center; padding: 0 20px; gap: 14px;
+      z-index: 100; box-shadow: 0 1px 4px rgba(0,0,0,.4);
+    }
+    header h1 { font-size: 17px; font-weight: 700; letter-spacing: -.3px; }
+    header .sep { width: 1px; height: 20px; background: #334155; }
+    header .subtitle { font-size: 12px; color: #94a3b8; flex: 1; }
+    #last-updated { font-size: 11px; color: #64748b; white-space: nowrap; }
+
+    .btn {
+      padding: 6px 14px; border: none; border-radius: 6px;
+      cursor: pointer; font-size: 13px; font-weight: 500;
+      transition: background .15s, opacity .15s;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-h); }
+    .btn-fetch { background: #16a34a; color: #fff; }
+    .btn-fetch:hover { background: #15803d; }
+    .btn-danger { background: var(--red); color: #fff; }
+    .btn-danger:hover { background: #b91c1c; }
+    .btn-ghost {
+      background: transparent; color: var(--muted);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover { background: var(--neutral); color: var(--text); }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ── Tab nav ── */
+    nav.tabs {
+      position: fixed; top: var(--header-h); left: 0; right: 0;
+      height: var(--tabs-h); background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: stretch; padding: 0 20px; gap: 2px;
+      z-index: 99;
+    }
+    .tab-btn {
+      padding: 0 18px; background: none; border: none;
+      border-bottom: 3px solid transparent;
+      color: var(--muted); font-size: 13px; font-weight: 500;
+      cursor: pointer; transition: color .15s, border-color .15s;
+      white-space: nowrap;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    /* ── Main ── */
+    main { margin-top: calc(var(--header-h) + var(--tabs-h)); padding: 18px 20px; }
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
+
+    /* ── Summary cards ── */
+    .summary-row { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 11px 16px; min-width: 120px;
+    }
+    .card-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 5px; }
+    .card-value { font-size: 19px; font-weight: 700; }
+    .card-value.green { color: var(--green); }
+    .card-value.red   { color: var(--red); }
+
+    /* ── Table ── */
+    .table-wrap {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; overflow: auto;
+    }
+    table { width: 100%; border-collapse: collapse; white-space: nowrap; }
+    thead th {
+      background: var(--neutral); padding: 9px 12px; text-align: right;
+      font-size: 11px; font-weight: 600; color: var(--muted);
+      text-transform: uppercase; letter-spacing: .5px;
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; user-select: none;
+    }
+    thead th.left { text-align: left; }
+    tbody td {
+      padding: 8px 12px; border-bottom: 1px solid var(--border);
+      text-align: right; vertical-align: middle;
+    }
+    tbody td.left { text-align: left; }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: var(--neutral); }
+    .ticker-cell { font-weight: 700; color: var(--accent); font-size: 13px; }
+    .name-cell { color: var(--muted); max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+    .green { color: var(--green); }
+    .red   { color: var(--red); }
+    .dim   { color: #94a3b8; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .pill.green { background: var(--green-bg); color: var(--green); }
+    .pill.red   { background: var(--red-bg);   color: var(--red); }
+
+    /* ── Controls (signals) ── */
+    .controls { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+    .seg-group { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+    .seg-btn {
+      padding: 6px 16px; background: var(--surface); border: none;
+      border-right: 1px solid var(--border);
+      font-size: 13px; font-weight: 500; cursor: pointer;
+      color: var(--muted); transition: background .12s, color .12s;
+    }
+    .seg-btn:last-child { border-right: none; }
+    .seg-btn.active { background: var(--accent); color: #fff; }
+    .seg-btn:hover:not(.active) { background: var(--neutral); color: var(--text); }
+    .ctrl-label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+    select {
+      padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 12px; background: var(--surface); cursor: pointer; color: var(--text);
+    }
+    input[type=checkbox] { cursor: pointer; }
+
+    /* ── State messages ── */
+    .state-msg { padding: 36px; text-align: center; color: var(--muted); font-size: 13px; }
+    .spinner {
+      display: inline-block; width: 16px; height: 16px;
+      border: 2px solid var(--border); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin .6s linear infinite;
+      vertical-align: middle; margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Tickers tab toolbar ── */
+    .toolbar {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 14px; flex-wrap: wrap;
+    }
+    .toolbar-group { display: flex; gap: 6px; align-items: center; }
+    .ticker-add-input {
+      padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 13px; width: 120px; background: var(--surface); color: var(--text);
+    }
+    .ticker-add-input:focus { outline: none; border-color: var(--accent); }
+    .toolbar-sep { width: 1px; height: 28px; background: var(--border); margin: 0 4px; }
+    .file-btn-wrap { position: relative; overflow: hidden; }
+    .file-btn-wrap input[type=file] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; font-size: 0;
+    }
+
+    /* ── Delete row button ── */
+    .del-btn {
+      padding: 2px 8px; background: none; border: 1px solid var(--border);
+      border-radius: 4px; cursor: pointer; color: var(--muted); font-size: 12px;
+      transition: background .12s, color .12s;
+    }
+    .del-btn:hover { background: var(--red-bg); color: var(--red); border-color: var(--red); }
+
+    /* ── Modal overlay ── */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,.5); z-index: 200;
+      align-items: center; justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--surface); border-radius: 10px;
+      width: 520px; max-width: 95vw;
+      box-shadow: 0 8px 32px rgba(0,0,0,.25);
+      display: flex; flex-direction: column; max-height: 90vh;
+    }
+    .modal-header {
+      padding: 16px 20px 12px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .modal-title { font-size: 15px; font-weight: 700; }
+    .modal-close {
+      background: none; border: none; cursor: pointer;
+      font-size: 18px; color: var(--muted); line-height: 1;
+    }
+    .modal-close:hover { color: var(--text); }
+    .modal-body { padding: 18px 20px; overflow-y: auto; flex: 1; }
+    .modal-footer {
+      padding: 12px 20px; border-top: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .field-label {
+      font-size: 11px; font-weight: 600; color: var(--muted);
+      text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px;
+    }
+
+    /* ── Fetch log ── */
+    .fetch-log {
+      font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+      font-size: 12px; line-height: 1.7;
+      background: #0f172a; color: #94a3b8;
+      border-radius: 6px; padding: 10px 12px;
+      min-height: 80px; max-height: 220px;
+      overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+      margin-top: 10px;
+    }
+    .log-ok    { color: #4ade80; }
+    .log-skip  { color: #fbbf24; }
+    .log-error { color: #f87171; }
+    .log-info  { color: #94a3b8; }
+
+    /* ── Progress bar ── */
+    .progress-wrap {
+      height: 6px; background: var(--border); border-radius: 3px;
+      margin: 8px 0 4px; overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%; background: var(--accent); border-radius: 3px;
+      transition: width .3s ease; width: 0%;
+    }
+    .fetch-status-line { font-size: 12px; color: var(--muted); min-height: 18px; }
+    #fetch-footer-msg  { font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+
+<!-- ════════════ HEADER ════════════ -->
+<header>
+  <h1>Stock Dashboard</h1>
+  <span class="sep"></span>
+  <span class="subtitle">Yahoo Finance · SQLite</span>
+  <span id="last-updated"></span>
+  <button class="btn btn-fetch"   onclick="openFetchModal()">&#8659; Fetch Data</button>
+  <button class="btn btn-primary" onclick="refreshCurrent()">&#8635; Refresh</button>
+</header>
+
+<!-- ════════════ TABS ════════════ -->
+<nav class="tabs">
+  <button class="tab-btn active" onclick="showTab('holdings')">Holdings</button>
+  <button class="tab-btn"        onclick="showTab('signals')">Signals</button>
+  <button class="tab-btn"        onclick="showTab('sold')">Sold</button>
+  <button class="tab-btn"        onclick="showTab('monitor')">Monitor</button>
+  <button class="tab-btn"        onclick="showTab('tickers')">Ticker List</button>
+</nav>
+
+<!-- ════════════ MAIN ════════════ -->
+<main>
+
+  <!-- ── HOLDINGS ── -->
+  <div id="tab-holdings" class="tab-pane active">
+    <div class="summary-row" id="holdings-cards"></div>
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="openRecordModal('holdings')">+ Add</button>
+      <span class="file-btn-wrap">
+        <button class="btn btn-ghost">&#8679; Upload CSV / XLSX</button>
+        <input type="file" accept=".csv,.xlsx" onchange="uploadRecords('holdings', this)">
+      </span>
+      <a href="/api/holdings/download" download="holdings.csv">
+        <button class="btn btn-ghost">&#8681; Download CSV</button>
+      </a>
+      <span id="holdings-upload-status" style="font-size:12px;min-height:18px"></span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th class="left">Ticker</th><th class="left">Name</th>
+          <th>Buy Date</th><th>Avg Buy</th><th>Qty</th>
+          <th>Price</th><th>Day %</th><th>P/L $</th><th>P/L %</th>
+          <th>MA10</th><th>MA30</th><th>MA50</th><th>MA200</th>
+          <th>High 30D</th><th>Low 30D</th><th>Action</th>
+        </tr></thead>
+        <tbody id="holdings-body">
+          <tr><td colspan="16" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── SIGNALS ── -->
+  <div id="tab-signals" class="tab-pane">
+    <div class="controls">
+      <div class="seg-group">
+        <button class="seg-btn active" id="btn-ma200"  onclick="setSignalType('ma200')">Price &gt; MA200</button>
+        <button class="seg-btn"        id="btn-ma1030" onclick="setSignalType('ma1030')">MA10 &gt; MA30</button>
+      </div>
+      <label class="ctrl-label">From:
+        <input type="text" id="sig-from" placeholder="YYYY-MM-DD" maxlength="10"
+               onchange="loadSignals()"
+               style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;
+                      font-size:12px;background:var(--surface);color:var(--text);width:110px;
+                      font-family:monospace">
+      </label>
+      <label class="ctrl-label">To:
+        <input type="text" id="sig-to" placeholder="YYYY-MM-DD" maxlength="10"
+               onchange="loadSignals()"
+               style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;
+                      font-size:12px;background:var(--surface);color:var(--text);width:110px;
+                      font-family:monospace">
+      </label>
+      <label class="ctrl-label">
+        <input type="checkbox" id="sig-latest" onchange="loadSignals()"> Latest per ticker only
+      </label>
+      <label class="ctrl-label" style="margin-left:4px">
+        Fresh breakout — not triggered in prev
+        <input id="sig-lookback" type="number" min="0" max="365" value="0"
+               style="width:52px;padding:4px 6px;border:1px solid var(--border);
+                      border-radius:6px;font-size:12px;text-align:center"
+               onchange="loadSignals()">
+        days
+        <span id="sig-lookback-badge" style="display:none"
+              class="pill green" title="Fresh breakout filter active"></span>
+      </label>
+    </div>
+    <!-- Ticker filter row -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+      <label class="ctrl-label" style="white-space:nowrap">Filter tickers:</label>
+      <input id="sig-ticker-filter" type="text" placeholder="e.g. AAPL MSFT BRK-B  (space or comma separated)"
+             oninput="applySignalTickerFilter()"
+             style="flex:1;min-width:200px;max-width:500px;padding:5px 10px;
+                    border:1px solid var(--border);border-radius:6px;font-size:12px;
+                    background:var(--surface);color:var(--text)">
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px"
+              onclick="document.getElementById('sig-ticker-filter').value='';applySignalTickerFilter()">Clear</button>
+      <span id="sig-filter-count" style="font-size:11px;color:var(--muted)"></span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th class="left">Ticker</th><th>Signal Date</th><th>Signal Close</th>
+          <th>Current Price</th><th>Day %</th><th>MA10</th><th>MA30</th>
+          <th>MA50</th><th>MA200</th><th>High 30D</th><th>Low 30D</th><th>Monitor</th>
+        </tr></thead>
+        <tbody id="signals-body">
+          <tr><td colspan="12" class="state-msg">Choose a signal type above.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── SOLD ── -->
+  <div id="tab-sold" class="tab-pane">
+    <div class="summary-row" id="sold-cards"></div>
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="openRecordModal('sold')">+ Add</button>
+      <span class="file-btn-wrap">
+        <button class="btn btn-ghost">&#8679; Upload CSV / XLSX</button>
+        <input type="file" accept=".csv,.xlsx" onchange="uploadRecords('sold', this)">
+      </span>
+      <a href="/api/sold/download" download="sold.csv">
+        <button class="btn btn-ghost">&#8681; Download CSV</button>
+      </a>
+      <span id="sold-upload-status" style="font-size:12px;min-height:18px"></span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th class="left">Ticker</th><th class="left">Name</th>
+          <th>Buy Date</th><th>Avg Buy</th><th>Qty</th>
+          <th>Sell Date</th><th>Sell Price</th><th>P/L $</th>
+          <th>P/L %</th><th class="left">Notes</th><th>Action</th>
+        </tr></thead>
+        <tbody id="sold-body">
+          <tr><td colspan="11" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── MONITOR ── -->
+  <div id="tab-monitor" class="tab-pane">
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="openRecordModal('monitor')">+ Add</button>
+      <span class="file-btn-wrap">
+        <button class="btn btn-ghost">&#8679; Upload CSV / XLSX</button>
+        <input type="file" accept=".csv,.xlsx" onchange="uploadRecords('monitor', this)">
+      </span>
+      <a href="/api/monitor/download" download="monitor_list.csv">
+        <button class="btn btn-ghost">&#8681; Download CSV</button>
+      </a>
+      <span id="monitor-upload-status" style="font-size:12px;min-height:18px"></span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th class="left">Ticker</th><th class="left">Name</th>
+          <th class="left">Reason</th><th class="left">Comment</th>
+          <th>Signal Date</th><th>Signal Price</th><th>Since Signal</th>
+          <th>Current Price</th><th>Day %</th>
+          <th>MA10</th><th>MA30</th><th>MA50</th><th>MA200</th>
+          <th>High 30D</th><th>Low 30D</th><th>Added Date</th><th>Action</th>
+        </tr></thead>
+        <tbody id="monitor-body">
+          <tr><td colspan="17" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── TICKER LIST ── -->
+  <div id="tab-tickers" class="tab-pane">
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <!-- Add single ticker -->
+      <div class="toolbar-group">
+        <input id="ticker-add-input" class="ticker-add-input" type="text"
+               placeholder="e.g. AAPL" maxlength="20"
+               onkeydown="if(event.key==='Enter') addTicker()">
+        <button class="btn btn-primary" onclick="addTicker()">+ Add</button>
+      </div>
+
+      <span class="toolbar-sep"></span>
+
+      <!-- Upload CSV / XLSX -->
+      <div class="toolbar-group">
+        <span class="file-btn-wrap">
+          <button class="btn btn-ghost">&#8679; Upload CSV / XLSX</button>
+          <input type="file" id="ticker-upload-input" accept=".csv,.xlsx"
+                 onchange="uploadTickerFile(this)">
+        </span>
+      </div>
+
+      <span class="toolbar-sep"></span>
+
+      <!-- Download + Clear -->
+      <div class="toolbar-group">
+        <a href="/api/extraction/download" download="tickers.csv">
+          <button class="btn btn-ghost">&#8681; Download CSV</button>
+        </a>
+        <button class="btn btn-danger" onclick="clearAllTickers()">&#128465; Clear All</button>
+      </div>
+
+      <!-- Count badge on right -->
+      <span style="flex:1"></span>
+      <span id="ticker-count" style="font-size:12px;color:var(--muted)"></span>
+    </div>
+
+    <!-- Upload status -->
+    <div id="upload-status" style="margin-bottom:10px;font-size:12px;min-height:18px"></div>
+
+    <!-- Table -->
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th class="left">Ticker</th>
+          <th class="left">Notes</th>
+          <th>Added</th>
+          <th>Action</th>
+        </tr></thead>
+        <tbody id="tickers-body">
+          <tr><td colspan="4" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</main>
+
+<!-- ════════════ RECORD EDIT MODAL ════════════ -->
+<div id="record-modal" class="modal-overlay" onclick="handleRecordOverlayClick(event)">
+  <div class="modal" style="width:460px">
+    <div class="modal-header">
+      <span id="record-modal-title" class="modal-title">Add Holding</span>
+      <button class="modal-close" onclick="closeRecordModal()">&#10005;</button>
+    </div>
+    <div class="modal-body" style="display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center">
+
+      <label style="font-size:12px;color:var(--muted);text-align:right">Ticker *</label>
+      <input id="rf-ticker" class="ticker-add-input" style="width:100%;font-size:13px"
+             placeholder="e.g. AAPL" maxlength="20">
+
+      <label style="font-size:12px;color:var(--muted);text-align:right">Stock Name</label>
+      <input id="rf-stock-name" class="ticker-add-input" style="width:100%;font-size:13px"
+             placeholder="e.g. Apple Inc.">
+
+      <label style="font-size:12px;color:var(--muted);text-align:right">Avg Buy Price *</label>
+      <input id="rf-avg-buy-price" class="ticker-add-input" type="number" step="0.0001" min="0"
+             style="width:100%;font-size:13px" placeholder="0.00">
+
+      <label style="font-size:12px;color:var(--muted);text-align:right">Quantity *</label>
+      <input id="rf-qty" class="ticker-add-input" type="number" step="1" min="0"
+             style="width:100%;font-size:13px" placeholder="0">
+
+      <label style="font-size:12px;color:var(--muted);text-align:right">Buy Date</label>
+      <input id="rf-buy-date" class="ticker-add-input" style="width:100%;font-size:13px;font-family:monospace"
+             placeholder="YYYY-MM-DD" maxlength="10" onblur="normaliseDateInput(this)">
+
+      <!-- Sold-only fields -->
+      <label id="rf-sell-price-label" style="font-size:12px;color:var(--muted);text-align:right">Sell Price *</label>
+      <input id="rf-sell-price" class="ticker-add-input" type="number" step="0.0001" min="0"
+             style="width:100%;font-size:13px" placeholder="0.00">
+
+      <label id="rf-sell-date-label" style="font-size:12px;color:var(--muted);text-align:right">Sell Date *</label>
+      <input id="rf-sell-date" class="ticker-add-input" style="width:100%;font-size:13px;font-family:monospace"
+             placeholder="YYYY-MM-DD" maxlength="10" onblur="normaliseDateInput(this)">
+
+      <!-- Holdings/Sold notes -->
+      <label id="rf-notes-label" style="font-size:12px;color:var(--muted);text-align:right">Notes</label>
+      <input id="rf-notes" class="ticker-add-input" style="width:100%;font-size:13px"
+             placeholder="Optional">
+
+      <!-- Monitor-only fields -->
+      <label id="rf-reason-label" style="font-size:12px;color:var(--muted);text-align:right">Reason</label>
+      <input id="rf-reason" class="ticker-add-input" style="width:100%;font-size:13px"
+             placeholder="Why watching this stock?">
+
+      <label id="rf-comment-label" style="font-size:12px;color:var(--muted);text-align:right">Comment</label>
+      <textarea id="rf-comment" class="ticker-add-input"
+                style="width:100%;font-size:13px;resize:vertical;min-height:56px;font-family:inherit"
+                placeholder="Free-text notes…"></textarea>
+
+      <label id="rf-signal-date-label" style="font-size:12px;color:var(--muted);text-align:right">Signal Date</label>
+      <input id="rf-signal-date" class="ticker-add-input" style="width:100%;font-size:13px;font-family:monospace"
+             placeholder="YYYY-MM-DD" maxlength="10" onblur="normaliseDateInput(this)">
+
+      <label id="rf-signal-price-label" style="font-size:12px;color:var(--muted);text-align:right">Signal Price</label>
+      <input id="rf-signal-price" class="ticker-add-input" type="number" step="0.0001" min="0"
+             style="width:100%;font-size:13px" placeholder="0.00">
+    </div>
+    <div class="modal-footer">
+      <button id="record-save-btn" class="btn btn-primary" onclick="saveRecord()">Save</button>
+      <button class="btn btn-ghost" onclick="closeRecordModal()">Cancel</button>
+      <span id="record-modal-error" style="font-size:12px;color:var(--red);flex:1"></span>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ SELL MODAL ════════════ -->
+<div id="sell-modal" class="modal-overlay" onclick="handleSellOverlayClick(event)">
+  <div class="modal" style="width:420px">
+    <div class="modal-header">
+      <span id="sell-modal-title" class="modal-title">Sell Holding</span>
+      <button class="modal-close" onclick="closeSellModal()">&#10005;</button>
+    </div>
+    <div class="modal-body" style="display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center">
+
+      <label style="font-size:12px;color:var(--muted);text-align:right">Avg Buy Price</label>
+      <span id="sell-info-avg" style="font-size:13px;font-weight:600"></span>
+
+      <label style="font-size:12px;color:var(--muted);text-align:right">Available Qty</label>
+      <span id="sell-info-qty" style="font-size:13px;font-weight:600"></span>
+
+      <div style="grid-column:1/-1;height:1px;background:var(--border);margin:4px 0"></div>
+
+      <label style="font-size:12px;color:var(--muted);text-align:right">Sell Qty *</label>
+      <input id="sell-qty" class="ticker-add-input" type="number" step="1" min="1"
+             style="width:100%;font-size:13px" placeholder="0"
+             oninput="updateSellPL()">
+
+      <label style="font-size:12px;color:var(--muted);text-align:right">Sell Price *</label>
+      <input id="sell-price" class="ticker-add-input" type="number" step="0.0001" min="0"
+             style="width:100%;font-size:13px" placeholder="0.00"
+             oninput="updateSellPL()">
+
+      <label style="font-size:12px;color:var(--muted);text-align:right">Sell Date</label>
+      <input id="sell-date" class="ticker-add-input" style="width:100%;font-size:13px;font-family:monospace"
+             placeholder="YYYY-MM-DD" maxlength="10" onblur="normaliseDateInput(this)">
+
+      <label style="font-size:12px;color:var(--muted);text-align:right">Notes</label>
+      <input id="sell-notes" class="ticker-add-input" style="width:100%;font-size:13px"
+             placeholder="Optional">
+
+      <div style="grid-column:1/-1;height:1px;background:var(--border);margin:4px 0"></div>
+
+      <label style="font-size:12px;color:var(--muted);text-align:right">Est. P/L</label>
+      <span id="sell-pl-preview" style="font-size:13px;font-weight:700">—</span>
+
+    </div>
+    <div class="modal-footer">
+      <button id="sell-save-btn" class="btn btn-fetch" onclick="executeSell()">Sell</button>
+      <button class="btn btn-ghost" onclick="closeSellModal()">Cancel</button>
+      <span id="sell-modal-error" style="font-size:12px;color:var(--red);flex:1"></span>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ FETCH MODAL ════════════ -->
+<div id="fetch-modal" class="modal-overlay" onclick="handleOverlayClick(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">&#8659; Fetch Market Data</span>
+      <button class="modal-close" onclick="closeFetchModal()">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <div class="field-label">Tickers to fetch</div>
+      <div id="fetch-ticker-count" style="font-size:13px;margin-bottom:14px;color:var(--muted)">
+        Loading…
+      </div>
+
+      <div class="field-label" style="margin-bottom:6px">History period</div>
+      <select id="fetch-period" style="margin-bottom:18px">
+        <option value="1mo">1 month</option>
+        <option value="3mo">3 months</option>
+        <option value="6mo">6 months</option>
+        <option value="1y">1 year</option>
+        <option value="2y" selected>2 years (default)</option>
+      </select>
+
+      <div class="fetch-status-line" id="fetch-status-line"></div>
+      <div class="progress-wrap" id="fetch-progress-wrap" style="display:none">
+        <div class="progress-bar" id="fetch-progress-bar"></div>
+      </div>
+      <div class="fetch-log" id="fetch-log-area" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button id="fetch-btn" class="btn btn-fetch" onclick="startFetch()">&#8659; Fetch Now</button>
+      <button class="btn btn-ghost" onclick="closeFetchModal()">Close</button>
+      <span id="fetch-spinner" class="spinner" style="display:none"></span>
+      <span id="fetch-footer-msg"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════
+//  Date normalisation
+// ═══════════════════════════════════════
+function normaliseDateInput(el) {
+  const raw = el.value.trim();
+  if (!raw) return;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return; // already canonical
+
+  // D/M/YYYY, DD/MM/YYYY, D-M-YYYY, DD.MM.YYYY etc.
+  const sep = /^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})$/;
+  let m = raw.match(sep);
+  if (m) {
+    let [, a, b, y] = m;
+    if (y.length === 2) y = '20' + y;
+    // If first part > 12 it must be the day (DD/MM/YYYY)
+    // Otherwise default to DD/MM/YYYY (AU/UK locale)
+    const day   = a.padStart(2, '0');
+    const month = b.padStart(2, '0');
+    el.value = `${y}-${month}-${day}`;
+    el.style.borderColor = '';
+    return;
+  }
+  // YYYY/MM/DD
+  m = raw.match(/^(\d{4})[\/](\d{1,2})[\/](\d{1,2})$/);
+  if (m) {
+    const [, y, mo, d] = m;
+    el.value = `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;
+    el.style.borderColor = '';
+    return;
+  }
+  // Unrecognised — highlight so the user knows
+  el.style.borderColor = 'var(--red)';
+}
+
+// ═══════════════════════════════════════
+//  State
+// ═══════════════════════════════════════
+let currentTab        = 'holdings';
+let currentSignalType = 'ma200';
+let _pollTimer        = null;
+let _lastLogLen       = 0;
+let _fetchRunning     = false;
+
+const TABS = ['holdings', 'signals', 'sold', 'monitor', 'tickers'];
+
+// ═══════════════════════════════════════
+//  Formatting
+// ═══════════════════════════════════════
+const fmt    = (v, d = 2) => v == null ? null : Number(v).toFixed(d);
+const fmtInt = v           => v == null ? '—'  : Number(v).toLocaleString();
+const fmtDate = v          => v ? String(v).slice(0, 10) : '<span class="dim">—</span>';
+
+function fmtVal(v, prefix = '', d = 2) {
+  return v == null ? '<span class="dim">—</span>' : prefix + fmt(v, d);
+}
+function dayPctCell(v) {
+  if (v == null) return '<span class="dim">—</span>';
+  const n = Number(v), cls = n >= 0 ? 'green' : 'red', arr = n >= 0 ? '▲' : '▼';
+  return `<span class="${cls}">${arr} ${Math.abs(n).toFixed(2)}%</span>`;
+}
+function plCell(v) {
+  if (v == null) return '<span class="dim">—</span>';
+  const n = Number(v), cls = n >= 0 ? 'green' : 'red', sign = n >= 0 ? '+' : '';
+  return `<span class="${cls}">${sign}$${Math.abs(n).toFixed(2)}</span>`;
+}
+function pillCell(v) {
+  if (v == null) return '<span class="dim">—</span>';
+  const n = Number(v), cls = n >= 0 ? 'green' : 'red', sign = n >= 0 ? '+' : '';
+  return `<span class="pill ${cls}">${sign}${n.toFixed(2)}%</span>`;
+}
+
+// ═══════════════════════════════════════
+//  Tab switching
+// ═══════════════════════════════════════
+function showTab(name) {
+  TABS.forEach((t, i) => {
+    document.getElementById('tab-' + t).classList.toggle('active', t === name);
+    document.querySelectorAll('.tab-btn')[i].classList.toggle('active', t === name);
+  });
+  currentTab = name;
+  ({holdings: loadHoldings, signals: loadSignals, sold: loadSold,
+    monitor: loadMonitor, tickers: loadTickerList})[name]();
+}
+
+// ═══════════════════════════════════════
+//  API helpers
+// ═══════════════════════════════════════
+async function apiFetch(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw new Error(body.error || `${r.status} ${r.statusText}`);
+  }
+  return r.json();
+}
+function loading(id, cols) {
+  document.getElementById(id).innerHTML =
+    `<tr><td colspan="${cols}" class="state-msg"><span class="spinner"></span>Loading…</td></tr>`;
+}
+function empty(id, cols, msg = 'No records found.') {
+  document.getElementById(id).innerHTML =
+    `<tr><td colspan="${cols}" class="state-msg">${msg}</td></tr>`;
+}
+
+// ═══════════════════════════════════════
+//  Holdings
+// ═══════════════════════════════════════
+async function loadHoldings() {
+  loading('holdings-body', 15);
+  try { renderHoldings((await apiFetch('/api/holdings')).data); }
+  catch(e) { empty('holdings-body', 15, '⚠ ' + e.message); }
+}
+function renderHoldings(rows) {
+  let cost = 0, value = 0;
+  rows.forEach(r => {
+    if (r.avg_buy_price && r.qty) cost  += r.avg_buy_price * r.qty;
+    if (r.current_price && r.qty) value += r.current_price * r.qty;
+  });
+  const pl = value - cost, plPct = cost > 0 ? pl / cost * 100 : 0;
+  const plCls = pl >= 0 ? 'green' : 'red', sign = pl >= 0 ? '+' : '';
+  document.getElementById('holdings-cards').innerHTML = `
+    <div class="card"><div class="card-label">Holdings</div><div class="card-value">${rows.length}</div></div>
+    <div class="card"><div class="card-label">Total Cost</div><div class="card-value">$${cost.toFixed(0)}</div></div>
+    <div class="card"><div class="card-label">Market Value</div><div class="card-value">$${value.toFixed(0)}</div></div>
+    <div class="card"><div class="card-label">Unrealised P/L</div><div class="card-value ${plCls}">${sign}$${Math.abs(pl).toFixed(0)}</div></div>
+    <div class="card"><div class="card-label">P/L %</div><div class="card-value ${plCls}">${sign}${plPct.toFixed(2)}%</div></div>`;
+  if (!rows.length) { empty('holdings-body', 16, 'No holdings found. Click + Add or upload a CSV.'); return; }
+  document.getElementById('holdings-body').innerHTML = rows.map(r => `
+    <tr>
+      <td class="left ticker-cell">${r.ticker}</td>
+      <td class="left name-cell">${r.stock_name || '—'}</td>
+      <td>${fmtDate(r.buy_date)}</td>
+      <td>$${fmt(r.avg_buy_price)}</td><td>${fmtInt(r.qty)}</td>
+      <td><strong>$${fmt(r.current_price)}</strong></td>
+      <td>${dayPctCell(r.day_pct_change)}</td>
+      <td>${plCell(r.pl_value)}</td><td>${pillCell(r.pl_pct)}</td>
+      <td>${fmtVal(r.ma10)}</td><td>${fmtVal(r.ma30)}</td>
+      <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma200)}</td>
+      <td>${fmtVal(r.high_30d)}</td><td>${fmtVal(r.low_30d)}</td>
+      <td style="white-space:nowrap">
+        <button class="del-btn" style="color:var(--green);border-color:var(--green)"
+          onclick='openSellModal(${JSON.stringify(r)})'>Sell</button>
+        <button class="del-btn" style="color:var(--accent);border-color:var(--accent)"
+          onclick='openRecordModal("holdings",${JSON.stringify(r)})'>Edit</button>
+        <button class="del-btn" onclick='deleteRecord("holdings",${r.id})'>&#215;</button>
+      </td>
+    </tr>`).join('');
+}
+
+// ═══════════════════════════════════════
+//  Signals
+// ═══════════════════════════════════════
+// Monitor ticker set — loaded once per tab-visit, updated on add
+let _monitorTickers = new Set();
+let _lastSignalRows = [];
+
+async function _refreshMonitorSet() {
+  try {
+    const { tickers } = await apiFetch('/api/monitor/tickers');
+    _monitorTickers = new Set(tickers);
+  } catch { /* non-fatal */ }
+}
+
+function setSignalType(type) {
+  currentSignalType = type;
+  document.getElementById('btn-ma200').classList.toggle('active',  type === 'ma200');
+  document.getElementById('btn-ma1030').classList.toggle('active', type === 'ma1030');
+  loadSignals();
+}
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+async function loadSignals() {
+  const from     = document.getElementById('sig-from').value.trim();
+  const to       = document.getElementById('sig-to').value.trim();
+  if (!DATE_RE.test(from) || !DATE_RE.test(to)) return;
+
+  const latest   = document.getElementById('sig-latest').checked ? '&latest=1' : '';
+  const lookback = parseInt(document.getElementById('sig-lookback').value) || 0;
+  const ep       = currentSignalType === 'ma200' ? '/api/signals/ma200' : '/api/signals/ma1030';
+
+  document.getElementById('sig-lookback-badge').style.display =
+    lookback > 0 ? 'inline-block' : 'none';
+  document.getElementById('sig-lookback-badge').textContent =
+    lookback > 0 ? `prev ${lookback}d clean` : '';
+
+  const lookbackParam = lookback > 0 ? `&lookback=${lookback}` : '';
+  loading('signals-body', 12);
+  try {
+    await _refreshMonitorSet();
+    _lastSignalRows = (await apiFetch(`${ep}?from=${from}&to=${to}${latest}${lookbackParam}`)).data;
+    applySignalTickerFilter();
+  } catch(e) { empty('signals-body', 12, '⚠ ' + e.message); }
+}
+
+function applySignalTickerFilter() {
+  const raw = document.getElementById('sig-ticker-filter').value;
+  const filterSet = new Set(
+    raw.split(/[\s,]+/).map(t => t.trim().toUpperCase()).filter(Boolean)
+  );
+  const rows = filterSet.size > 0
+    ? _lastSignalRows.filter(r => filterSet.has(r.ticker.toUpperCase()))
+    : _lastSignalRows;
+  const countEl = document.getElementById('sig-filter-count');
+  countEl.textContent = filterSet.size > 0
+    ? `${rows.length} of ${_lastSignalRows.length} shown`
+    : `${_lastSignalRows.length} results`;
+  renderSignals(rows);
+}
+
+function renderSignals(rows) {
+  if (!rows.length) { empty('signals-body', 12, 'No signals match the current filters.'); return; }
+  document.getElementById('signals-body').innerHTML = rows.map(r => {
+    const inMonitor = _monitorTickers.has(r.ticker);
+    const watchBtn  = inMonitor
+      ? `<button class="del-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Watching</button>`
+      : `<button class="del-btn" onclick="addToMonitor('${r.ticker}','${r.signal_date}',${r.signal_close},this)">+ Watch</button>`;
+    return `<tr>
+      <td class="left ticker-cell">${r.ticker}</td>
+      <td>${fmtDate(r.signal_date)}</td><td>$${fmt(r.signal_close)}</td>
+      <td><strong>${fmtVal(r.current_price, '$')}</strong></td>
+      <td>${dayPctCell(r.day_pct_change)}</td>
+      <td>${fmtVal(r.ma10)}</td><td>${fmtVal(r.ma30)}</td>
+      <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma200)}</td>
+      <td>${fmtVal(r.high_30d)}</td><td>${fmtVal(r.low_30d)}</td>
+      <td>${watchBtn}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function addToMonitor(ticker, signalDate, signalPrice, btn) {
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    await apiFetch('/api/monitor', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        ticker,
+        reason:       `Signal on ${signalDate}`,
+        signal_date:  signalDate,
+        signal_price: signalPrice,
+      }),
+    });
+    _monitorTickers.add(ticker);
+    // Flip all Watch buttons for this ticker in the table
+    document.querySelectorAll('#signals-body tr').forEach(tr => {
+      const cell = tr.querySelector('.ticker-cell');
+      if (cell && cell.textContent.trim() === ticker) {
+        const b = tr.querySelector('button');
+        if (b) {
+          b.textContent = '✓ Watching';
+          b.style.color = 'var(--green)';
+          b.style.borderColor = 'var(--green)';
+          b.style.cursor = 'default';
+          b.disabled = true; b.onclick = null;
+        }
+      }
+    });
+  } catch(e) {
+    btn.disabled = false; btn.textContent = '+ Watch';
+    alert(e.message);
+  }
+}
+
+// ═══════════════════════════════════════
+//  Sold
+// ═══════════════════════════════════════
+async function loadSold() {
+  loading('sold-body', 11);
+  try { renderSold((await apiFetch('/api/sold')).data); }
+  catch(e) { empty('sold-body', 11, '⚠ ' + e.message); }
+}
+function renderSold(rows) {
+  const totalPL = rows.reduce((s, r) => s + (r.pl_value || 0), 0);
+  const plCls = totalPL >= 0 ? 'green' : 'red', sign = totalPL >= 0 ? '+' : '';
+  document.getElementById('sold-cards').innerHTML = `
+    <div class="card"><div class="card-label">Sold Positions</div><div class="card-value">${rows.length}</div></div>
+    <div class="card"><div class="card-label">Realised P/L</div><div class="card-value ${plCls}">${sign}$${Math.abs(totalPL).toFixed(0)}</div></div>`;
+  if (!rows.length) { empty('sold-body', 11, 'No sold positions yet. Click + Add or upload a CSV.'); return; }
+  document.getElementById('sold-body').innerHTML = rows.map(r => `
+    <tr>
+      <td class="left ticker-cell">${r.ticker}</td>
+      <td class="left name-cell">${r.stock_name || '—'}</td>
+      <td>${fmtDate(r.buy_date)}</td>
+      <td>$${fmt(r.avg_buy_price)}</td><td>${fmtInt(r.qty)}</td>
+      <td>${fmtDate(r.sell_date)}</td>
+      <td>$${fmt(r.sell_price)}</td>
+      <td>${plCell(r.pl_value)}</td><td>${pillCell(r.pl_pct)}</td>
+      <td class="left" style="color:var(--muted)">${r.notes || '—'}</td>
+      <td style="white-space:nowrap">
+        <button class="del-btn" style="color:var(--accent);border-color:var(--accent)"
+          onclick='openRecordModal("sold",${JSON.stringify(r)})'>Edit</button>
+        <button class="del-btn" onclick='deleteRecord("sold",${r.id})'>&#215;</button>
+      </td>
+    </tr>`).join('');
+}
+
+// ═══════════════════════════════════════
+//  Monitor
+// ═══════════════════════════════════════
+async function loadMonitor() {
+  loading('monitor-body', 17);
+  try {
+    await _refreshMonitorSet();
+    renderMonitor((await apiFetch('/api/monitor')).data);
+  }
+  catch(e) { empty('monitor-body', 17, '⚠ ' + e.message); }
+}
+function renderMonitor(rows) {
+  if (!rows.length) { empty('monitor-body', 17, 'Monitor list is empty. Click + Add or upload a CSV.'); return; }
+  document.getElementById('monitor-body').innerHTML = rows.map(r => `
+    <tr>
+      <td class="left ticker-cell">${r.ticker}</td>
+      <td class="left name-cell">${r.stock_name || '—'}</td>
+      <td class="left" style="color:var(--muted);max-width:160px">${r.reason || '—'}</td>
+      <td class="left" style="color:var(--muted);max-width:200px;white-space:pre-wrap;word-break:break-word">${r.comment ? r.comment.replace(/</g,'&lt;') : '—'}</td>
+      <td>${fmtDate(r.signal_date)}</td>
+      <td>${r.signal_price != null ? '$' + fmt(r.signal_price) : '<span class="dim">—</span>'}</td>
+      <td>${pillCell(r.since_signal_pct)}</td>
+      <td><strong>${fmtVal(r.current_price, '$')}</strong></td>
+      <td>${dayPctCell(r.day_pct_change)}</td>
+      <td>${fmtVal(r.ma10)}</td><td>${fmtVal(r.ma30)}</td>
+      <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma200)}</td>
+      <td>${fmtVal(r.high_30d)}</td><td>${fmtVal(r.low_30d)}</td>
+      <td style="font-size:11px;color:var(--muted)">${fmtDate(r.added_at)}</td>
+      <td style="white-space:nowrap">
+        <button class="del-btn" style="color:var(--accent);border-color:var(--accent)"
+          onclick='openRecordModal("monitor",${JSON.stringify(r)})'>Edit</button>
+        <button class="del-btn" onclick='deleteRecord("monitor",${r.id})'>&#215;</button>
+      </td>
+    </tr>`).join('');
+}
+
+// ═══════════════════════════════════════
+//  Ticker List tab
+// ═══════════════════════════════════════
+async function loadTickerList() {
+  loading('tickers-body', 4);
+  try {
+    const { tickers, count } = await apiFetch('/api/extraction/tickers');
+    renderTickerList(tickers, count);
+  } catch(e) {
+    empty('tickers-body', 4, '⚠ ' + e.message);
+  }
+}
+
+function renderTickerList(tickers, count) {
+  document.getElementById('ticker-count').textContent =
+    `${tickers.length} ticker${tickers.length !== 1 ? 's' : ''} in extraction list`;
+  if (!tickers.length) {
+    empty('tickers-body', 4, 'No tickers yet. Add one above or upload a file.');
+    return;
+  }
+  document.getElementById('tickers-body').innerHTML = tickers.map(r => `
+    <tr id="tr-${r.ticker}">
+      <td class="left ticker-cell">${r.ticker}</td>
+      <td class="left" style="color:var(--muted)">${r.notes || '—'}</td>
+      <td>${fmtDate(r.added_at)}</td>
+      <td><button class="del-btn" onclick="deleteTicker('${r.ticker}')">&#10005;</button></td>
+    </tr>`).join('');
+}
+
+async function addTicker() {
+  const input  = document.getElementById('ticker-add-input');
+  const ticker = input.value.trim().toUpperCase();
+  if (!ticker) return;
+  try {
+    await apiFetch('/api/extraction/tickers', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ticker}),
+    });
+    input.value = '';
+    loadTickerList();
+  } catch(e) {
+    setUploadStatus('⚠ ' + e.message, true);
+  }
+}
+
+async function deleteTicker(ticker) {
+  try {
+    await apiFetch(`/api/extraction/tickers/${encodeURIComponent(ticker)}`, {method: 'DELETE'});
+    const row = document.getElementById('tr-' + ticker);
+    if (row) row.remove();
+    // Update count
+    const countEl = document.getElementById('ticker-count');
+    const cur = parseInt(countEl.textContent) || 0;
+    const next = Math.max(0, cur - 1);
+    countEl.textContent = `${next} ticker${next !== 1 ? 's' : ''} in extraction list`;
+    if (next === 0) empty('tickers-body', 4, 'No tickers yet. Add one above or upload a file.');
+  } catch(e) {
+    setUploadStatus('⚠ ' + e.message, true);
+  }
+}
+
+async function clearAllTickers() {
+  if (!confirm('Remove ALL tickers from the extraction list?')) return;
+  try {
+    const r = await apiFetch('/api/extraction/tickers', {method: 'DELETE'});
+    setUploadStatus(`Cleared ${r.deleted} tickers.`);
+    loadTickerList();
+  } catch(e) {
+    setUploadStatus('⚠ ' + e.message, true);
+  }
+}
+
+async function uploadTickerFile(input) {
+  if (!input.files.length) return;
+  const file = input.files[0];
+  const fd   = new FormData();
+  fd.append('file', file);
+  setUploadStatus('Uploading…');
+  try {
+    const r = await fetch('/api/extraction/upload', {method: 'POST', body: fd});
+    const j = await r.json();
+    if (!r.ok) { setUploadStatus('⚠ ' + (j.error || r.statusText), true); return; }
+    setUploadStatus(`Added ${j.added}, skipped ${j.skipped} (already existed).`);
+    loadTickerList();
+  } catch(e) {
+    setUploadStatus('⚠ ' + e.message, true);
+  }
+  input.value = '';
+}
+
+function setUploadStatus(msg, isError = false) {
+  const el = document.getElementById('upload-status');
+  el.textContent = msg;
+  el.style.color = isError ? 'var(--red)' : 'var(--green)';
+}
+
+// ═══════════════════════════════════════
+//  Fetch modal
+// ═══════════════════════════════════════
+async function openFetchModal() {
+  document.getElementById('fetch-modal').classList.add('open');
+  // Show ticker count
+  try {
+    const { tickers } = await apiFetch('/api/extraction/tickers');
+    const n = tickers.length;
+    document.getElementById('fetch-ticker-count').textContent =
+      n > 0
+        ? `${n} ticker${n !== 1 ? 's' : ''} will be fetched from the Ticker List tab.`
+        : '⚠ No tickers in list — go to the Ticker List tab to add some.';
+  } catch(e) {
+    document.getElementById('fetch-ticker-count').textContent = '⚠ Could not load ticker list.';
+  }
+  // Attach to in-progress fetch if one is running
+  if (_fetchRunning) _startPolling();
+}
+
+function closeFetchModal() {
+  document.getElementById('fetch-modal').classList.remove('open');
+  if (_pollTimer && !_fetchRunning) { clearInterval(_pollTimer); _pollTimer = null; }
+}
+
+function handleOverlayClick(e) {
+  if (e.target === document.getElementById('fetch-modal')) closeFetchModal();
+}
+
+async function startFetch() {
+  const period = document.getElementById('fetch-period').value;
+  _lastLogLen = 0;
+  document.getElementById('fetch-log-area').innerHTML = '';
+  document.getElementById('fetch-log-area').style.display = 'block';
+  document.getElementById('fetch-progress-wrap').style.display = 'block';
+  document.getElementById('fetch-progress-bar').style.width = '0%';
+  _setFetchRunning(true);
+  setFetchMsg('');
+
+  try {
+    const r = await fetch('/api/fetch', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({period}),
+    });
+    if (r.status === 409) { setFetchMsg('Attaching to running fetch…'); }
+    else if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      setFetchMsg('Error: ' + (j.error || r.statusText), true);
+      _setFetchRunning(false); return;
+    }
+  } catch(e) {
+    setFetchMsg('Network error: ' + e.message, true);
+    _setFetchRunning(false); return;
+  }
+  _startPolling();
+}
+
+function _startPolling() {
+  if (_pollTimer) clearInterval(_pollTimer);
+  _pollTimer = setInterval(_pollFetchStatus, 2000);
+  _pollFetchStatus();
+}
+
+async function _pollFetchStatus() {
+  let data;
+  try { data = await apiFetch('/api/fetch/status'); } catch { return; }
+  _fetchRunning = data.running;
+
+  const pct = data.total > 0 ? Math.round(data.done / data.total * 100) : 0;
+  document.getElementById('fetch-progress-bar').style.width = pct + '%';
+
+  if (data.running) {
+    document.getElementById('fetch-status-line').textContent =
+      `Fetching… ${data.done} / ${data.total} done`;
+  } else if (data.error) {
+    setFetchMsg('Fetch failed: ' + data.error, true);
+  } else if (data.total > 0) {
+    document.getElementById('fetch-status-line').textContent =
+      `Completed — ${data.done} / ${data.total} tickers processed.`;
+  }
+
+  // Append new log lines only
+  const logEl   = document.getElementById('fetch-log-area');
+  const newLines = data.log.slice(_lastLogLen);
+  _lastLogLen = data.log.length;
+  for (const msg of newLines) {
+    const span = document.createElement('span');
+    span.className = _logClass(msg);
+    span.textContent = msg + '\n';
+    logEl.appendChild(span);
+  }
+  logEl.scrollTop = logEl.scrollHeight;
+
+  if (!data.running) {
+    clearInterval(_pollTimer); _pollTimer = null;
+    _setFetchRunning(false);
+  }
+}
+
+function _setFetchRunning(on) {
+  _fetchRunning = on;
+  const btn = document.getElementById('fetch-btn');
+  const sp  = document.getElementById('fetch-spinner');
+  btn.disabled = on; btn.style.opacity = on ? '.5' : '1';
+  sp.style.display = on ? 'inline-block' : 'none';
+}
+
+function setFetchMsg(msg, isError = false) {
+  const el = document.getElementById('fetch-footer-msg');
+  el.textContent = msg;
+  el.style.color = isError ? 'var(--red)' : 'var(--muted)';
+}
+
+function _logClass(msg) {
+  if (msg.startsWith('OK '))    return 'log-ok';
+  if (msg.startsWith('SKIP '))  return 'log-skip';
+  if (msg.startsWith('ERROR ')) return 'log-error';
+  return 'log-info';
+}
+
+// ═══════════════════════════════════════
+//  Record edit modal (Holdings / Sold / Monitor)
+// ═══════════════════════════════════════
+let _recMode   = 'holdings';
+let _recId     = null;
+
+const MODAL_LABELS = {
+  holdings: 'Holding',
+  sold:     'Sold Record',
+  monitor:  'Monitor Entry',
+};
+
+function openRecordModal(mode, row) {
+  _recMode = mode;
+  _recId   = row ? row.id : null;
+
+  const isEdit    = _recId !== null;
+  const isSold    = mode === 'sold';
+  const isMonitor = mode === 'monitor';
+  const isHolding = mode === 'holdings';
+
+  document.getElementById('record-modal-title').textContent =
+    (isEdit ? 'Edit ' : 'Add ') + MODAL_LABELS[mode];
+
+  // Field visibility
+  const holdingFields = ['rf-avg-buy-price','rf-qty','rf-buy-date',
+                         'rf-notes','rf-notes-label'];
+  const soldExtra     = ['rf-sell-price','rf-sell-price-label',
+                         'rf-sell-date','rf-sell-date-label'];
+  const monitorField  = ['rf-reason','rf-reason-label',
+                         'rf-comment','rf-comment-label',
+                         'rf-signal-date','rf-signal-date-label',
+                         'rf-signal-price','rf-signal-price-label'];
+  const stockNameRow  = ['rf-stock-name']; // always visible
+
+  holdingFields.forEach(id => {
+    document.getElementById(id).closest
+      ? document.getElementById(id).style.display = isMonitor ? 'none' : ''
+      : null;
+    document.getElementById(id).style.display = isMonitor ? 'none' : '';
+  });
+  // Also hide the label siblings in grid for holding fields
+  ['rf-avg-buy-price','rf-qty','rf-buy-date','rf-notes'].forEach(id => {
+    const el = document.getElementById(id);
+    const prev = el.previousElementSibling;
+    if (prev && prev.tagName === 'LABEL') prev.style.display = isMonitor ? 'none' : '';
+    el.style.display = isMonitor ? 'none' : '';
+  });
+  soldExtra.forEach(id =>
+    document.getElementById(id).style.display = isSold ? '' : 'none');
+  monitorField.forEach(id =>
+    document.getElementById(id).style.display = isMonitor ? '' : 'none');
+
+  // Pre-fill
+  document.getElementById('rf-ticker').value       = row ? row.ticker       || '' : '';
+  document.getElementById('rf-stock-name').value   = row ? row.stock_name   || '' : '';
+  document.getElementById('rf-avg-buy-price').value= row ? row.avg_buy_price ?? '' : '';
+  document.getElementById('rf-qty').value          = row ? row.qty          ?? '' : '';
+  document.getElementById('rf-buy-date').value     = row ? row.buy_date     || '' : '';
+  document.getElementById('rf-sell-price').value   = row ? row.sell_price   ?? '' : '';
+  document.getElementById('rf-sell-date').value    = row ? row.sell_date    || '' : '';
+  document.getElementById('rf-notes').value        = row ? row.notes        || '' : '';
+  document.getElementById('rf-reason').value        = row ? row.reason        || '' : '';
+  document.getElementById('rf-comment').value       = row ? row.comment       || '' : '';
+  document.getElementById('rf-signal-date').value   = row ? row.signal_date   || '' : '';
+  document.getElementById('rf-signal-price').value  = row ? row.signal_price  ?? '' : '';
+
+  // Ticker read-only when editing (to avoid key changes)
+  document.getElementById('rf-ticker').readOnly = isEdit;
+  document.getElementById('rf-ticker').style.opacity = isEdit ? '.6' : '1';
+
+  document.getElementById('record-modal-error').textContent = '';
+  document.getElementById('record-modal').classList.add('open');
+  if (!isEdit) document.getElementById('rf-ticker').focus();
+  else document.getElementById('rf-stock-name').focus();
+}
+
+function closeRecordModal() {
+  document.getElementById('record-modal').classList.remove('open');
+}
+
+function handleRecordOverlayClick(e) {
+  if (e.target === document.getElementById('record-modal')) closeRecordModal();
+}
+
+async function saveRecord() {
+  const isSold    = _recMode === 'sold';
+  const isMonitor = _recMode === 'monitor';
+
+  let body;
+  if (isMonitor) {
+    const sp = parseFloat(document.getElementById('rf-signal-price').value);
+    body = {
+      ticker:       document.getElementById('rf-ticker').value.trim().toUpperCase(),
+      stock_name:   document.getElementById('rf-stock-name').value.trim()  || null,
+      reason:       document.getElementById('rf-reason').value.trim()      || null,
+      comment:      document.getElementById('rf-comment').value.trim()     || null,
+      signal_date:  document.getElementById('rf-signal-date').value.trim() || null,
+      signal_price: isNaN(sp) ? null : sp,
+    };
+  } else {
+    body = {
+      ticker:        document.getElementById('rf-ticker').value.trim().toUpperCase(),
+      stock_name:    document.getElementById('rf-stock-name').value.trim() || null,
+      avg_buy_price: parseFloat(document.getElementById('rf-avg-buy-price').value),
+      qty:           parseFloat(document.getElementById('rf-qty').value),
+      buy_date:      document.getElementById('rf-buy-date').value.trim() || null,
+      notes:         document.getElementById('rf-notes').value.trim()    || null,
+    };
+    if (isSold) {
+      body.sell_price = parseFloat(document.getElementById('rf-sell-price').value);
+      body.sell_date  = document.getElementById('rf-sell-date').value.trim();
+    }
+  }
+
+  const errEl  = document.getElementById('record-modal-error');
+  errEl.textContent = '';
+  const isEdit = _recId !== null;
+  const url    = isEdit ? `/api/${_recMode}/${_recId}` : `/api/${_recMode}`;
+  const method = isEdit ? 'PUT' : 'POST';
+
+  const btn = document.getElementById('record-save-btn');
+  btn.disabled = true;
+  try {
+    await apiFetch(url, {
+      method, headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    closeRecordModal();
+    if (_recMode === 'holdings')     { loadHoldings(); }
+    else if (_recMode === 'sold')    { loadSold(); }
+    else if (_recMode === 'monitor') { loadMonitor(); _monitorTickers.add(body.ticker); }
+  } catch(e) {
+    errEl.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteRecord(mode, id) {
+  const label = {holdings:'holding', sold:'sold record', monitor:'monitor entry'}[mode] || mode;
+  if (!confirm(`Delete this ${label}?`)) return;
+  try {
+    await apiFetch(`/api/${mode}/${id}`, { method: 'DELETE' });
+    if (mode === 'holdings')     loadHoldings();
+    else if (mode === 'sold')    loadSold();
+    else if (mode === 'monitor') loadMonitor();
+  } catch(e) {
+    alert('Delete failed: ' + e.message);
+  }
+}
+
+async function uploadRecords(mode, input) {
+  if (!input.files.length) return;
+  const statusEl = document.getElementById(`${mode}-upload-status`);
+  statusEl.textContent = 'Uploading…';
+  statusEl.style.color = 'var(--muted)';
+  const fd = new FormData();
+  fd.append('file', input.files[0]);
+  try {
+    const r = await fetch(`/api/${mode}/upload`, { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    statusEl.textContent = `Added ${j.added}, skipped ${j.skipped}`;
+    statusEl.style.color = 'var(--green)';
+    if (mode === 'holdings')     loadHoldings();
+    else if (mode === 'sold')    loadSold();
+    else if (mode === 'monitor') { loadMonitor(); _refreshMonitorSet(); }
+  } catch(e) {
+    statusEl.textContent = '⚠ ' + e.message;
+    statusEl.style.color = 'var(--red)';
+  }
+  input.value = '';
+}
+
+// ═══════════════════════════════════════
+//  Sell modal
+// ═══════════════════════════════════════
+let _sellHoldingId  = null;
+let _sellAvgBuy     = 0;
+let _sellMaxQty     = 0;
+
+function openSellModal(row) {
+  _sellHoldingId = row.id;
+  _sellAvgBuy    = row.avg_buy_price || 0;
+  _sellMaxQty    = row.qty || 0;
+
+  document.getElementById('sell-modal-title').textContent =
+    `Sell ${row.ticker}${row.stock_name ? ' — ' + row.stock_name : ''}`;
+  document.getElementById('sell-info-avg').textContent =
+    _sellAvgBuy ? '$' + Number(_sellAvgBuy).toFixed(4) : '—';
+  document.getElementById('sell-info-qty').textContent =
+    Number(_sellMaxQty).toLocaleString();
+
+  document.getElementById('sell-qty').value   = '';
+  document.getElementById('sell-qty').max     = _sellMaxQty;
+  document.getElementById('sell-price').value = '';
+  document.getElementById('sell-notes').value = '';
+  document.getElementById('sell-pl-preview').textContent = '—';
+  document.getElementById('sell-pl-preview').className   = '';
+  document.getElementById('sell-modal-error').textContent = '';
+
+  const pad = n => String(n).padStart(2, '0');
+  const t   = new Date();
+  document.getElementById('sell-date').value =
+    `${t.getFullYear()}-${pad(t.getMonth()+1)}-${pad(t.getDate())}`;
+
+  document.getElementById('sell-modal').classList.add('open');
+  document.getElementById('sell-qty').focus();
+}
+
+function closeSellModal() {
+  document.getElementById('sell-modal').classList.remove('open');
+}
+
+function handleSellOverlayClick(e) {
+  if (e.target === document.getElementById('sell-modal')) closeSellModal();
+}
+
+function updateSellPL() {
+  const qty   = parseFloat(document.getElementById('sell-qty').value)   || 0;
+  const price = parseFloat(document.getElementById('sell-price').value) || 0;
+  const el    = document.getElementById('sell-pl-preview');
+  if (!qty || !price || !_sellAvgBuy) { el.textContent = '—'; el.className = ''; return; }
+  const pl    = (price - _sellAvgBuy) * qty;
+  const plPct = _sellAvgBuy > 0 ? pl / (_sellAvgBuy * qty) * 100 : 0;
+  const sign  = pl >= 0 ? '+' : '';
+  el.textContent = `${sign}$${Math.abs(pl).toFixed(2)}  (${sign}${plPct.toFixed(2)}%)`;
+  el.className   = pl >= 0 ? 'green' : 'red';
+}
+
+async function executeSell() {
+  const qty   = parseFloat(document.getElementById('sell-qty').value);
+  const price = parseFloat(document.getElementById('sell-price').value);
+  const date  = document.getElementById('sell-date').value.trim() || null;
+  const notes = document.getElementById('sell-notes').value.trim() || null;
+  const errEl = document.getElementById('sell-modal-error');
+  errEl.textContent = '';
+
+  if (!qty  || qty  <= 0)  { errEl.textContent = 'Sell qty must be greater than 0.';    return; }
+  if (qty > _sellMaxQty)   { errEl.textContent = `Cannot sell more than ${_sellMaxQty} shares.`; return; }
+  if (!price || price <= 0){ errEl.textContent = 'Sell price must be greater than 0.';  return; }
+
+  const btn = document.getElementById('sell-save-btn');
+  btn.disabled = true;
+  try {
+    await apiFetch(`/api/holdings/${_sellHoldingId}/sell`, {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify({ sell_qty: qty, sell_price: price, sell_date: date, notes }),
+    });
+    closeSellModal();
+    loadHoldings();
+  } catch(e) {
+    errEl.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ═══════════════════════════════════════
+//  Refresh
+// ═══════════════════════════════════════
+function refreshCurrent() {
+  document.getElementById('last-updated').textContent =
+    'Updated ' + new Date().toLocaleTimeString();
+  showTab(currentTab);
+}
+
+// ═══════════════════════════════════════
+//  Init
+// ═══════════════════════════════════════
+// Set default signal date range: From = 30 days ago, To = today
+(function initSignalDates() {
+  const pad  = n => String(n).padStart(2, '0');
+  const fmt  = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  const today = new Date();
+  const ago30 = new Date(today); ago30.setDate(today.getDate() - 30);
+  document.getElementById('sig-to').value   = fmt(today);
+  document.getElementById('sig-from').value = fmt(ago30);
+})();
+
+document.getElementById('last-updated').textContent =
+  'Updated ' + new Date().toLocaleTimeString();
+loadHoldings();
+</script>
+</body>
+</html>
