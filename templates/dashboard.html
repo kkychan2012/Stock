@@ -517,6 +517,9 @@
         <button class="seg-btn"        id="psub-volume-surge"    onclick="setPatternsub('volume-surge')">Volume Surge</button>
         <button class="seg-btn"        id="psub-pullback-bounce" onclick="setPatternsub('pullback-bounce')">Pullback Bounce</button>
       </div>
+      <input id="pattern-ticker-filter" type="text" placeholder="Filter ticker…"
+        oninput="_applyPatternsub()"
+        style="margin-left:12px;padding:3px 8px;font-size:12px;width:130px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px">
       <span id="pattern-count" style="font-size:11px;color:var(--muted);margin-left:10px"></span>
     </div>
 
@@ -1790,18 +1793,25 @@ const PATTERN_SUB_MAP = {
   'pullback-bounce':'Pullback Bounce',
 };
 
+let _patternsInitialised = false;
+
 async function loadPatterns() {
   const pad   = n => String(n).padStart(2, '0');
   const t     = new Date();
   const today = `${t.getFullYear()}-${pad(t.getMonth()+1)}-${pad(t.getDate())}`;
-  // Default all date inputs to today on first load
   ['scan-date', 'scan-from', 'scan-to', 'view-from', 'view-to'].forEach(id => {
     const el = document.getElementById(id);
     if (el && !el.value) el.value = today;
   });
   await _refreshMonitorSet();
-  await _loadPatternResults(document.getElementById('scan-date').value);
-  _loadScanDates();
+  if (!_patternsInitialised) {
+    _patternsInitialised = true;
+    await _loadPatternResults(document.getElementById('scan-date').value);
+    _loadScanDates();
+  } else if (_lastPatternRows.length) {
+    // Re-render in case monitor set changed (e.g. added to monitor from another tab)
+    _applyPatternsub();
+  }
 }
 
 function _setPatternRangeView(on) {
@@ -1824,6 +1834,7 @@ async function loadPatternRange() {
   document.getElementById('patterns-body').innerHTML =
     `<tr><td colspan="12" class="state-msg"><span class="spinner"></span>Loading…</td></tr>`;
   document.getElementById('pattern-count').textContent = '';
+  document.getElementById('pattern-ticker-filter').value = '';
 
   try {
     await _refreshMonitorSet();
@@ -1848,6 +1859,7 @@ function clearPatternRange() {
   document.getElementById('patterns-body').innerHTML =
     `<tr><td colspan="12" class="state-msg">Select a date above or pick a range to view results.</td></tr>`;
   document.getElementById('pattern-count').textContent = '';
+  document.getElementById('pattern-ticker-filter').value = '';
   _lastPatternRows = [];
 }
 
@@ -1856,6 +1868,7 @@ async function _loadPatternResults(date) {
   document.getElementById('patterns-body').innerHTML =
     `<tr><td colspan="12" class="state-msg"><span class="spinner"></span>Loading…</td></tr>`;
   document.getElementById('pattern-count').textContent = '';
+  document.getElementById('pattern-ticker-filter').value = '';
   try {
     const data = await apiFetch(`/api/patterns/results?date=${date}`);
     _lastPatternRows = data.data || [];
@@ -1988,10 +2001,12 @@ function setPatternsub(sub) {
 }
 
 function _applyPatternsub() {
-  const filter = PATTERN_SUB_MAP[_currentPatternsub];
-  const rows   = filter ? _lastPatternRows.filter(r => r.pattern_name === filter) : _lastPatternRows;
+  const patFilter    = PATTERN_SUB_MAP[_currentPatternsub];
+  const tickerFilter = (document.getElementById('pattern-ticker-filter').value || '').trim().toUpperCase();
+  let rows = patFilter ? _lastPatternRows.filter(r => r.pattern_name === patFilter) : _lastPatternRows;
+  if (tickerFilter) rows = rows.filter(r => (r.ticker || '').toUpperCase().includes(tickerFilter));
   const countEl = document.getElementById('pattern-count');
-  countEl.textContent = filter
+  countEl.textContent = (patFilter || tickerFilter)
     ? `${rows.length} of ${_lastPatternRows.length} shown`
     : `${_lastPatternRows.length} result${_lastPatternRows.length !== 1 ? 's' : ''}`;
   _renderPatternRows(rows);
@@ -2078,8 +2093,7 @@ let _btQueue    = [];
 let _btQueueSeq = 0;
 
 function addToBacktestQueue(ticker, p0, startDate, source) {
-  if (_btQueue.find(x => x.ticker === ticker)) {
-    // Already queued — just flash the tab
+  if (_btQueue.find(x => x.ticker === ticker && x.start_date === (startDate || ''))) {
     _updateBtTabBadge();
     return false;
   }
