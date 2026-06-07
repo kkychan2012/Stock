@@ -35,8 +35,10 @@ Common query params:
 """
 
 import argparse
+import base64
 import csv
 import io
+import os
 import threading
 from datetime import datetime, timedelta
 
@@ -44,6 +46,8 @@ from flask import Flask, jsonify, request, render_template, Response
 
 from db_setup import get_connection, setup_database
 from fetch_data import fetch_all, get_tickers_from_db
+from scan_patterns import scan_all_patterns, scan_date_range, get_scan_results, get_scan_results_range, get_available_scan_dates
+from backtest_engine import run_trading_simulation, calculate_metrics
 
 # ---------------------------------------------------------------------------
 # Date normalisation
@@ -86,11 +90,45 @@ def _normalise_date(s):
 app = Flask(__name__)
 
 # ---------------------------------------------------------------------------
+# Basic Auth  (enabled only when --user / DASH_USER is set)
+# ---------------------------------------------------------------------------
+
+_AUTH_USER: str | None = None
+_AUTH_PASS: str        = ""
+
+
+@app.before_request
+def _require_auth():
+    if _AUTH_USER is None:
+        return                          # auth disabled — local-only mode
+    header = request.headers.get("Authorization", "")
+    if header.startswith("Basic "):
+        try:
+            user, _, pw = base64.b64decode(header[6:]).decode().partition(":")
+            if user == _AUTH_USER and pw == _AUTH_PASS:
+                return                  # correct credentials
+        except Exception:
+            pass
+    return Response(
+        "Stock Dashboard — login required.",
+        401,
+        {"WWW-Authenticate": 'Basic realm="Stock Dashboard"'},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Fetch state (module-level, single-user local tool)
 # ---------------------------------------------------------------------------
 
 _fetch_state = {"running": False, "total": 0, "done": 0, "log": [], "error": None}
 _fetch_lock  = threading.Lock()
+
+_scan_state = {
+    "running": False, "total": 0, "done": 0,
+    "ticker": "", "error": None, "scan_date": None,
+    "mode": "single", "from_date": None, "to_date": None,
+}
+_scan_lock = threading.Lock()
 
 VALID_PERIODS = {"1mo", "3mo", "6mo", "1y", "2y"}
 
@@ -1002,6 +1040,212 @@ def fetch_status():
 
 
 # ---------------------------------------------------------------------------
+# Pattern scanner  POST /api/patterns/scan   GET /api/patterns/scan/status
+#                  GET  /api/patterns/results  GET /api/patterns/dates
+# ---------------------------------------------------------------------------
+
+@app.post("/api/patterns/scan")
+def start_pattern_scan():
+    with _scan_lock:
+        if _scan_state["running"]:
+            return jsonify({"status": "already_running"}), 409
+        body      = request.get_json(silent=True) or {}
+        from_date = (body.get("from_date") or "").strip() or None
+        to_date   = (body.get("to_date")   or "").strip() or None
+        scan_date = (body.get("date")       or "").strip() or None
+        is_range  = bool(from_date and to_date)
+
+        if is_range:
+            _scan_state.update({
+                "running": True, "total": 0, "done": 0, "ticker": "",
+                "error": None, "scan_date": to_date,
+                "mode": "range", "from_date": from_date, "to_date": to_date,
+            })
+        else:
+            scan_date = scan_date or datetime.now().strftime("%Y-%m-%d")
+            _scan_state.update({
+                "running": True, "total": 0, "done": 0, "ticker": "",
+                "error": None, "scan_date": scan_date,
+                "mode": "single", "from_date": None, "to_date": None,
+            })
+
+    def _run():
+        def _cb(done, total, ticker):
+            _scan_state["done"]   = done
+            _scan_state["total"]  = total
+            _scan_state["ticker"] = ticker
+        try:
+            if is_range:
+                scan_date_range(from_date, to_date, progress_cb=_cb)
+            else:
+                scan_all_patterns(scan_date, progress_cb=_cb)
+        except Exception as exc:
+            _scan_state["error"] = str(exc)
+        finally:
+            _scan_state["running"] = False
+
+    threading.Thread(target=_run, daemon=True).start()
+    if is_range:
+        return jsonify({"status": "started", "from_date": from_date, "to_date": to_date, "mode": "range"})
+    return jsonify({"status": "started", "scan_date": scan_date, "mode": "single"})
+
+
+@app.get("/api/patterns/scan/status")
+def pattern_scan_status():
+    return jsonify({k: _scan_state[k] for k in
+                    ("running", "total", "done", "ticker", "error", "scan_date",
+                     "mode", "from_date", "to_date")})
+
+
+@app.get("/api/patterns/results")
+def get_pattern_results_api():
+    from_date = (request.args.get("from") or "").strip()
+    to_date   = (request.args.get("to")   or "").strip()
+    if from_date and to_date:
+        results = get_scan_results_range(from_date, to_date)
+        return jsonify({"count": len(results), "data": results,
+                        "from_date": from_date, "to_date": to_date})
+    scan_date = (request.args.get("date") or "").strip() or datetime.now().strftime("%Y-%m-%d")
+    results   = get_scan_results(scan_date)
+    return jsonify({"count": len(results), "data": results, "scan_date": scan_date})
+
+
+@app.get("/api/patterns/dates")
+def get_pattern_dates_api():
+    return jsonify({"dates": get_available_scan_dates()})
+
+
+# ---------------------------------------------------------------------------
+# Backtest  POST /api/backtest/single   POST /api/backtest/batch
+# ---------------------------------------------------------------------------
+
+def _parse_rules(body):
+    """Extract strategy percentage rules from request body (values as %)."""
+    return {
+        "t1":    float(body.get("t1",    10.0)) / 100.0,
+        "sl":    float(body.get("sl",    11.0)) / 100.0,
+        "t2":    float(body.get("t2",    20.0)) / 100.0,
+        "rev":   float(body.get("rev",    0.0)) / 100.0,
+        "prot":  float(body.get("prot",  10.0)) / 100.0,
+        "trail": float(body.get("trail", 10.0)) / 100.0,
+    }
+
+
+@app.post("/api/backtest/single")
+def backtest_single():
+    body   = request.get_json(silent=True) or {}
+    ticker = (body.get("ticker") or "").strip().upper()
+    if not ticker:
+        return jsonify({"error": "ticker is required"}), 400
+
+    try:
+        p0         = float(body["p0"])
+        start_date = (body.get("start_date") or "").strip()
+        end_date   = (body.get("end_date")   or "").strip() or None
+        rules      = _parse_rules(body)
+    except (KeyError, ValueError, TypeError) as exc:
+        return jsonify({"error": f"Invalid parameters: {exc}"}), 400
+
+    if not start_date:
+        return jsonify({"error": "start_date is required"}), 400
+
+    with get_connection() as conn:
+        if end_date:
+            rows = conn.execute(
+                "SELECT date, open, high, low, high_30d FROM stocks_daily"
+                " WHERE ticker=? AND date>=? AND date<=? ORDER BY date",
+                (ticker, start_date, end_date),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT date, open, high, low, high_30d FROM stocks_daily"
+                " WHERE ticker=? AND date>=? ORDER BY date",
+                (ticker, start_date),
+            ).fetchall()
+
+    if not rows:
+        return jsonify({"error": f"No price data for {ticker} from {start_date}"}), 404
+
+    txs = run_trading_simulation([dict(r) for r in rows], p0, start_date, rules)
+    if not txs:
+        return jsonify({"error": "Simulation produced no transactions"}), 404
+
+    initial_cost, total_pnl, roi = calculate_metrics(txs)
+    return jsonify({
+        "ticker":       ticker,
+        "initial_cost": round(initial_cost, 2),
+        "total_pnl":    round(total_pnl,    2),
+        "roi":          round(roi,           2),
+        "status":       txs[-1]["action"],
+        "transactions": txs,
+    })
+
+
+@app.post("/api/backtest/batch")
+def backtest_batch():
+    body = request.get_json(silent=True) or {}
+    try:
+        rules = _parse_rules(body)
+    except (ValueError, TypeError) as exc:
+        return jsonify({"error": f"Invalid parameters: {exc}"}), 400
+
+    with get_connection() as conn:
+        holdings = conn.execute(
+            "SELECT ticker, avg_buy_price, buy_date FROM holdings ORDER BY ticker"
+        ).fetchall()
+
+    if not holdings:
+        return jsonify({"error": "No holdings found — add holdings first"}), 404
+
+    results = []
+    for h in holdings:
+        ticker     = h["ticker"]
+        p0         = float(h["avg_buy_price"] or 0)
+        start_date = h["buy_date"] or datetime.now().strftime("%Y-%m-%d")
+
+        if p0 <= 0:
+            results.append({"ticker": ticker, "p0": p0, "start_date": start_date,
+                             "error": "avg_buy_price is 0 or missing"})
+            continue
+
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT date, open, high, low, high_30d FROM stocks_daily"
+                " WHERE ticker=? AND date>=? ORDER BY date",
+                (ticker, start_date),
+            ).fetchall()
+
+        if not rows:
+            results.append({"ticker": ticker, "p0": p0, "start_date": start_date,
+                             "error": "No price data found",
+                             "initial_cost": None, "total_pnl": None,
+                             "roi": None, "status": None, "transactions": []})
+            continue
+
+        txs = run_trading_simulation([dict(r) for r in rows], p0, start_date, rules)
+        if not txs:
+            results.append({"ticker": ticker, "p0": p0, "start_date": start_date,
+                             "error": "Simulation produced no transactions",
+                             "initial_cost": None, "total_pnl": None,
+                             "roi": None, "status": None, "transactions": []})
+            continue
+
+        initial_cost, total_pnl, roi = calculate_metrics(txs)
+        results.append({
+            "ticker":       ticker,
+            "p0":           p0,
+            "start_date":   start_date,
+            "initial_cost": round(initial_cost, 2),
+            "total_pnl":    round(total_pnl,    2),
+            "roi":          round(roi,           2),
+            "status":       txs[-1]["action"],
+            "transactions": txs,
+        })
+
+    return jsonify({"count": len(results), "data": results})
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -1010,7 +1254,19 @@ if __name__ == "__main__":
     parser.add_argument("--host",  default="127.0.0.1")
     parser.add_argument("--port",  type=int, default=5000)
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--user",  default=os.environ.get("DASH_USER", ""),
+                        help="Enable Basic Auth with this username")
+    parser.add_argument("--pass",  dest="password",
+                        default=os.environ.get("DASH_PASS", ""),
+                        help="Basic Auth password")
     args = parser.parse_args()
+
+    if args.user:
+        _AUTH_USER = args.user
+        _AUTH_PASS = args.password
+        print(f"  Basic Auth ENABLED  (user: {_AUTH_USER})")
+    else:
+        print("  Basic Auth disabled — use --user / --pass to protect the dashboard")
 
     setup_database()
     print(f"\nStock Dashboard API running at http://{args.host}:{args.port}")

@@ -66,8 +66,9 @@
       height: var(--tabs-h); background: var(--surface);
       border-bottom: 1px solid var(--border);
       display: flex; align-items: stretch; padding: 0 20px; gap: 2px;
-      z-index: 99;
+      z-index: 99; overflow-x: auto; scrollbar-width: none;
     }
+    nav.tabs::-webkit-scrollbar { display: none; }
     .tab-btn {
       padding: 0 18px; background: none; border: none;
       border-bottom: 3px solid transparent;
@@ -237,6 +238,24 @@
     }
     .fetch-status-line { font-size: 12px; color: var(--muted); min-height: 18px; }
     #fetch-footer-msg  { font-size: 12px; color: var(--muted); }
+
+    /* ── Pattern scanner row colours ── */
+    .pat-cup    { background: #eff6ff; } .pat-cup:hover    { background: #dbeafe; }
+    .pat-golden { background: #fefce8; } .pat-golden:hover { background: #fef9c3; }
+    .pat-ma200  { background: #f0fdf4; } .pat-ma200:hover  { background: #dcfce7; }
+    .pat-vol    { background: #fff7ed; } .pat-vol:hover    { background: #ffedd5; }
+    .pat-pull   { background: #faf5ff; } .pat-pull:hover   { background: #f3e8ff; }
+
+    .scan-date-col { display: none; }
+    .range-mode .scan-date-col { display: table-cell; }
+
+    .ppill { display:inline-block; padding:2px 8px; border-radius:999px;
+             font-size:11px; font-weight:600; white-space:nowrap; }
+    .ppill-cup    { background:#bfdbfe; color:#1e40af; }
+    .ppill-golden { background:#fde68a; color:#92400e; }
+    .ppill-ma200  { background:#bbf7d0; color:#166534; }
+    .ppill-vol    { background:#fed7aa; color:#9a3412; }
+    .ppill-pull   { background:#e9d5ff; color:#6b21a8; }
   </style>
 </head>
 <body>
@@ -257,7 +276,9 @@
   <button class="tab-btn"        onclick="showTab('signals')">Signals</button>
   <button class="tab-btn"        onclick="showTab('sold')">Sold</button>
   <button class="tab-btn"        onclick="showTab('monitor')">Monitor</button>
+  <button class="tab-btn"        onclick="showTab('patterns')">Pattern Scanner</button>
   <button class="tab-btn"        onclick="showTab('tickers')">Ticker List</button>
+  <button class="tab-btn"        onclick="showTab('backtester')">Backtester</button>
 </nav>
 
 <!-- ════════════ MAIN ════════════ -->
@@ -413,6 +434,112 @@
     </div>
   </div>
 
+  <!-- ── PATTERN SCANNER ── -->
+  <div id="tab-patterns" class="tab-pane">
+
+    <!-- Top controls -->
+    <div class="toolbar" style="align-items:center;flex-wrap:wrap">
+      <div class="toolbar-group">
+        <!-- Single / Range mode toggle -->
+        <div class="seg-group">
+          <button class="seg-btn active" id="scan-mode-single" onclick="setScanMode('single')">Single</button>
+          <button class="seg-btn"        id="scan-mode-range"  onclick="setScanMode('range')">Range</button>
+        </div>
+        <!-- Single date input -->
+        <span id="scan-single-wrap">
+          <label class="ctrl-label" style="margin-left:8px">Date:</label>
+          <input type="text" id="scan-date" maxlength="10" placeholder="YYYY-MM-DD"
+                 style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;
+                        font-size:12px;background:var(--surface);color:var(--text);
+                        width:120px;font-family:monospace"
+                 onblur="normaliseDateInput(this)">
+        </span>
+        <!-- Range date inputs (hidden by default) -->
+        <span id="scan-range-wrap" style="display:none">
+          <label class="ctrl-label" style="margin-left:8px">From:</label>
+          <input type="text" id="scan-from" maxlength="10" placeholder="YYYY-MM-DD"
+                 style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;
+                        font-size:12px;background:var(--surface);color:var(--text);
+                        width:120px;font-family:monospace"
+                 onblur="normaliseDateInput(this)">
+          <label class="ctrl-label" style="margin-left:6px">To:</label>
+          <input type="text" id="scan-to" maxlength="10" placeholder="YYYY-MM-DD"
+                 style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;
+                        font-size:12px;background:var(--surface);color:var(--text);
+                        width:120px;font-family:monospace"
+                 onblur="normaliseDateInput(this)">
+        </span>
+        <button id="scan-btn" class="btn btn-fetch" onclick="startPatternScan()">&#9654; Scan Now</button>
+        <span id="scan-spinner" class="spinner" style="display:none"></span>
+      </div>
+      <div id="scan-progress-wrap" style="width:180px;height:6px;background:var(--border);
+           border-radius:3px;overflow:hidden;display:none;margin:0 8px">
+        <div id="scan-progress-bar" style="height:100%;background:var(--accent);
+             border-radius:3px;transition:width .3s ease;width:0%"></div>
+      </div>
+      <span id="scan-status-line" style="font-size:12px;color:var(--muted)"></span>
+      <span style="flex:1"></span>
+      <!-- Single-date picker -->
+      <label class="ctrl-label" style="font-size:11px">Single date:</label>
+      <select id="scan-hist-select" style="font-size:12px;padding:4px 8px;
+              border:1px solid var(--border);border-radius:6px;background:var(--surface)"
+              onchange="onScanHistSelect()">
+        <option value="">— select —</option>
+      </select>
+      <span style="width:1px;height:20px;background:var(--border);margin:0 6px"></span>
+      <!-- Range picker -->
+      <label class="ctrl-label" style="font-size:11px">View range:</label>
+      <input type="text" id="view-from" maxlength="10" placeholder="YYYY-MM-DD"
+             style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;
+                    font-size:12px;background:var(--surface);color:var(--text);
+                    width:112px;font-family:monospace"
+             onblur="normaliseDateInput(this)">
+      <span style="font-size:12px;color:var(--muted)">→</span>
+      <input type="text" id="view-to" maxlength="10" placeholder="YYYY-MM-DD"
+             style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;
+                    font-size:12px;background:var(--surface);color:var(--text);
+                    width:112px;font-family:monospace"
+             onblur="normaliseDateInput(this)">
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px"
+              onclick="loadPatternRange()">Load</button>
+      <button id="view-clear-btn" class="btn btn-ghost"
+              style="padding:4px 10px;font-size:12px;display:none;color:var(--red);border-color:var(--red)"
+              onclick="clearPatternRange()">&#10005; Clear</button>
+    </div>
+
+    <!-- Pattern sub-tabs -->
+    <div class="controls" style="margin-top:12px;margin-bottom:10px">
+      <div class="seg-group">
+        <button class="seg-btn active" id="psub-all"             onclick="setPatternsub('all')">All</button>
+        <button class="seg-btn"        id="psub-cup-handle"      onclick="setPatternsub('cup-handle')">Cup &amp; Handle</button>
+        <button class="seg-btn"        id="psub-golden-cross"    onclick="setPatternsub('golden-cross')">Golden Cross</button>
+        <button class="seg-btn"        id="psub-ma200-breakout"  onclick="setPatternsub('ma200-breakout')">MA200 Breakout</button>
+        <button class="seg-btn"        id="psub-volume-surge"    onclick="setPatternsub('volume-surge')">Volume Surge</button>
+        <button class="seg-btn"        id="psub-pullback-bounce" onclick="setPatternsub('pullback-bounce')">Pullback Bounce</button>
+      </div>
+      <span id="pattern-count" style="font-size:11px;color:var(--muted);margin-left:10px"></span>
+    </div>
+
+    <!-- Results table -->
+    <div class="table-wrap" id="patterns-table-wrap">
+      <table>
+        <thead><tr>
+          <th class="left">Ticker</th>
+          <th class="scan-date-col">Scan Date</th>
+          <th class="left">Pattern</th>
+          <th class="left">Signal Detail</th>
+          <th>Date</th>
+          <th>Close</th><th>Day&nbsp;%</th>
+          <th>MA10</th><th>MA30</th><th>MA50</th><th>MA200</th>
+          <th>Monitor</th>
+        </tr></thead>
+        <tbody id="patterns-body">
+          <tr><td colspan="11" class="state-msg">Select a date and click &#9654; Scan Now to find patterns.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- ── TICKER LIST ── -->
   <div id="tab-tickers" class="tab-pane">
 
@@ -469,6 +596,147 @@
         </tbody>
       </table>
     </div>
+  </div>
+
+  <!-- ── BACKTESTER ── -->
+  <div id="tab-backtester" class="tab-pane">
+
+    <!-- Top: Params (left) + Strategy Matrix (right) -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;align-items:start">
+
+      <!-- Left: form -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px">
+        <div style="font-weight:700;font-size:13px;margin-bottom:12px">Strategy Parameters</div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+          <div>
+            <div class="field-label">Ticker</div>
+            <input id="bt-ticker" class="ticker-add-input" style="width:100%" placeholder="e.g. AAPL"
+                   maxlength="20" oninput="btUpdateMatrix()">
+          </div>
+          <div>
+            <div class="field-label">Entry Price P0 ($)</div>
+            <input id="bt-p0" class="ticker-add-input" type="number" style="width:100%"
+                   placeholder="0.00" step="0.01" min="0" oninput="btUpdateMatrix()">
+          </div>
+          <div>
+            <div class="field-label">Start Date</div>
+            <input id="bt-start" class="ticker-add-input"
+                   style="width:100%;font-family:monospace" placeholder="YYYY-MM-DD"
+                   maxlength="10" onblur="normaliseDateInput(this)">
+          </div>
+          <div>
+            <div class="field-label">End Date (optional)</div>
+            <input id="bt-end" class="ticker-add-input"
+                   style="width:100%;font-family:monospace" placeholder="YYYY-MM-DD"
+                   maxlength="10" onblur="normaliseDateInput(this)">
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+          <div>
+            <div class="field-label">Stage 1 Target (+%)</div>
+            <input id="bt-t1" class="ticker-add-input" type="number" style="width:100%"
+                   value="10.0" step="0.1" oninput="btUpdateMatrix()">
+          </div>
+          <div>
+            <div class="field-label">Stage 1 Stop Loss (-%)</div>
+            <input id="bt-sl" class="ticker-add-input" type="number" style="width:100%"
+                   value="11.0" step="0.1" oninput="btUpdateMatrix()">
+          </div>
+          <div>
+            <div class="field-label">Stage 2 Target (+%)</div>
+            <input id="bt-t2" class="ticker-add-input" type="number" style="width:100%"
+                   value="20.0" step="0.1" oninput="btUpdateMatrix()">
+          </div>
+          <div>
+            <div class="field-label">Stage 2 Reversal (%)</div>
+            <input id="bt-rev" class="ticker-add-input" type="number" style="width:100%"
+                   value="0.0" step="0.1" oninput="btUpdateMatrix()">
+          </div>
+          <div>
+            <div class="field-label">Stage 3 Protection (+%)</div>
+            <input id="bt-prot" class="ticker-add-input" type="number" style="width:100%"
+                   value="10.0" step="0.1" oninput="btUpdateMatrix()">
+          </div>
+          <div>
+            <div class="field-label">Trailing Stop Drop (-%)</div>
+            <input id="bt-trail" class="ticker-add-input" type="number" style="width:100%"
+                   value="10.0" step="0.1" oninput="btUpdateMatrix()">
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="runSingleBacktest()">&#9654; Run Single</button>
+          <button class="btn btn-fetch"   onclick="runBatchBacktest()">&#9654;&#9654; Batch — All Holdings</button>
+          <span id="bt-spinner" class="spinner" style="display:none"></span>
+        </div>
+        <div id="bt-error" style="font-size:12px;color:var(--red);margin-top:6px;min-height:16px"></div>
+      </div>
+
+      <!-- Right: strategy matrix (dark terminal panel) -->
+      <div style="background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:16px">
+        <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;
+                    letter-spacing:.6px;margin-bottom:10px">Live Strategy Matrix</div>
+        <pre id="bt-matrix" style="font-family:'Cascadia Code',Consolas,'Courier New',monospace;
+             font-size:11px;color:#e2e8f0;white-space:pre-wrap;line-height:1.7;margin:0"></pre>
+      </div>
+    </div>
+
+    <!-- Summary cards -->
+    <div id="bt-cards" class="summary-row" style="display:none"></div>
+
+    <!-- Results -->
+    <div id="bt-results-wrap" style="display:none">
+      <div style="font-weight:700;font-size:13px;margin-bottom:8px" id="bt-results-title">Results</div>
+
+      <!-- Single-mode transaction log -->
+      <div id="bt-tx-section">
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th class="left">Date</th>
+              <th class="left">Action</th>
+              <th>Qty</th><th>Price</th><th>Cash Flow</th><th>Remaining</th>
+              <th class="left">Reason</th>
+            </tr></thead>
+            <tbody id="bt-tx-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Batch-mode summary -->
+      <div id="bt-batch-section" style="display:none">
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th class="left">Ticker</th>
+              <th>Buy Date</th><th>P0</th><th>Cost</th>
+              <th>Net P/L</th><th>ROI %</th><th>Status</th><th>Detail</th>
+            </tr></thead>
+            <tbody id="bt-batch-body"></tbody>
+          </table>
+        </div>
+
+        <!-- Expandable transaction detail for selected batch row -->
+        <div id="bt-batch-detail" style="display:none;margin-top:14px">
+          <div style="font-weight:600;font-size:12px;margin-bottom:8px;color:var(--muted)"
+               id="bt-batch-detail-title"></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr>
+                <th class="left">Date</th>
+                <th class="left">Action</th>
+                <th>Qty</th><th>Price</th><th>Cash Flow</th><th>Remaining</th>
+                <th class="left">Reason</th>
+              </tr></thead>
+              <tbody id="bt-batch-tx-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 
 </main>
@@ -672,7 +940,7 @@ let _pollTimer        = null;
 let _lastLogLen       = 0;
 let _fetchRunning     = false;
 
-const TABS = ['holdings', 'signals', 'sold', 'monitor', 'tickers'];
+const TABS = ['holdings', 'signals', 'sold', 'monitor', 'patterns', 'tickers', 'backtester'];
 
 // ═══════════════════════════════════════
 //  Formatting
@@ -710,7 +978,8 @@ function showTab(name) {
   });
   currentTab = name;
   ({holdings: loadHoldings, signals: loadSignals, sold: loadSold,
-    monitor: loadMonitor, tickers: loadTickerList})[name]();
+    monitor: loadMonitor, patterns: loadPatterns, tickers: loadTickerList,
+    backtester: loadBacktester})[name]();
 }
 
 // ═══════════════════════════════════════
@@ -1437,6 +1706,549 @@ async function executeSell() {
   } finally {
     btn.disabled = false;
   }
+}
+
+// ═══════════════════════════════════════
+//  Pattern Scanner
+// ═══════════════════════════════════════
+let _lastPatternRows   = [];
+let _currentPatternsub = 'all';
+let _scanPollTimer     = null;
+let _scanMode          = 'single';
+let _patternRangeView  = false;
+
+function setScanMode(mode) {
+  _scanMode = mode;
+  document.getElementById('scan-mode-single').classList.toggle('active', mode === 'single');
+  document.getElementById('scan-mode-range').classList.toggle('active',  mode === 'range');
+  document.getElementById('scan-single-wrap').style.display = mode === 'single' ? '' : 'none';
+  document.getElementById('scan-range-wrap').style.display  = mode === 'range'  ? '' : 'none';
+}
+
+const PATTERN_ROW_CLASS = {
+  'Cup & Handle':   'pat-cup',
+  'Golden Cross':   'pat-golden',
+  'MA200 Breakout': 'pat-ma200',
+  'Volume Surge':   'pat-vol',
+  'Pullback Bounce':'pat-pull',
+};
+const PATTERN_PILL_CLASS = {
+  'Cup & Handle':   'ppill-cup',
+  'Golden Cross':   'ppill-golden',
+  'MA200 Breakout': 'ppill-ma200',
+  'Volume Surge':   'ppill-vol',
+  'Pullback Bounce':'ppill-pull',
+};
+const PATTERN_SUB_MAP = {
+  'all':            null,
+  'cup-handle':     'Cup & Handle',
+  'golden-cross':   'Golden Cross',
+  'ma200-breakout': 'MA200 Breakout',
+  'volume-surge':   'Volume Surge',
+  'pullback-bounce':'Pullback Bounce',
+};
+
+async function loadPatterns() {
+  const pad   = n => String(n).padStart(2, '0');
+  const t     = new Date();
+  const today = `${t.getFullYear()}-${pad(t.getMonth()+1)}-${pad(t.getDate())}`;
+  // Default all date inputs to today on first load
+  ['scan-date', 'scan-from', 'scan-to', 'view-from', 'view-to'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && !el.value) el.value = today;
+  });
+  await _refreshMonitorSet();
+  await _loadPatternResults(document.getElementById('scan-date').value);
+  _loadScanDates();
+}
+
+function _setPatternRangeView(on) {
+  _patternRangeView = on;
+  document.getElementById('patterns-table-wrap').classList.toggle('range-mode', on);
+  document.getElementById('view-clear-btn').style.display = on ? '' : 'none';
+}
+
+async function loadPatternRange() {
+  const from = document.getElementById('view-from').value.trim();
+  const to   = document.getElementById('view-to').value.trim();
+  if (!from || !/^\d{4}-\d{2}-\d{2}$/.test(from) ||
+      !to   || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    alert('Please enter valid From and To dates (YYYY-MM-DD).'); return;
+  }
+  if (from > to) { alert('From date must be before To date.'); return; }
+
+  _setPatternRangeView(true);
+  document.getElementById('scan-hist-select').value = '';
+  document.getElementById('patterns-body').innerHTML =
+    `<tr><td colspan="12" class="state-msg"><span class="spinner"></span>Loading…</td></tr>`;
+  document.getElementById('pattern-count').textContent = '';
+
+  try {
+    await _refreshMonitorSet();
+    const data = await apiFetch(`/api/patterns/results?from=${from}&to=${to}`);
+    _lastPatternRows = data.data || [];
+    if (!_lastPatternRows.length) {
+      document.getElementById('patterns-body').innerHTML =
+        `<tr><td colspan="12" class="state-msg">No scan results for ${from} → ${to}. Run a range scan first.</td></tr>`;
+    } else {
+      _applyPatternsub();
+    }
+  } catch(e) {
+    document.getElementById('patterns-body').innerHTML =
+      `<tr><td colspan="12" class="state-msg">⚠ ${e.message}</td></tr>`;
+  }
+}
+
+function clearPatternRange() {
+  _setPatternRangeView(false);
+  document.getElementById('view-from').value = '';
+  document.getElementById('view-to').value   = '';
+  document.getElementById('patterns-body').innerHTML =
+    `<tr><td colspan="11" class="state-msg">Select a date above or pick a range to view results.</td></tr>`;
+  document.getElementById('pattern-count').textContent = '';
+  _lastPatternRows = [];
+}
+
+async function _loadPatternResults(date) {
+  _setPatternRangeView(false);
+  document.getElementById('patterns-body').innerHTML =
+    `<tr><td colspan="11" class="state-msg"><span class="spinner"></span>Loading…</td></tr>`;
+  document.getElementById('pattern-count').textContent = '';
+  try {
+    const data = await apiFetch(`/api/patterns/results?date=${date}`);
+    _lastPatternRows = data.data || [];
+    if (!_lastPatternRows.length) {
+      document.getElementById('patterns-body').innerHTML =
+        `<tr><td colspan="11" class="state-msg">No scan results for ${date}. Click &#9654; Scan Now to generate.</td></tr>`;
+    } else {
+      _applyPatternsub();
+    }
+  } catch(e) {
+    document.getElementById('patterns-body').innerHTML =
+      `<tr><td colspan="11" class="state-msg">&#9888; ${e.message}</td></tr>`;
+  }
+}
+
+async function _loadScanDates() {
+  try {
+    const data = await apiFetch('/api/patterns/dates');
+    const sel = document.getElementById('scan-hist-select');
+    sel.innerHTML = '<option value="">— previous scans —</option>';
+    (data.dates || []).forEach(d => {
+      const o = document.createElement('option');
+      o.value = d.scan_date;
+      o.textContent = `${d.scan_date}  (${d.count} hits)`;
+      sel.appendChild(o);
+    });
+  } catch {}
+}
+
+function onScanHistSelect() {
+  const date = document.getElementById('scan-hist-select').value;
+  if (!date) return;
+  document.getElementById('scan-date').value = date;
+  _loadPatternResults(date);
+}
+
+async function startPatternScan() {
+  let body, pollDate;
+  if (_scanMode === 'range') {
+    const from = document.getElementById('scan-from').value.trim();
+    const to   = document.getElementById('scan-to').value.trim();
+    if (!from || !/^\d{4}-\d{2}-\d{2}$/.test(from) ||
+        !to   || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      alert('Please enter valid From and To dates (YYYY-MM-DD).'); return;
+    }
+    if (from > to) { alert('From date must be before To date.'); return; }
+    body     = {from_date: from, to_date: to};
+    pollDate = to;
+  } else {
+    const date = document.getElementById('scan-date').value.trim();
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      alert('Please enter a valid date (YYYY-MM-DD).'); return;
+    }
+    body     = {date};
+    pollDate = date;
+  }
+
+  _setScanRunning(true);
+  document.getElementById('scan-progress-wrap').style.display = 'block';
+  document.getElementById('scan-progress-bar').style.width   = '0%';
+  document.getElementById('scan-status-line').textContent    = 'Starting scan…';
+
+  try {
+    const r = await fetch('/api/patterns/scan', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (r.status === 409) {
+      document.getElementById('scan-status-line').textContent = 'Scan already running, attaching…';
+    } else if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      document.getElementById('scan-status-line').textContent = '⚠ ' + (j.error || r.statusText);
+      _setScanRunning(false); return;
+    }
+  } catch(e) {
+    document.getElementById('scan-status-line').textContent = '⚠ ' + e.message;
+    _setScanRunning(false); return;
+  }
+  _startScanPoll(pollDate);
+}
+
+function _startScanPoll(date) {
+  if (_scanPollTimer) clearInterval(_scanPollTimer);
+  _scanPollTimer = setInterval(() => _pollScanStatus(date), 1500);
+  _pollScanStatus(date);
+}
+
+async function _pollScanStatus(date) {
+  let s;
+  try { s = await apiFetch('/api/patterns/scan/status'); } catch { return; }
+
+  const pct = s.total > 0 ? Math.round(s.done / s.total * 100) : 0;
+  document.getElementById('scan-progress-bar').style.width = pct + '%';
+
+  if (s.running) {
+    const label = s.mode === 'range'
+      ? `Scanning range… ${s.done} / ${s.total}${s.ticker ? '  —  ' + s.ticker : ''}`
+      : `Scanning… ${s.done} / ${s.total}${s.ticker ? '  —  ' + s.ticker : ''}`;
+    document.getElementById('scan-status-line').textContent = label;
+  } else {
+    clearInterval(_scanPollTimer); _scanPollTimer = null;
+    if (s.error) {
+      document.getElementById('scan-status-line').textContent = '⚠ ' + s.error;
+    } else if (s.mode === 'range') {
+      document.getElementById('scan-status-line').textContent =
+        `Done — range ${s.from_date} → ${s.to_date} saved. Showing ${s.scan_date}.`;
+    } else {
+      document.getElementById('scan-status-line').textContent =
+        `Done — ${s.done} tickers scanned.`;
+    }
+    _setScanRunning(false);
+    await _loadPatternResults(s.scan_date || date);
+    _loadScanDates();
+  }
+}
+
+function _setScanRunning(on) {
+  document.getElementById('scan-btn').disabled = on;
+  document.getElementById('scan-spinner').style.display = on ? 'inline-block' : 'none';
+  if (!on) setTimeout(() => {
+    document.getElementById('scan-progress-wrap').style.display = 'none';
+  }, 2500);
+}
+
+function setPatternsub(sub) {
+  _currentPatternsub = sub;
+  Object.keys(PATTERN_SUB_MAP).forEach(k =>
+    document.getElementById('psub-' + k).classList.toggle('active', k === sub));
+  _applyPatternsub();
+}
+
+function _applyPatternsub() {
+  const filter = PATTERN_SUB_MAP[_currentPatternsub];
+  const rows   = filter ? _lastPatternRows.filter(r => r.pattern_name === filter) : _lastPatternRows;
+  const countEl = document.getElementById('pattern-count');
+  countEl.textContent = filter
+    ? `${rows.length} of ${_lastPatternRows.length} shown`
+    : `${_lastPatternRows.length} result${_lastPatternRows.length !== 1 ? 's' : ''}`;
+  _renderPatternRows(rows);
+}
+
+function _renderPatternRows(rows) {
+  if (!rows.length) {
+    document.getElementById('patterns-body').innerHTML =
+      `<tr><td colspan="11" class="state-msg">No patterns match this filter.</td></tr>`;
+    return;
+  }
+  document.getElementById('patterns-body').innerHTML = rows.map(r => {
+    const rowCls  = PATTERN_ROW_CLASS[r.pattern_name]  || '';
+    const pillCls = PATTERN_PILL_CLASS[r.pattern_name] || '';
+    const inMon   = _monitorTickers.has(r.ticker);
+    const watchBtn = inMon
+      ? `<button class="del-btn watch-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Watching</button>`
+      : `<button class="del-btn watch-btn" onclick="addPatternToMonitor('${r.ticker}','${r.pattern_name}','${r.signal_date||''}',${r.close||0},this)">+ Watch</button>`;
+    return `<tr class="${rowCls}">
+      <td class="left ticker-cell">${r.ticker}</td>
+      <td class="scan-date-col" style="font-size:11px;color:var(--muted);font-family:monospace">${fmtDate(r.scan_date)}</td>
+      <td class="left"><span class="ppill ${pillCls}">${r.pattern_name}</span></td>
+      <td class="left" style="color:var(--muted);font-size:11px;white-space:normal;max-width:240px">${r.signal_detail || '—'}</td>
+      <td>${fmtDate(r.signal_date)}</td>
+      <td><strong>${fmtVal(r.close,'$')}</strong></td>
+      <td>${dayPctCell(r.pct_change)}</td>
+      <td>${fmtVal(r.ma10)}</td><td>${fmtVal(r.ma30)}</td>
+      <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma200)}</td>
+      <td>${watchBtn}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function addPatternToMonitor(ticker, patternName, signalDate, closePrice, btn) {
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    await apiFetch('/api/monitor', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        ticker, reason: patternName,
+        signal_date: signalDate || null,
+        signal_price: closePrice || null,
+      }),
+    });
+    _monitorTickers.add(ticker);
+    document.querySelectorAll('#patterns-body tr').forEach(tr => {
+      const cell = tr.querySelector('.ticker-cell');
+      if (cell && cell.textContent.trim() === ticker) {
+        const b = tr.querySelector('.watch-btn');
+        if (b && !b.disabled) {
+          b.textContent = '✓ Watching';
+          b.style.color = 'var(--green)'; b.style.borderColor = 'var(--green)';
+          b.style.cursor = 'default'; b.disabled = true; b.onclick = null;
+        }
+      }
+    });
+  } catch(e) {
+    if ((e.message || '').toLowerCase().includes('already')) {
+      _monitorTickers.add(ticker);
+      btn.textContent = '✓ Watching'; btn.style.color = 'var(--green)'; btn.disabled = true;
+    } else {
+      btn.disabled = false; btn.textContent = '+ Watch';
+      alert('Error: ' + e.message);
+    }
+  }
+}
+
+// ═══════════════════════════════════════
+//  Backtester
+// ═══════════════════════════════════════
+let _btBatchData = [];
+
+function loadBacktester() {
+  btUpdateMatrix();
+}
+
+function _btRules() {
+  return {
+    t1:    parseFloat(document.getElementById('bt-t1').value)    || 10.0,
+    sl:    parseFloat(document.getElementById('bt-sl').value)    || 11.0,
+    t2:    parseFloat(document.getElementById('bt-t2').value)    || 20.0,
+    rev:   parseFloat(document.getElementById('bt-rev').value)   ||  0.0,
+    prot:  parseFloat(document.getElementById('bt-prot').value)  || 10.0,
+    trail: parseFloat(document.getElementById('bt-trail').value) || 10.0,
+  };
+}
+
+function btUpdateMatrix() {
+  const ticker = (document.getElementById('bt-ticker').value || '').trim().toUpperCase() || '—';
+  const p0     = parseFloat(document.getElementById('bt-p0').value) || 0;
+  const r      = _btRules();
+
+  const px = v => p0 > 0 ? '$' + (p0 * v).toFixed(2) : '—';
+
+  document.getElementById('bt-matrix').textContent =
+`STRATEGY EXECUTION MATRIX  (Initial: 4 QTY)
+════════════════════════════════════════════
+Ticker  : ${ticker}
+Entry   : ${p0 > 0 ? '$' + p0.toFixed(2) : '—'}
+
+STAGE 1 — FULL POSITION (Holding 4 QTY)
+  ▲ Target 1 (+${r.t1}%)    Sell 2  if High ≥ ${px(1 + r.t1/100)}
+  ▼ Stop Loss (-${r.sl}%)   Sell ALL if Low ≤ ${px(1 - r.sl/100)}
+
+STAGE 2 — RUNNER (Holding 2 QTY)
+  ▲ Target 2 (+${r.t2}%)    Sell 1  if High ≥ ${px(1 + r.t2/100)}
+  ▼ Reversal (${r.rev}%)     Sell 2  if Low  ≤ ${px(1 + r.rev/100)}
+
+STAGE 3 — FINAL (Holding 1 QTY)
+  ▼ Protection (+${r.prot}%) Sell 1  if Low  ≤ ${px(1 + r.prot/100)}
+  ▼ Trailing (-${r.trail}%)  Sell 1  if Low  ≤ High_30D × ${(1 - r.trail/100).toFixed(2)}`;
+}
+
+function _setBtRunning(on) {
+  document.getElementById('bt-spinner').style.display = on ? 'inline-block' : 'none';
+}
+
+async function runSingleBacktest() {
+  const ticker = (document.getElementById('bt-ticker').value || '').trim().toUpperCase();
+  const p0     = parseFloat(document.getElementById('bt-p0').value);
+  const start  = document.getElementById('bt-start').value.trim();
+  const end    = document.getElementById('bt-end').value.trim();
+  const r      = _btRules();
+  const errEl  = document.getElementById('bt-error');
+  errEl.textContent = '';
+
+  if (!ticker)        { errEl.textContent = 'Ticker is required.';        return; }
+  if (!p0 || p0 <= 0) { errEl.textContent = 'Entry price P0 is required.'; return; }
+  if (!start)         { errEl.textContent = 'Start date is required.';    return; }
+
+  _setBtRunning(true);
+  try {
+    const data = await apiFetch('/api/backtest/single', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        ticker, p0, start_date: start, end_date: end || null,
+        t1: r.t1, sl: r.sl, t2: r.t2, rev: r.rev, prot: r.prot, trail: r.trail,
+      }),
+    });
+    _renderSingleResult(data);
+  } catch(e) {
+    errEl.textContent = e.message;
+  } finally {
+    _setBtRunning(false);
+  }
+}
+
+function _renderSingleResult(data) {
+  const plCls = data.total_pnl >= 0 ? 'green' : 'red';
+  const sign  = data.total_pnl >= 0 ? '+' : '';
+  const rCls  = data.roi >= 0 ? 'green' : 'red';
+
+  const cards = document.getElementById('bt-cards');
+  cards.style.display = 'flex';
+  cards.innerHTML = `
+    <div class="card"><div class="card-label">Ticker</div>
+      <div class="card-value" style="font-size:17px">${data.ticker}</div></div>
+    <div class="card"><div class="card-label">Initial Cost</div>
+      <div class="card-value">$${(data.initial_cost||0).toFixed(2)}</div></div>
+    <div class="card"><div class="card-label">Net P/L</div>
+      <div class="card-value ${plCls}">${sign}$${Math.abs(data.total_pnl||0).toFixed(2)}</div></div>
+    <div class="card"><div class="card-label">ROI</div>
+      <div class="card-value ${rCls}">${sign}${(data.roi||0).toFixed(2)}%</div></div>
+    <div class="card"><div class="card-label">Final Status</div>
+      <div class="card-value" style="font-size:12px">${data.status || '—'}</div></div>`;
+
+  document.getElementById('bt-results-title').textContent =
+    `Transaction Log — ${data.ticker}`;
+  document.getElementById('bt-results-wrap').style.display = 'block';
+  document.getElementById('bt-tx-section').style.display   = 'block';
+  document.getElementById('bt-batch-section').style.display = 'none';
+
+  document.getElementById('bt-tx-body').innerHTML =
+    (data.transactions || []).map(t => {
+      const isBuy  = t.action === 'BUY';
+      const isOpen = t.action === 'OPEN HOLDING';
+      const acColor = isBuy  ? 'var(--accent)'
+                    : isOpen ? 'var(--muted)'
+                    : (t.reason === 'Stop Loss Hit' ? 'var(--red)' : 'var(--green)');
+      const cfColor = t.cash_flow >= 0 ? 'var(--green)' : 'var(--red)';
+      const cfSign  = t.cash_flow >= 0 ? '+' : '';
+      return `<tr>
+        <td class="left">${t.date}</td>
+        <td class="left" style="font-weight:600;color:${acColor}">${t.action}</td>
+        <td>${t.qty}</td>
+        <td>$${(t.price||0).toFixed(4)}</td>
+        <td style="color:${cfColor}">${cfSign}$${Math.abs(t.cash_flow||0).toFixed(2)}</td>
+        <td>${t.remaining}</td>
+        <td class="left" style="color:var(--muted);font-size:12px">${t.reason}</td>
+      </tr>`;
+    }).join('');
+}
+
+async function runBatchBacktest() {
+  const r     = _btRules();
+  const errEl = document.getElementById('bt-error');
+  errEl.textContent = '';
+  _setBtRunning(true);
+  try {
+    const data = await apiFetch('/api/backtest/batch', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({t1: r.t1, sl: r.sl, t2: r.t2, rev: r.rev, prot: r.prot, trail: r.trail}),
+    });
+    _renderBatchResult(data);
+  } catch(e) {
+    errEl.textContent = e.message;
+  } finally {
+    _setBtRunning(false);
+  }
+}
+
+function _renderBatchResult(data) {
+  const rows      = data.data || [];
+  const validRows = rows.filter(r => !r.error);
+  const totalCost = validRows.reduce((s, r) => s + (r.initial_cost || 0), 0);
+  const totalPnl  = validRows.reduce((s, r) => s + (r.total_pnl    || 0), 0);
+  const winners   = validRows.filter(r => r.total_pnl > 0).length;
+  const plCls     = totalPnl >= 0 ? 'green' : 'red';
+  const sign      = totalPnl >= 0 ? '+' : '';
+
+  const cards = document.getElementById('bt-cards');
+  cards.style.display = 'flex';
+  cards.innerHTML = `
+    <div class="card"><div class="card-label">Positions</div>
+      <div class="card-value">${validRows.length}</div></div>
+    <div class="card"><div class="card-label">Total Invested</div>
+      <div class="card-value">$${totalCost.toFixed(0)}</div></div>
+    <div class="card"><div class="card-label">Total P/L</div>
+      <div class="card-value ${plCls}">${sign}$${Math.abs(totalPnl).toFixed(0)}</div></div>
+    <div class="card"><div class="card-label">Winners</div>
+      <div class="card-value">${winners} / ${validRows.length}</div></div>`;
+
+  document.getElementById('bt-results-title').textContent =
+    `Batch Results — ${rows.length} holding${rows.length !== 1 ? 's' : ''}`;
+  document.getElementById('bt-results-wrap').style.display  = 'block';
+  document.getElementById('bt-tx-section').style.display    = 'none';
+  document.getElementById('bt-batch-section').style.display = 'block';
+  document.getElementById('bt-batch-detail').style.display  = 'none';
+
+  _btBatchData = rows;
+
+  document.getElementById('bt-batch-body').innerHTML = rows.map((r, i) => {
+    if (r.error) {
+      return `<tr>
+        <td class="left ticker-cell">${r.ticker}</td>
+        <td>${r.start_date || '—'}</td>
+        <td>$${(r.p0||0).toFixed(2)}</td>
+        <td colspan="4" style="color:var(--muted);font-size:12px">${r.error}</td>
+        <td>—</td>
+      </tr>`;
+    }
+    const pCls = r.total_pnl >= 0 ? 'green' : 'red';
+    const ps   = r.total_pnl >= 0 ? '+' : '';
+    const rCls = r.roi >= 0 ? 'green' : 'red';
+    return `<tr style="cursor:pointer" onclick="btShowDetail(${i})">
+      <td class="left ticker-cell">${r.ticker}</td>
+      <td>${r.start_date || '—'}</td>
+      <td>$${(r.p0||0).toFixed(2)}</td>
+      <td>$${(r.initial_cost||0).toFixed(2)}</td>
+      <td><span class="${pCls}">${ps}$${Math.abs(r.total_pnl||0).toFixed(2)}</span></td>
+      <td><span class="pill ${rCls}">${ps}${(r.roi||0).toFixed(2)}%</span></td>
+      <td style="font-size:11px;color:var(--muted)">${r.status || '—'}</td>
+      <td><button class="del-btn" onclick="event.stopPropagation();btShowDetail(${i})">Detail</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function btShowDetail(idx) {
+  const r = _btBatchData[idx];
+  if (!r || !r.transactions) return;
+
+  const sign = (r.roi||0) >= 0 ? '+' : '';
+  document.getElementById('bt-batch-detail-title').textContent =
+    `${r.ticker} — Transactions  (P0: $${(r.p0||0).toFixed(2)} | ROI: ${sign}${(r.roi||0).toFixed(2)}%)`;
+  document.getElementById('bt-batch-detail').style.display = 'block';
+
+  document.getElementById('bt-batch-tx-body').innerHTML =
+    (r.transactions || []).map(t => {
+      const isBuy  = t.action === 'BUY';
+      const isOpen = t.action === 'OPEN HOLDING';
+      const acColor = isBuy  ? 'var(--accent)'
+                    : isOpen ? 'var(--muted)'
+                    : (t.reason === 'Stop Loss Hit' ? 'var(--red)' : 'var(--green)');
+      const cfColor = t.cash_flow >= 0 ? 'var(--green)' : 'var(--red)';
+      const cfSign  = t.cash_flow >= 0 ? '+' : '';
+      return `<tr>
+        <td class="left">${t.date}</td>
+        <td class="left" style="font-weight:600;color:${acColor}">${t.action}</td>
+        <td>${t.qty}</td>
+        <td>$${(t.price||0).toFixed(4)}</td>
+        <td style="color:${cfColor}">${cfSign}$${Math.abs(t.cash_flow||0).toFixed(2)}</td>
+        <td>${t.remaining}</td>
+        <td class="left" style="color:var(--muted);font-size:12px">${t.reason}</td>
+      </tr>`;
+    }).join('');
+
+  document.getElementById('bt-batch-detail').scrollIntoView({behavior: 'smooth', block: 'nearest'});
 }
 
 // ═══════════════════════════════════════
