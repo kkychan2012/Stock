@@ -1181,6 +1181,75 @@ def backtest_single():
     })
 
 
+@app.post("/api/backtest/selection")
+def backtest_selection():
+    body  = request.get_json(silent=True) or {}
+    items = body.get("items") or []
+    if not items:
+        return jsonify({"error": "items list is required"}), 400
+    try:
+        rules = _parse_rules(body)
+    except (ValueError, TypeError) as exc:
+        return jsonify({"error": f"Invalid parameters: {exc}"}), 400
+
+    results = []
+    for item in items:
+        ticker     = (item.get("ticker") or "").strip().upper()
+        if not ticker:
+            continue
+        try:
+            p0         = float(item["p0"])
+            start_date = str(item.get("start_date") or "").strip()
+        except (KeyError, ValueError, TypeError):
+            results.append({"ticker": ticker, "error": "Invalid p0 or start_date"})
+            continue
+
+        if p0 <= 0:
+            results.append({"ticker": ticker, "p0": p0, "start_date": start_date,
+                             "error": "p0 must be > 0"})
+            continue
+        if not start_date:
+            results.append({"ticker": ticker, "p0": p0, "start_date": start_date,
+                             "error": "start_date is required"})
+            continue
+
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT date, open, high, low, high_30d FROM stocks_daily"
+                " WHERE ticker=? AND date>=? ORDER BY date",
+                (ticker, start_date),
+            ).fetchall()
+
+        if not rows:
+            results.append({"ticker": ticker, "p0": p0, "start_date": start_date,
+                             "error": "No price data found",
+                             "initial_cost": None, "total_pnl": None,
+                             "roi": None, "status": None, "transactions": []})
+            continue
+
+        txs = run_trading_simulation([dict(r) for r in rows], p0, start_date, rules)
+        if not txs:
+            results.append({"ticker": ticker, "p0": p0, "start_date": start_date,
+                             "error": "Simulation produced no transactions",
+                             "initial_cost": None, "total_pnl": None,
+                             "roi": None, "status": None, "transactions": []})
+            continue
+
+        initial_cost, total_pnl, roi = calculate_metrics(txs)
+        results.append({
+            "ticker":       ticker,
+            "p0":           p0,
+            "start_date":   start_date,
+            "initial_cost": round(initial_cost, 2),
+            "total_pnl":    round(total_pnl,    2),
+            "roi":          round(roi,           2),
+            "status":       txs[-1]["action"],
+            "transactions": txs,
+        })
+
+    return jsonify({"count": len(results), "data": results})
+
+
 @app.post("/api/backtest/batch")
 def backtest_batch():
     body = request.get_json(silent=True) or {}

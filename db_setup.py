@@ -130,11 +130,35 @@ def setup_database():
                 added_at   TEXT    DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS pattern_scan_results (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_date    TEXT    NOT NULL,
+                ticker       TEXT    NOT NULL,
+                pattern_name TEXT    NOT NULL,
+                signal_detail TEXT,
+                signal_date  TEXT,
+                close        REAL,
+                ma10         REAL,
+                ma30         REAL,
+                ma50         REAL,
+                ma200        REAL,
+                volume       INTEGER,
+                vol_ma10     REAL,
+                high_30d     REAL,
+                low_30d      REAL,
+                pct_change   REAL,
+                scanned_at   TEXT    DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(scan_date, ticker, pattern_name)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_stocks_daily_ticker_date
                 ON stocks_daily(ticker, date);
 
             CREATE INDEX IF NOT EXISTS idx_breakout_signals_date
                 ON breakout_signals(signal_date);
+
+            CREATE INDEX IF NOT EXISTS idx_pattern_scan_date
+                ON pattern_scan_results(scan_date);
         """)
         _migrate(conn)
     print(f"Database ready at: {DB_PATH}")
@@ -208,6 +232,34 @@ def _migrate(conn):
                 added_at TEXT    DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+    if "pattern_scan_results" not in existing_tables:
+        conn.execute("""
+            CREATE TABLE pattern_scan_results (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_date    TEXT    NOT NULL,
+                ticker       TEXT    NOT NULL,
+                pattern_name TEXT    NOT NULL,
+                signal_detail TEXT,
+                signal_date  TEXT,
+                close        REAL,
+                ma10         REAL,
+                ma30         REAL,
+                ma50         REAL,
+                ma200        REAL,
+                volume       INTEGER,
+                vol_ma10     REAL,
+                high_30d     REAL,
+                low_30d      REAL,
+                pct_change   REAL,
+                scanned_at   TEXT    DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(scan_date, ticker, pattern_name)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pattern_scan_date "
+            "ON pattern_scan_results(scan_date)"
+        )
 
     _fix_existing_dates(conn)
 

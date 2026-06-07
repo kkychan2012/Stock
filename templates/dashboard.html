@@ -425,10 +425,10 @@
           <th>Signal Date</th><th>Signal Price</th><th>Since Signal</th>
           <th>Current Price</th><th>Day %</th>
           <th>MA10</th><th>MA30</th><th>MA50</th><th>MA200</th>
-          <th>High 30D</th><th>Low 30D</th><th>Added Date</th><th>Action</th>
+          <th>High 30D</th><th>Low 30D</th><th>Added Date</th><th>Backtest</th><th>Action</th>
         </tr></thead>
         <tbody id="monitor-body">
-          <tr><td colspan="17" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
+          <tr><td colspan="18" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
         </tbody>
       </table>
     </div>
@@ -531,10 +531,10 @@
           <th>Date</th>
           <th>Close</th><th>Day&nbsp;%</th>
           <th>MA10</th><th>MA30</th><th>MA50</th><th>MA200</th>
-          <th>Monitor</th>
+          <th>Monitor</th><th>Backtest</th>
         </tr></thead>
         <tbody id="patterns-body">
-          <tr><td colspan="11" class="state-msg">Select a date and click &#9654; Scan Now to find patterns.</td></tr>
+          <tr><td colspan="12" class="state-msg">Select a date and click &#9654; Scan Now to find patterns.</td></tr>
         </tbody>
       </table>
     </div>
@@ -668,10 +668,33 @@
 
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button class="btn btn-primary" onclick="runSingleBacktest()">&#9654; Run Single</button>
-          <button class="btn btn-fetch"   onclick="runBatchBacktest()">&#9654;&#9654; Batch — All Holdings</button>
+          <button id="bt-batch-btn" class="btn btn-fetch" onclick="runSelectionBacktest()" disabled
+                  style="opacity:.5">&#9654;&#9654; Batch — Selection (0)</button>
           <span id="bt-spinner" class="spinner" style="display:none"></span>
         </div>
         <div id="bt-error" style="font-size:12px;color:var(--red);margin-top:6px;min-height:16px"></div>
+
+        <!-- Selection Queue -->
+        <div id="bt-queue-wrap" style="display:none;margin-top:14px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <span style="font-weight:600;font-size:13px;color:var(--text)">Selection Queue</span>
+            <span id="bt-queue-count" style="font-size:12px;color:var(--muted)"></span>
+            <button class="btn btn-ghost" style="padding:3px 10px;font-size:12px"
+                    onclick="clearBtQueue()">Clear All</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr>
+                <th class="left">Ticker</th>
+                <th class="left">Source</th>
+                <th>P0 ($)</th>
+                <th>Start Date</th>
+                <th>Remove</th>
+              </tr></thead>
+              <tbody id="bt-queue-body"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
       <!-- Right: strategy matrix (dark terminal panel) -->
@@ -1207,9 +1230,13 @@ async function loadMonitor() {
   catch(e) { empty('monitor-body', 17, '⚠ ' + e.message); }
 }
 function renderMonitor(rows) {
-  if (!rows.length) { empty('monitor-body', 17, 'Monitor list is empty. Click + Add or upload a CSV.'); return; }
-  document.getElementById('monitor-body').innerHTML = rows.map(r => `
-    <tr>
+  if (!rows.length) { empty('monitor-body', 18, 'Monitor list is empty. Click + Add or upload a CSV.'); return; }
+  document.getElementById('monitor-body').innerHTML = rows.map(r => {
+    const inQueue = !!_btQueue.find(x => x.ticker === r.ticker);
+    const btBtn   = inQueue
+      ? `<button class="del-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Queued</button>`
+      : `<button class="del-btn" onclick="monitorAddToBacktest('${r.ticker}',${r.signal_price||0},'${r.signal_date||''}',this)">+ Backtest</button>`;
+    return `<tr>
       <td class="left ticker-cell">${r.ticker}</td>
       <td class="left name-cell">${r.stock_name || '—'}</td>
       <td class="left" style="color:var(--muted);max-width:160px">${r.reason || '—'}</td>
@@ -1223,12 +1250,27 @@ function renderMonitor(rows) {
       <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma200)}</td>
       <td>${fmtVal(r.high_30d)}</td><td>${fmtVal(r.low_30d)}</td>
       <td style="font-size:11px;color:var(--muted)">${fmtDate(r.added_at)}</td>
+      <td>${btBtn}</td>
       <td style="white-space:nowrap">
         <button class="del-btn" style="color:var(--accent);border-color:var(--accent)"
           onclick='openRecordModal("monitor",${JSON.stringify(r)})'>Edit</button>
         <button class="del-btn" onclick='deleteRecord("monitor",${r.id})'>&#215;</button>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
+}
+
+function monitorAddToBacktest(ticker, p0, signalDate, btn) {
+  const added = addToBacktestQueue(ticker, p0, signalDate, 'Monitor');
+  if (added) {
+    btn.textContent = '✓ Queued';
+    btn.style.color = 'var(--green)'; btn.style.borderColor = 'var(--green)';
+    btn.style.cursor = 'default'; btn.disabled = true; btn.onclick = null;
+  } else {
+    btn.textContent = '✓ Queued';
+    btn.style.color = 'var(--green)'; btn.style.borderColor = 'var(--green)';
+    btn.style.cursor = 'default'; btn.disabled = true; btn.onclick = null;
+  }
 }
 
 // ═══════════════════════════════════════
@@ -1804,7 +1846,7 @@ function clearPatternRange() {
   document.getElementById('view-from').value = '';
   document.getElementById('view-to').value   = '';
   document.getElementById('patterns-body').innerHTML =
-    `<tr><td colspan="11" class="state-msg">Select a date above or pick a range to view results.</td></tr>`;
+    `<tr><td colspan="12" class="state-msg">Select a date above or pick a range to view results.</td></tr>`;
   document.getElementById('pattern-count').textContent = '';
   _lastPatternRows = [];
 }
@@ -1812,20 +1854,20 @@ function clearPatternRange() {
 async function _loadPatternResults(date) {
   _setPatternRangeView(false);
   document.getElementById('patterns-body').innerHTML =
-    `<tr><td colspan="11" class="state-msg"><span class="spinner"></span>Loading…</td></tr>`;
+    `<tr><td colspan="12" class="state-msg"><span class="spinner"></span>Loading…</td></tr>`;
   document.getElementById('pattern-count').textContent = '';
   try {
     const data = await apiFetch(`/api/patterns/results?date=${date}`);
     _lastPatternRows = data.data || [];
     if (!_lastPatternRows.length) {
       document.getElementById('patterns-body').innerHTML =
-        `<tr><td colspan="11" class="state-msg">No scan results for ${date}. Click &#9654; Scan Now to generate.</td></tr>`;
+        `<tr><td colspan="12" class="state-msg">No scan results for ${date}. Click &#9654; Scan Now to generate.</td></tr>`;
     } else {
       _applyPatternsub();
     }
   } catch(e) {
     document.getElementById('patterns-body').innerHTML =
-      `<tr><td colspan="11" class="state-msg">&#9888; ${e.message}</td></tr>`;
+      `<tr><td colspan="12" class="state-msg">&#9888; ${e.message}</td></tr>`;
   }
 }
 
@@ -1958,16 +2000,20 @@ function _applyPatternsub() {
 function _renderPatternRows(rows) {
   if (!rows.length) {
     document.getElementById('patterns-body').innerHTML =
-      `<tr><td colspan="11" class="state-msg">No patterns match this filter.</td></tr>`;
+      `<tr><td colspan="12" class="state-msg">No patterns match this filter.</td></tr>`;
     return;
   }
   document.getElementById('patterns-body').innerHTML = rows.map(r => {
     const rowCls  = PATTERN_ROW_CLASS[r.pattern_name]  || '';
     const pillCls = PATTERN_PILL_CLASS[r.pattern_name] || '';
     const inMon   = _monitorTickers.has(r.ticker);
+    const inQueue = !!_btQueue.find(x => x.ticker === r.ticker);
     const watchBtn = inMon
       ? `<button class="del-btn watch-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Watching</button>`
       : `<button class="del-btn watch-btn" onclick="addPatternToMonitor('${r.ticker}','${r.pattern_name}','${r.signal_date||''}',${r.close||0},this)">+ Watch</button>`;
+    const btBtn = inQueue
+      ? `<button class="del-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Queued</button>`
+      : `<button class="del-btn" onclick="patternAddToBacktest('${r.ticker}',${r.close||0},'${r.signal_date||''}','${(r.pattern_name||'').replace(/'/g,'\\u0027')}',this)">+ Backtest</button>`;
     return `<tr class="${rowCls}">
       <td class="left ticker-cell">${r.ticker}</td>
       <td class="scan-date-col" style="font-size:11px;color:var(--muted);font-family:monospace">${fmtDate(r.scan_date)}</td>
@@ -1979,6 +2025,7 @@ function _renderPatternRows(rows) {
       <td>${fmtVal(r.ma10)}</td><td>${fmtVal(r.ma30)}</td>
       <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma200)}</td>
       <td>${watchBtn}</td>
+      <td>${btBtn}</td>
     </tr>`;
   }).join('');
 }
@@ -2014,6 +2061,126 @@ async function addPatternToMonitor(ticker, patternName, signalDate, closePrice, 
       btn.disabled = false; btn.textContent = '+ Watch';
       alert('Error: ' + e.message);
     }
+  }
+}
+
+function patternAddToBacktest(ticker, p0, signalDate, patternName, btn) {
+  const added = addToBacktestQueue(ticker, p0, signalDate, 'Pattern: ' + patternName);
+  btn.textContent = '✓ Queued';
+  btn.style.color = 'var(--green)'; btn.style.borderColor = 'var(--green)';
+  btn.style.cursor = 'default'; btn.disabled = true; btn.onclick = null;
+}
+
+// ═══════════════════════════════════════
+//  Backtest Selection Queue
+// ═══════════════════════════════════════
+let _btQueue    = [];
+let _btQueueSeq = 0;
+
+function addToBacktestQueue(ticker, p0, startDate, source) {
+  if (_btQueue.find(x => x.ticker === ticker)) {
+    // Already queued — just flash the tab
+    _updateBtTabBadge();
+    return false;
+  }
+  _btQueue.push({
+    id: ++_btQueueSeq,
+    ticker,
+    p0:         p0         || 0,
+    start_date: startDate  || '',
+    source:     source     || '',
+  });
+  _renderBtQueue();
+  _updateBtTabBadge();
+  return true;
+}
+
+function removeFromBtQueue(id) {
+  _btQueue = _btQueue.filter(x => x.id !== id);
+  _renderBtQueue();
+  _updateBtTabBadge();
+}
+
+function clearBtQueue() {
+  _btQueue = [];
+  _renderBtQueue();
+  _updateBtTabBadge();
+}
+
+function _renderBtQueue() {
+  const n   = _btQueue.length;
+  const btn = document.getElementById('bt-batch-btn');
+  btn.textContent = `►► Batch — Selection (${n})`;
+  btn.disabled    = n === 0;
+  btn.style.opacity = n === 0 ? '.5' : '1';
+
+  const wrap = document.getElementById('bt-queue-wrap');
+  wrap.style.display = n > 0 ? 'block' : 'none';
+  if (n === 0) return;
+
+  document.getElementById('bt-queue-count').textContent =
+    `${n} stock${n !== 1 ? 's' : ''} selected`;
+
+  document.getElementById('bt-queue-body').innerHTML = _btQueue.map(item => `
+    <tr>
+      <td class="left ticker-cell">${item.ticker}</td>
+      <td class="left" style="color:var(--muted);font-size:11px">${item.source}</td>
+      <td><input class="ticker-add-input" type="number" step="0.01" min="0"
+           id="btq-p0-${item.id}" value="${item.p0 || ''}"
+           style="width:88px;font-size:12px;padding:3px 6px" placeholder="0.00"></td>
+      <td><input class="ticker-add-input" type="text" maxlength="10"
+           id="btq-dt-${item.id}" value="${item.start_date || ''}"
+           style="width:108px;font-size:12px;padding:3px 6px;font-family:monospace"
+           placeholder="YYYY-MM-DD" onblur="normaliseDateInput(this)"></td>
+      <td><button class="del-btn" onclick="removeFromBtQueue(${item.id})">&#10005;</button></td>
+    </tr>`).join('');
+}
+
+function _updateBtTabBadge() {
+  const n   = _btQueue.length;
+  const btn = document.querySelectorAll('.tab-btn')[6];
+  if (btn) btn.textContent = n > 0 ? `Backtester (${n})` : 'Backtester';
+}
+
+async function runSelectionBacktest() {
+  if (_btQueue.length === 0) {
+    document.getElementById('bt-error').textContent =
+      'Queue is empty. Add stocks from Monitor or Pattern Scanner.';
+    return;
+  }
+
+  // Read current input values (user may have edited P0 / date)
+  const items = _btQueue.map(item => ({
+    ticker:     item.ticker,
+    p0:         parseFloat(document.getElementById(`btq-p0-${item.id}`)?.value) || item.p0,
+    start_date: (document.getElementById(`btq-dt-${item.id}`)?.value || item.start_date).trim(),
+  }));
+
+  const bad = items.filter(x => !x.p0 || x.p0 <= 0 || !x.start_date);
+  if (bad.length) {
+    document.getElementById('bt-error').textContent =
+      `Missing P0 or Start Date for: ${bad.map(x => x.ticker).join(', ')}`;
+    return;
+  }
+
+  const r     = _btRules();
+  const errEl = document.getElementById('bt-error');
+  errEl.textContent = '';
+  _setBtRunning(true);
+  try {
+    const data = await apiFetch('/api/backtest/selection', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        items,
+        t1: r.t1, sl: r.sl, t2: r.t2, rev: r.rev, prot: r.prot, trail: r.trail,
+      }),
+    });
+    _renderBatchResult(data);
+  } catch(e) {
+    errEl.textContent = e.message;
+  } finally {
+    _setBtRunning(false);
   }
 }
 
