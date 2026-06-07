@@ -42,7 +42,7 @@ import os
 import threading
 from datetime import datetime, timedelta
 
-from flask import Flask, jsonify, request, render_template, Response
+from flask import Flask, jsonify, request, render_template, Response, send_file
 
 from db_setup import get_connection, setup_database
 from fetch_data import fetch_all, get_tickers_from_db
@@ -1312,6 +1312,41 @@ def backtest_batch():
         })
 
     return jsonify({"count": len(results), "data": results})
+
+
+# ---------------------------------------------------------------------------
+# Backup / Restore
+# ---------------------------------------------------------------------------
+
+@app.get("/api/backup/download")
+def backup_download():
+    from db_setup import DB_PATH
+    if not os.path.exists(DB_PATH):
+        return jsonify({"error": "Database file not found"}), 404
+    return send_file(DB_PATH, as_attachment=True, download_name="stock_dashboard.db",
+                     mimetype="application/octet-stream")
+
+
+@app.post("/api/backup/restore")
+def backup_restore():
+    from db_setup import DB_PATH
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"error": "No file uploaded"}), 400
+    header = f.read(16)
+    if not header.startswith(b"SQLite format 3"):
+        return jsonify({"error": "Not a valid SQLite database file"}), 400
+    f.seek(0)
+    # Write to a temp file first, then atomically replace
+    tmp_path = DB_PATH + ".restore_tmp"
+    try:
+        f.save(tmp_path)
+        os.replace(tmp_path, DB_PATH)
+    except Exception as e:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"ok": True, "message": "Database restored. Please refresh the page."})
 
 
 # ---------------------------------------------------------------------------

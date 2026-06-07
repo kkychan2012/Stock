@@ -268,6 +268,13 @@
   <span id="last-updated"></span>
   <button class="btn btn-fetch"   onclick="openFetchModal()">&#8659; Fetch Data</button>
   <button class="btn btn-primary" onclick="refreshCurrent()">&#8635; Refresh</button>
+  <a href="/api/backup/download" download>
+    <button class="btn btn-ghost" title="Download database backup">&#8681; Backup DB</button>
+  </a>
+  <span class="file-btn-wrap" title="Restore database from backup">
+    <button class="btn btn-ghost" style="color:var(--red);border-color:var(--red)">&#8679; Restore DB</button>
+    <input type="file" accept=".db" onchange="restoreBackup(this)">
+  </span>
 </header>
 
 <!-- ════════════ TABS ════════════ -->
@@ -304,11 +311,12 @@
           <th class="left">Ticker</th><th class="left">Name</th>
           <th>Buy Date</th><th>Avg Buy</th><th>Qty</th>
           <th>Price</th><th>Day %</th><th>P/L $</th><th>P/L %</th>
+          <th>Cut Off</th>
           <th>MA10</th><th>MA30</th><th>MA50</th><th>MA200</th>
           <th>High 30D</th><th>Low 30D</th><th>Action</th>
         </tr></thead>
         <tbody id="holdings-body">
-          <tr><td colspan="16" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
+          <tr><td colspan="17" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
         </tbody>
       </table>
     </div>
@@ -1032,9 +1040,9 @@ function empty(id, cols, msg = 'No records found.') {
 //  Holdings
 // ═══════════════════════════════════════
 async function loadHoldings() {
-  loading('holdings-body', 15);
+  loading('holdings-body', 17);
   try { renderHoldings((await apiFetch('/api/holdings')).data); }
-  catch(e) { empty('holdings-body', 15, '⚠ ' + e.message); }
+  catch(e) { empty('holdings-body', 17, '⚠ ' + e.message); }
 }
 function renderHoldings(rows) {
   let cost = 0, value = 0;
@@ -1050,9 +1058,17 @@ function renderHoldings(rows) {
     <div class="card"><div class="card-label">Market Value</div><div class="card-value">$${value.toFixed(0)}</div></div>
     <div class="card"><div class="card-label">Unrealised P/L</div><div class="card-value ${plCls}">${sign}$${Math.abs(pl).toFixed(0)}</div></div>
     <div class="card"><div class="card-label">P/L %</div><div class="card-value ${plCls}">${sign}${plPct.toFixed(2)}%</div></div>`;
-  if (!rows.length) { empty('holdings-body', 16, 'No holdings found. Click + Add or upload a CSV.'); return; }
-  document.getElementById('holdings-body').innerHTML = rows.map(r => `
-    <tr>
+  if (!rows.length) { empty('holdings-body', 17, 'No holdings found. Click + Add or upload a CSV.'); return; }
+  document.getElementById('holdings-body').innerHTML = rows.map(r => {
+    const cp = r.current_price, ab = r.avg_buy_price, h30 = r.high_30d;
+    let cutOff = null;
+    if (cp != null && ab != null) {
+      cutOff = cp > ab ? (h30 != null ? h30 * 0.89 : null) : ab * 0.89;
+    }
+    const cutOffCell = cutOff != null
+      ? `<td style="color:var(--red);font-weight:600">$${fmt(cutOff)}</td>`
+      : `<td><span class="dim">—</span></td>`;
+    return `<tr>
       <td class="left ticker-cell">${r.ticker}</td>
       <td class="left name-cell">${r.stock_name || '—'}</td>
       <td>${fmtDate(r.buy_date)}</td>
@@ -1060,6 +1076,7 @@ function renderHoldings(rows) {
       <td><strong>$${fmt(r.current_price)}</strong></td>
       <td>${dayPctCell(r.day_pct_change)}</td>
       <td>${plCell(r.pl_value)}</td><td>${pillCell(r.pl_pct)}</td>
+      ${cutOffCell}
       <td>${fmtVal(r.ma10)}</td><td>${fmtVal(r.ma30)}</td>
       <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma200)}</td>
       <td>${fmtVal(r.high_30d)}</td><td>${fmtVal(r.low_30d)}</td>
@@ -1070,7 +1087,8 @@ function renderHoldings(rows) {
           onclick='openRecordModal("holdings",${JSON.stringify(r)})'>Edit</button>
         <button class="del-btn" onclick='deleteRecord("holdings",${r.id})'>&#215;</button>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 
 // ═══════════════════════════════════════
@@ -2439,6 +2457,30 @@ function refreshCurrent() {
   document.getElementById('last-updated').textContent =
     'Updated ' + new Date().toLocaleTimeString();
   showTab(currentTab);
+}
+
+// ═══════════════════════════════════════
+//  Backup / Restore
+// ═══════════════════════════════════════
+async function restoreBackup(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (!confirm(`Replace the entire database with "${file.name}"?\n\nThis overwrites ALL your holdings, monitor list, scan results and ticker list. Make sure you have a backup first.`))  {
+    input.value = ''; return;
+  }
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await fetch('/api/backup/restore', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) { alert('Restore failed: ' + (j.error || r.statusText)); input.value = ''; return; }
+    alert(j.message);
+    input.value = '';
+    location.reload();
+  } catch(e) {
+    alert('Restore error: ' + e.message);
+    input.value = '';
+  }
 }
 
 // ═══════════════════════════════════════
