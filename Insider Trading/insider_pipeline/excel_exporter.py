@@ -27,13 +27,13 @@ BOLD_FONT = Font(bold=True)
 DISPLAY_COLUMNS = [
     "filed_date", "transaction_date", "ticker", "company_name",
     "insider_name", "role", "transaction_type", "shares",
-    "price", "total_value", "flag_10b51", "cluster_buy", "filing_url",
+    "price", "total_value", "flag_10b51", "cluster_buy", "source", "filing_url",
 ]
 COLUMN_HEADERS = [
     "Filed Date", "Transaction Date", "Ticker", "Company Name",
     "Insider Name", "Role", "Transaction Type", "Shares",
     "Price (USD)", "Total Value (USD)", "10b5-1 Flag",
-    "Cluster Buy Flag", "SEC Filing URL",
+    "Cluster Buy Flag", "Source", "SEC Filing URL",
 ]
 DOLLAR_COLS = {"Price (USD)", "Total Value (USD)"}
 DATE_COLS = {"Filed Date", "Transaction Date"}
@@ -213,8 +213,8 @@ def export_to_excel(df: pd.DataFrame, scanned_count: int, output_path: str = OUT
         for col in DISPLAY_COLUMNS:
             if col not in df.columns:
                 df[col] = None
-        # Ensure cluster_buy is a proper boolean column (not None/NaN)
         df["cluster_buy"] = df["cluster_buy"].fillna(False).astype(bool)
+        df["source"] = df["source"].fillna("Form 4")
     wb = Workbook()
 
     # Sheet 1: Dashboard

@@ -30,6 +30,8 @@ from sec_fetcher import (
     fetch_cik_for_ticker,
 )
 from parser import parse_form4
+from form6k_fetcher import fetch_form6k_by_company, fetch_form6k_document
+from form6k_parser import parse_form6k
 from filter import apply_filters
 from cluster_detector import detect_clusters
 from excel_exporter import export_to_excel
@@ -82,6 +84,7 @@ def run_pipeline(
     # ── Step 1: build filing list ─────────────────────────────────────────────
     logger.info("Step 1/5: Fetching Form 4 filing index ...")
     filings: list[dict] = []
+    form6k_records_prefetch: list[dict] = []   # 6-K records collected during Step 1
 
     if tickers:
         for ticker in tickers:
@@ -92,12 +95,38 @@ def run_pipeline(
                 logger.warning("Ticker not found in EDGAR: %s", ticker)
                 continue
             batch = fetch_form4_by_company(cik, date_from, date_to)
-            filings.extend(batch)
+            if batch:
+                filings.extend(batch)
+            else:
+                # No Form 4 filings — likely a foreign private issuer; try Form 6-K
+                logger.info("  No Form 4 for %s — foreign issuer detected, scanning Form 6-K ...", ticker)
+                form6k_filings = fetch_form6k_by_company(cik, date_from, date_to)
+                logger.info("  Found %d Form 6-K filings for %s", len(form6k_filings), ticker)
+                for f6k in form6k_filings:
+                    if stop_event and stop_event.is_set():
+                        break
+                    try:
+                        html = fetch_form6k_document(f6k)
+                        if html:
+                            recs = parse_form6k(
+                                html, f6k["cik"], f6k["accession"],
+                                f6k["filed_date"], f6k["company_name"],
+                                ticker=ticker, issuer_cik=f6k.get("issuer_cik"),
+                            )
+                            form6k_records_prefetch.extend(recs)
+                    except Exception as exc:
+                        logger.warning("6-K parse error %s: %s", f6k.get("accession"), exc)
+                if form6k_records_prefetch:
+                    logger.info("  Parsed %d manager transactions from Form 6-K for %s",
+                                len(form6k_records_prefetch), ticker)
+                else:
+                    logger.info("  No qualifying manager transactions found in Form 6-K for %s", ticker)
     else:
         filings = fetch_form4_index(date_from, date_to)
 
-    scanned_count = len(filings)
-    logger.info("  Found %d filings", scanned_count)
+    scanned_count = len(filings) + len(form6k_records_prefetch)
+    logger.info("  Found %d Form 4 filings + %d Form 6-K transactions",
+                len(filings), len(form6k_records_prefetch))
 
     if stop_event and stop_event.is_set():
         logger.info("Scan cancelled by user.")
@@ -144,7 +173,10 @@ def run_pipeline(
                 if progress_cb:
                     progress_cb(done_count, scanned_count)
 
-    logger.info("  Parsed %d raw purchase transactions", len(all_records))
+    # Merge any Form 6-K records collected during Step 1
+    all_records.extend(form6k_records_prefetch)
+    logger.info("  Parsed %d raw purchase transactions (incl. %d from Form 6-K)",
+                len(all_records), len(form6k_records_prefetch))
 
     if stop_event and stop_event.is_set():
         logger.info("Scan cancelled — exporting partial results.")
