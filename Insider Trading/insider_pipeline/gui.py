@@ -449,6 +449,8 @@ class App(tk.Tk):
 # ── Entry points ──────────────────────────────────────────────────────────────
 
 def launch_gui():
+    from main import setup_logging
+    setup_logging()
     app = App()
     app.mainloop()
 

@@ -85,6 +85,7 @@ def run_pipeline(
     logger.info("Step 1/5: Fetching Form 4 filing index ...")
     filings: list[dict] = []
     form6k_records_prefetch: list[dict] = []   # 6-K records collected during Step 1
+    form6k_filings_count: int = 0
 
     if tickers:
         for ticker in tickers:
@@ -101,6 +102,7 @@ def run_pipeline(
                 # No Form 4 filings — likely a foreign private issuer; try Form 6-K
                 logger.info("  No Form 4 for %s — foreign issuer detected, scanning Form 6-K ...", ticker)
                 form6k_filings = fetch_form6k_by_company(cik, date_from, date_to)
+                form6k_filings_count += len(form6k_filings)
                 logger.info("  Found %d Form 6-K filings for %s", len(form6k_filings), ticker)
                 for f6k in form6k_filings:
                     if stop_event and stop_event.is_set():
@@ -124,9 +126,9 @@ def run_pipeline(
     else:
         filings = fetch_form4_index(date_from, date_to)
 
-    scanned_count = len(filings) + len(form6k_records_prefetch)
-    logger.info("  Found %d Form 4 filings + %d Form 6-K transactions",
-                len(filings), len(form6k_records_prefetch))
+    scanned_count = len(filings) + form6k_filings_count
+    logger.info("  Found %d Form 4 filings + %d Form 6-K filings (%d transactions parsed)",
+                len(filings), form6k_filings_count, len(form6k_records_prefetch))
 
     if stop_event and stop_event.is_set():
         logger.info("Scan cancelled by user.")
