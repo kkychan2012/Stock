@@ -185,27 +185,33 @@ def fetch_form4_xml(cik: str, accession: str, issuer_cik: str = None) -> Optiona
             pass
 
     # Strategy 2: fetch the filing index to discover the exact XML path.
-    # The index is stored under the filer's CIK.
-    index_url = (
-        f"https://www.sec.gov/Archives/edgar/data/"
-        f"{filer_cik_nodash}/{accession_nodash}/{accession_fmt}-index.htm"
-    )
-    try:
-        idx_resp = _get(index_url)
-        xml_paths = re.findall(
-            r'href="(/Archives/edgar/data/[^"]+\.xml)"', idx_resp.text
+    # Try issuer CIK first (EDGAR stores Form 4s under the issuer), then filer CIK.
+    index_ciks = []
+    if issuer_cik and issuer_cik != filer_cik_nodash:
+        index_ciks.append(issuer_cik)
+    index_ciks.append(filer_cik_nodash)
+
+    for idx_cik in index_ciks:
+        index_url = (
+            f"https://www.sec.gov/Archives/edgar/data/"
+            f"{idx_cik}/{accession_nodash}/{accession_fmt}-index.htm"
         )
-        # Prefer paths that don't go through the XSLT stylesheet transformer
-        xml_paths = [p for p in xml_paths if "xslF345X" not in p]
-        for path in xml_paths:
-            try:
-                xml_resp = _get("https://www.sec.gov" + path)
-                if "<ownershipDocument" in xml_resp.text:
-                    return xml_resp.text
-            except Exception:
-                continue
-    except Exception as exc:
-        logger.debug("Index fallback failed for %s/%s: %s", cik, accession, exc)
+        try:
+            idx_resp = _get(index_url)
+            xml_paths = re.findall(
+                r'href="(/Archives/edgar/data/[^"]+\.xml)"', idx_resp.text
+            )
+            xml_paths = [p for p in xml_paths if "xslF345X" not in p]
+            for path in xml_paths:
+                try:
+                    xml_resp = _get("https://www.sec.gov" + path)
+                    if "<ownershipDocument" in xml_resp.text:
+                        return xml_resp.text
+                except Exception:
+                    continue
+        except Exception as exc:
+            logger.debug("Index fetch failed for cik=%s %s/%s: %s",
+                         idx_cik, cik, accession, exc)
 
     return None
 
