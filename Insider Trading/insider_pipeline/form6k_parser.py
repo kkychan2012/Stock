@@ -114,10 +114,10 @@ def _normalise_date(raw: str) -> str:
 # ── Block splitting ────────────────────────────────────────────────────────────
 
 _BLOCK_HEADERS = re.compile(
-    r'(?:Person subject to the notification|'
-    r'MANAGERS[\'']?\s*TRANSACTIONS?|'
-    r'NOTIFICATION OF TRANSACTIONS?|'
-    r'Transaction\s+\d+\b)',
+    r"(?:Person subject to the notification|"
+    r"MANAGERS'?\s*TRANSACTIONS?|"
+    r"NOTIFICATION OF TRANSACTIONS?|"
+    r"Transaction\s+\d+\b)",
     re.IGNORECASE,
 )
 
