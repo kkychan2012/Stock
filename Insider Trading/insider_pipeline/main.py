@@ -48,7 +48,7 @@ def setup_logging(extra_handler=None):
     if extra_handler:
         handlers.append(extra_handler)
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=handlers,
         force=True,
@@ -104,20 +104,33 @@ def run_pipeline(
                 form6k_filings = fetch_form6k_by_company(cik, date_from, date_to)
                 form6k_filings_count += len(form6k_filings)
                 logger.info("  Found %d Form 6-K filings for %s", len(form6k_filings), ticker)
+                fetched, keyword_miss, parsed_ok = 0, 0, 0
                 for f6k in form6k_filings:
                     if stop_event and stop_event.is_set():
                         break
                     try:
                         html = fetch_form6k_document(f6k)
-                        if html:
-                            recs = parse_form6k(
-                                html, f6k["cik"], f6k["accession"],
-                                f6k["filed_date"], f6k["company_name"],
-                                ticker=ticker, issuer_cik=f6k.get("issuer_cik"),
-                            )
+                        if not html:
+                            logger.warning("  6-K doc not fetched: %s  primary_doc=%s",
+                                           f6k.get("accession"), f6k.get("primary_doc"))
+                            continue
+                        fetched += 1
+                        recs = parse_form6k(
+                            html, f6k["cik"], f6k["accession"],
+                            f6k["filed_date"], f6k["company_name"],
+                            ticker=ticker, issuer_cik=f6k.get("issuer_cik"),
+                        )
+                        if recs:
+                            parsed_ok += len(recs)
                             form6k_records_prefetch.extend(recs)
+                        else:
+                            keyword_miss += 1
+                            logger.debug("  6-K no manager keywords: %s  date=%s",
+                                         f6k.get("accession"), f6k.get("filed_date"))
                     except Exception as exc:
                         logger.warning("6-K parse error %s: %s", f6k.get("accession"), exc)
+                logger.info("  6-K summary for %s: fetched=%d  keyword_miss=%d  transactions=%d",
+                            ticker, fetched, keyword_miss, parsed_ok)
                 if form6k_records_prefetch:
                     logger.info("  Parsed %d manager transactions from Form 6-K for %s",
                                 len(form6k_records_prefetch), ticker)

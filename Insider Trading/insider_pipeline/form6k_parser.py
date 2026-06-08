@@ -61,7 +61,10 @@ def _strip_html(html: str) -> str:
 
 def _is_manager_filing(text: str) -> bool:
     lower = text.lower()
-    return any(kw in lower for kw in _TRANSACTION_KEYWORDS)
+    matched = any(kw in lower for kw in _TRANSACTION_KEYWORDS)
+    if not matched:
+        logger.debug("6-K keyword miss — first 200 chars: %s", text[:200].replace('\n', ' '))
+    return matched
 
 
 def _normalize_role(raw: str) -> Optional[str]:
