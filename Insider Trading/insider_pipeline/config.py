@@ -14,13 +14,15 @@ SEC_RATE_LIMIT = 10  # max requests per second
 SEC_RETRY_ATTEMPTS = 3
 SEC_RETRY_BACKOFF = 2  # seconds, doubles each retry
 
-# Roles to include
+# Roles to include (EU MAR "Other senior manager" maps to "Senior Officer")
 ROLES_TO_TRACK = [
     "CEO", "CFO", "COO", "President",
     "Chairman", "Director",
     "Chief Executive Officer",
     "Chief Financial Officer",
     "Chief Operating Officer",
+    "Senior Officer", "Officer",
+    "EVP", "SVP", "VP",
 ]
 
 # Transaction codes
