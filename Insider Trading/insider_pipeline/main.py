@@ -28,10 +28,12 @@ from sec_fetcher import (
     fetch_form4_xml_with_doc,
     fetch_form4_by_company,
     fetch_cik_for_ticker,
+    fetch_company_name,
 )
 from parser import parse_form4
 from form6k_fetcher import fetch_form6k_by_company, fetch_form6k_document
 from form6k_parser import parse_form6k
+from nasdaq_nordic_fetcher import fetch_manager_transactions as fetch_nasdaq_nordic
 from filter import apply_filters
 from cluster_detector import detect_clusters
 from excel_exporter import export_to_excel
@@ -99,12 +101,14 @@ def run_pipeline(
             if batch:
                 filings.extend(batch)
             else:
-                # No Form 4 filings — likely a foreign private issuer; try Form 6-K
+                # No Form 4 filings — likely a foreign private issuer
+                # Step A: try SEC Form 6-K
                 logger.info("  No Form 4 for %s — foreign issuer detected, scanning Form 6-K ...", ticker)
                 form6k_filings = fetch_form6k_by_company(cik, date_from, date_to)
                 form6k_filings_count += len(form6k_filings)
                 logger.info("  Found %d Form 6-K filings for %s", len(form6k_filings), ticker)
                 fetched, keyword_miss, parsed_ok = 0, 0, 0
+                ticker_6k_records: list[dict] = []
                 for f6k in form6k_filings:
                     if stop_event and stop_event.is_set():
                         break
@@ -122,7 +126,7 @@ def run_pipeline(
                         )
                         if recs:
                             parsed_ok += len(recs)
-                            form6k_records_prefetch.extend(recs)
+                            ticker_6k_records.extend(recs)
                         else:
                             keyword_miss += 1
                             logger.debug("  6-K no manager keywords: %s  date=%s",
@@ -131,11 +135,25 @@ def run_pipeline(
                         logger.warning("6-K parse error %s: %s", f6k.get("accession"), exc)
                 logger.info("  6-K summary for %s: fetched=%d  keyword_miss=%d  transactions=%d",
                             ticker, fetched, keyword_miss, parsed_ok)
-                if form6k_records_prefetch:
-                    logger.info("  Parsed %d manager transactions from Form 6-K for %s",
-                                len(form6k_records_prefetch), ticker)
-                else:
-                    logger.info("  No qualifying manager transactions found in Form 6-K for %s", ticker)
+                form6k_records_prefetch.extend(ticker_6k_records)
+
+                # Step B: if Form 6-K yielded nothing, try Nasdaq Nordic announcement API
+                if not ticker_6k_records:
+                    if stop_event and stop_event.is_set():
+                        pass
+                    else:
+                        logger.info("  Form 6-K empty for %s — trying Nasdaq Nordic API ...", ticker)
+                        edgar_name = fetch_company_name(cik)
+                        try:
+                            nordic_recs = fetch_nasdaq_nordic(edgar_name, ticker, date_from, date_to)
+                            if nordic_recs:
+                                logger.info("  Nasdaq Nordic: %d transactions found for %s",
+                                            len(nordic_recs), ticker)
+                                form6k_records_prefetch.extend(nordic_recs)
+                            else:
+                                logger.info("  Nasdaq Nordic: no manager transactions for %s", ticker)
+                        except Exception as exc:
+                            logger.warning("  Nasdaq Nordic error for %s: %s", ticker, exc)
     else:
         filings = fetch_form4_index(date_from, date_to)
 

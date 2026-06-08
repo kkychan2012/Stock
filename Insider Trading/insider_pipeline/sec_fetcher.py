@@ -230,6 +230,18 @@ def fetch_company_ticker(cik: str) -> Optional[str]:
         return None
 
 
+def fetch_company_name(cik: str) -> str:
+    """Return the EDGAR legal company name for a given CIK (empty string on failure)."""
+    padded = str(cik).zfill(10)
+    url = EDGAR_SUBMISSIONS_URL.format(cik=padded)
+    try:
+        resp = _get(url)
+        return resp.json().get("name", "")
+    except Exception as exc:
+        logger.debug("Company name lookup failed for CIK %s: %s", cik, exc)
+        return ""
+
+
 # ── Ticker-specific helpers ───────────────────────────────────────────────────
 
 _ticker_to_cik: dict[str, str] = {}
