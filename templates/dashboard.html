@@ -2439,6 +2439,17 @@ async function runInsiderScan() {
         statEl.textContent = 'Done ✓';
         btn.disabled = false;
         clearInterval(_insiderScanTimer);
+        // Sync Load date range to scan range so auto-refresh shows scanned results
+        const scanFrom = document.getElementById('insider-scan-from').value;
+        const scanTo   = document.getElementById('insider-scan-to').value;
+        if (scanFrom) document.getElementById('insider-from').value = scanFrom;
+        if (scanTo)   document.getElementById('insider-to').value   = scanTo;
+        // Sync ticker filter if a single ticker was scanned
+        const scanTickers = (document.getElementById('insider-scan-tickers').value || '').trim();
+        if (scanTickers && !scanTickers.includes(',')) {
+          document.getElementById('insider-ticker').value = scanTickers;
+        }
+        _insiderInitialised = false;
         await fetchInsider();
       }
     } catch(e) {
