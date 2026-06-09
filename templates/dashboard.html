@@ -807,11 +807,6 @@
       <button id="insider-scan-btn" class="btn btn-fetch" onclick="runInsiderScan()">&#9654; Scan</button>
       <span id="insider-scan-status" class="fetch-status-line" style="margin-left:8px"></span>
     </div>
-    <div id="insider-scan-log"
-         style="display:none;background:var(--bg2);border:1px solid var(--border);
-                border-radius:6px;padding:10px 12px;font-size:11px;font-family:monospace;
-                max-height:140px;overflow-y:auto;margin-bottom:8px;white-space:pre-wrap;
-                color:var(--text)"></div>
     <div class="table-wrap">
       <table>
         <thead><tr>
@@ -835,6 +830,10 @@
         </tbody>
       </table>
     </div>
+    <div id="insider-scan-log"
+         style="display:none;margin-top:6px;padding:6px 10px;border-radius:4px;
+                font-size:11px;font-family:monospace;color:var(--muted);
+                background:var(--bg2);border:1px solid var(--border)"></div>
   </div>
 
 </main>
@@ -2393,13 +2392,13 @@ async function runInsiderScan() {
   if (!tickers)   { alert('Enter at least one ticker to scan (e.g. NOK)'); return; }
   if (!from_date) { alert('Set a scan from-date'); return; }
 
-  const logEl  = document.getElementById('insider-scan-log');
-  const statEl = document.getElementById('insider-scan-status');
-  const btn    = document.getElementById('insider-scan-btn');
+  const statusBar = document.getElementById('insider-scan-log');
+  const statEl    = document.getElementById('insider-scan-status');
+  const btn       = document.getElementById('insider-scan-btn');
 
-  logEl.textContent = '';
-  logEl.style.display = 'block';
-  statEl.textContent  = 'Starting…';
+  statusBar.textContent = '';
+  statusBar.style.display = 'block';
+  statEl.textContent = 'Starting…';
   btn.disabled = true;
 
   try {
@@ -2410,6 +2409,7 @@ async function runInsiderScan() {
     });
   } catch(e) {
     statEl.textContent = '⚠ ' + e.message;
+    statusBar.textContent = e.message;
     btn.disabled = false;
     return;
   }
@@ -2418,21 +2418,32 @@ async function runInsiderScan() {
   _insiderScanTimer = setInterval(async () => {
     try {
       const s = await apiFetch('/api/insider/scan/status');
-      logEl.textContent = (s.log || []).join('\n');
-      logEl.scrollTop   = logEl.scrollHeight;
+      const lines = s.log || [];
+
+      // Extract the most recent meaningful step or summary line
+      const stepLine = [...lines].reverse().find(l => /Step \d\/\d/.test(l));
+      const foundLine = lines.find(l => l.includes('Found '));
+      const dbLine    = lines.find(l => l.includes('new records saved'));
+
       if (s.error) {
-        statEl.textContent = '⚠ ' + s.error;
+        statusBar.textContent = '⚠ ' + s.error;
+        statEl.textContent = '⚠ Error';
       } else if (s.running) {
+        const step = stepLine ? stepLine.replace(/^.*?(Step \d\/\d[^"]*?)$/, '$1').replace(/\s+/g, ' ').trim() : 'Running…';
+        statusBar.textContent = step;
         statEl.textContent = 'Scanning…';
       } else {
+        const found = foundLine ? foundLine.match(/Found\s+(\d+)/)?.[1] : '?';
+        const saved = dbLine   ? dbLine.match(/(\d+) new records/)?.[1]  : '0';
+        statusBar.textContent = `Complete — ${found} qualifying transactions found, ${saved} new records saved to DB`;
         statEl.textContent = 'Done ✓';
         btn.disabled = false;
         clearInterval(_insiderScanTimer);
-        // Auto-refresh results
         await fetchInsider();
       }
     } catch(e) {
       statEl.textContent = '⚠ ' + e.message;
+      statusBar.textContent = e.message;
       btn.disabled = false;
       clearInterval(_insiderScanTimer);
     }
