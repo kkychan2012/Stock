@@ -151,6 +151,26 @@ def setup_database():
                 UNIQUE(scan_date, ticker, pattern_name)
             );
 
+            CREATE TABLE IF NOT EXISTS insider_signals (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                filed_date       TEXT NOT NULL,
+                transaction_date TEXT NOT NULL,
+                ticker           TEXT NOT NULL,
+                company_name     TEXT,
+                insider_name     TEXT,
+                role             TEXT,
+                transaction_type TEXT DEFAULT 'Purchase',
+                shares           REAL,
+                price            REAL,
+                total_value      REAL,
+                cluster_buy      INTEGER DEFAULT 0,
+                flag_10b51       INTEGER DEFAULT 0,
+                filing_url       TEXT,
+                source           TEXT DEFAULT 'Form 4',
+                scan_run_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(ticker, transaction_date, insider_name, shares)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_stocks_daily_ticker_date
                 ON stocks_daily(ticker, date);
 
@@ -159,6 +179,9 @@ def setup_database():
 
             CREATE INDEX IF NOT EXISTS idx_pattern_scan_date
                 ON pattern_scan_results(scan_date);
+
+            CREATE INDEX IF NOT EXISTS idx_insider_signals_date
+                ON insider_signals(transaction_date DESC);
         """)
         _migrate(conn)
     print(f"Database ready at: {DB_PATH}")
@@ -259,6 +282,33 @@ def _migrate(conn):
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_pattern_scan_date "
             "ON pattern_scan_results(scan_date)"
+        )
+
+    if "insider_signals" not in existing_tables:
+        conn.execute("""
+            CREATE TABLE insider_signals (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                filed_date       TEXT NOT NULL,
+                transaction_date TEXT NOT NULL,
+                ticker           TEXT NOT NULL,
+                company_name     TEXT,
+                insider_name     TEXT,
+                role             TEXT,
+                transaction_type TEXT DEFAULT 'Purchase',
+                shares           REAL,
+                price            REAL,
+                total_value      REAL,
+                cluster_buy      INTEGER DEFAULT 0,
+                flag_10b51       INTEGER DEFAULT 0,
+                filing_url       TEXT,
+                source           TEXT DEFAULT 'Form 4',
+                scan_run_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(ticker, transaction_date, insider_name, shares)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_insider_signals_date "
+            "ON insider_signals(transaction_date DESC)"
         )
 
     _fix_existing_dates(conn)

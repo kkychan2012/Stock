@@ -229,14 +229,18 @@ def run_pipeline(
         cluster_count = 0
 
     # ── Step 5: export ────────────────────────────────────────────────────────
-    logger.info("Step 5/5: Exporting to Excel ...")
+    logger.info("Step 5/5: Exporting ...")
     output_path = export_to_excel(df, scanned_count)
+
+    from db_writer import write_to_dashboard
+    db_inserted = write_to_dashboard(df)
 
     print("\n" + "=" * 60)
     print(f"  Scanned {scanned_count:,} filings")
     print(f"  Found   {len(df):,} qualifying buys")
     print(f"  Cluster {cluster_count:,} cluster-buy signals")
-    print(f"  Output  {output_path}")
+    print(f"  Excel   {output_path}")
+    print(f"  DB      {db_inserted:,} new records saved to dashboard")
     print("=" * 60 + "\n")
 
     return df, scanned_count

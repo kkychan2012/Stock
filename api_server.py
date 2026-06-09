@@ -819,6 +819,46 @@ def download_monitor():
 
 
 # ---------------------------------------------------------------------------
+# GET /api/insider   — insider signals stored by the pipeline
+# ---------------------------------------------------------------------------
+
+@app.get("/api/insider")
+def get_insider():
+    ticker_sql, ticker_params = _ticker_filter("s")
+    from_date = (request.args.get("from") or "").strip()
+    to_date   = (request.args.get("to")   or "").strip()
+    date_sql, date_params = "", ()
+    if from_date:
+        date_sql  += " AND s.transaction_date >= ?"
+        date_params += (from_date,)
+    if to_date:
+        date_sql  += " AND s.transaction_date <= ?"
+        date_params += (to_date,)
+    sql = f"""
+        SELECT
+            s.id, s.filed_date, s.transaction_date,
+            s.ticker, s.company_name, s.insider_name, s.role,
+            s.transaction_type, s.shares, s.price, s.total_value,
+            s.cluster_buy, s.flag_10b51, s.filing_url, s.source,
+            s.scan_run_at
+        FROM insider_signals s
+        WHERE 1=1 {ticker_sql} {date_sql}
+        ORDER BY s.transaction_date DESC, s.total_value DESC
+    """
+    with get_connection() as conn:
+        return _ok(_rows(conn, sql, ticker_params + date_params))
+
+
+@app.delete("/api/insider/<int:rec_id>")
+def delete_insider(rec_id):
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM insider_signals WHERE id = ?", (rec_id,))
+    if cur.rowcount == 0:
+        return jsonify({"error": "record not found"}), 404
+    return jsonify({"deleted": rec_id})
+
+
+# ---------------------------------------------------------------------------
 # GET /api/prices
 # ---------------------------------------------------------------------------
 

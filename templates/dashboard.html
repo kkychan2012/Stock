@@ -246,6 +246,11 @@
     .pat-vol    { background: #fff7ed; } .pat-vol:hover    { background: #ffedd5; }
     .pat-pull   { background: #faf5ff; } .pat-pull:hover   { background: #f3e8ff; }
 
+    /* ── Insider signals row colours ── */
+    .ins-nordic { background: #f0fdf4; } .ins-nordic:hover { background: #dcfce7; }
+    .ins-6k     { background: #fefce8; } .ins-6k:hover     { background: #fef9c3; }
+    .ins-cluster{ border-left: 3px solid #f97316; }
+
     .scan-date-col { display: none; }
     .range-mode .scan-date-col { display: table-cell; }
 
@@ -286,6 +291,7 @@
   <button class="tab-btn"        onclick="showTab('patterns')">Pattern Scanner</button>
   <button class="tab-btn"        onclick="showTab('tickers')">Ticker List</button>
   <button class="tab-btn"        onclick="showTab('backtester')">Backtester</button>
+  <button class="tab-btn"        onclick="showTab('insider')">Insider</button>
 </nav>
 
 <!-- ════════════ MAIN ════════════ -->
@@ -773,6 +779,42 @@
 
   </div>
 
+  <!-- ── INSIDER SIGNALS ── -->
+  <div id="tab-insider" class="tab-pane">
+    <div class="toolbar">
+      <input id="insider-from" type="date" class="ticker-add-input"
+             style="font-size:12px;font-family:monospace;width:130px" title="From date">
+      <input id="insider-to"   type="date" class="ticker-add-input"
+             style="font-size:12px;font-family:monospace;width:130px" title="To date">
+      <input id="insider-ticker" class="ticker-add-input"
+             style="width:100px;font-size:12px;text-transform:uppercase"
+             placeholder="Ticker filter" oninput="this.value=this.value.toUpperCase()">
+      <button class="btn btn-primary" onclick="fetchInsider()">Load</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Tx Date</th>
+          <th>Filed</th>
+          <th class="left">Ticker</th>
+          <th class="left">Company</th>
+          <th class="left">Insider</th>
+          <th class="left">Role</th>
+          <th class="right">Shares</th>
+          <th class="right">Price</th>
+          <th class="right">Total Value</th>
+          <th class="left">Source</th>
+          <th>Cluster</th>
+          <th class="left">Filing</th>
+          <th></th>
+        </tr></thead>
+        <tbody id="insider-body">
+          <tr><td colspan="13" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
 </main>
 
 <!-- ════════════ RECORD EDIT MODAL ════════════ -->
@@ -974,7 +1016,7 @@ let _pollTimer        = null;
 let _lastLogLen       = 0;
 let _fetchRunning     = false;
 
-const TABS = ['holdings', 'signals', 'sold', 'monitor', 'patterns', 'tickers', 'backtester'];
+const TABS = ['holdings', 'signals', 'sold', 'monitor', 'patterns', 'tickers', 'backtester', 'insider'];
 
 // ═══════════════════════════════════════
 //  Formatting
@@ -1013,7 +1055,7 @@ function showTab(name) {
   currentTab = name;
   ({holdings: loadHoldings, signals: loadSignals, sold: loadSold,
     monitor: loadMonitor, patterns: loadPatterns, tickers: loadTickerList,
-    backtester: loadBacktester})[name]();
+    backtester: loadBacktester, insider: loadInsider})[name]();
 }
 
 // ═══════════════════════════════════════
@@ -2223,6 +2265,89 @@ let _btBatchData = [];
 
 function loadBacktester() {
   btUpdateMatrix();
+}
+
+// ═══════════════════════════════════════
+//  Insider Signals
+// ═══════════════════════════════════════
+let _insiderInitialised = false;
+
+function loadInsider() {
+  if (!_insiderInitialised) {
+    _insiderInitialised = true;
+    // Pre-fill date range: last 180 days
+    const pad = n => String(n).padStart(2,'0');
+    const today = new Date();
+    const from  = new Date(today); from.setDate(from.getDate() - 180);
+    const fmt   = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    const fromEl = document.getElementById('insider-from');
+    const toEl   = document.getElementById('insider-to');
+    if (fromEl && !fromEl.value) fromEl.value = fmt(from);
+    if (toEl   && !toEl.value)   toEl.value   = fmt(today);
+    fetchInsider();
+  }
+}
+
+async function fetchInsider() {
+  loading('insider-body', 13);
+  const from = document.getElementById('insider-from').value;
+  const to   = document.getElementById('insider-to').value;
+  const tk   = (document.getElementById('insider-ticker').value || '').trim().toUpperCase();
+  const qs   = new URLSearchParams();
+  if (from) qs.set('from', from);
+  if (to)   qs.set('to',   to);
+  if (tk)   qs.set('ticker', tk);
+  try {
+    const data = (await apiFetch('/api/insider?' + qs)).data;
+    renderInsider(data);
+  } catch(e) { empty('insider-body', 13, '⚠ ' + e.message); }
+}
+
+function renderInsider(rows) {
+  if (!rows || !rows.length) {
+    empty('insider-body', 13, 'No insider signals found for this date range.');
+    return;
+  }
+  const sourceClass = s => {
+    if (!s) return '';
+    const sl = s.toLowerCase();
+    if (sl.includes('nordic')) return 'ins-nordic';
+    if (sl.includes('6-k') || sl.includes('6k')) return 'ins-6k';
+    return '';
+  };
+  document.getElementById('insider-body').innerHTML = rows.map(r => {
+    const rowCls = [sourceClass(r.source), r.cluster_buy ? 'ins-cluster' : ''].filter(Boolean).join(' ');
+    const clusterBadge = r.cluster_buy
+      ? '<span style="background:#fed7aa;color:#9a3412;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:600">CLUSTER</span>'
+      : '<span class="dim">—</span>';
+    const filingLink = r.filing_url
+      ? `<a href="${r.filing_url}" target="_blank" style="font-size:11px;color:var(--accent)">View ↗</a>`
+      : '<span class="dim">—</span>';
+    const totalVal = r.total_value != null
+      ? '$' + Number(r.total_value).toLocaleString('en-US', {maximumFractionDigits:0})
+      : '<span class="dim">—</span>';
+    const priceStr = r.price != null
+      ? '$' + Number(r.price).toFixed(2)
+      : '<span class="dim">—</span>';
+    const sharesStr = r.shares != null
+      ? Number(r.shares).toLocaleString('en-US', {maximumFractionDigits:0})
+      : '<span class="dim">—</span>';
+    return `<tr class="${rowCls}">
+      <td style="font-family:monospace">${fmtDate(r.transaction_date)}</td>
+      <td style="font-family:monospace;color:var(--muted)">${fmtDate(r.filed_date)}</td>
+      <td class="left ticker-cell"><strong>${r.ticker || '—'}</strong></td>
+      <td class="left" style="max-width:160px;color:var(--muted)">${r.company_name || '—'}</td>
+      <td class="left" style="max-width:160px">${r.insider_name || '—'}</td>
+      <td class="left" style="color:var(--muted)">${r.role || '—'}</td>
+      <td class="right">${sharesStr}</td>
+      <td class="right">${priceStr}</td>
+      <td class="right"><strong>${totalVal}</strong></td>
+      <td class="left" style="font-size:11px">${r.source || 'Form 4'}</td>
+      <td style="text-align:center">${clusterBadge}</td>
+      <td>${filingLink}</td>
+      <td><button class="del-btn" onclick='deleteRecord("insider",${r.id})'>&#215;</button></td>
+    </tr>`;
+  }).join('');
 }
 
 function _btRules() {
