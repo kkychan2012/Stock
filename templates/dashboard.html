@@ -249,6 +249,7 @@
     /* ── Insider signals row colours ── */
     .ins-nordic { background: #f0fdf4; } .ins-nordic:hover { background: #dcfce7; }
     .ins-6k     { background: #fefce8; } .ins-6k:hover     { background: #fef9c3; }
+    .ins-fi     { background: #eff6ff; } .ins-fi:hover     { background: #dbeafe; }
     .ins-cluster{ border-left: 3px solid #f97316; }
 
     .scan-date-col { display: none; }
@@ -2336,6 +2337,7 @@ function renderInsider(rows) {
     const sl = s.toLowerCase();
     if (sl.includes('nordic')) return 'ins-nordic';
     if (sl.includes('6-k') || sl.includes('6k')) return 'ins-6k';
+    if (sl.includes('fi (')) return 'ins-fi';
     return '';
   };
   document.getElementById('insider-body').innerHTML = rows.map(r => {

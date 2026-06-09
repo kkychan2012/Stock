@@ -34,6 +34,7 @@ from parser import parse_form4
 from form6k_fetcher import fetch_form6k_by_company, fetch_form6k_document
 from form6k_parser import parse_form6k
 from nasdaq_nordic_fetcher import fetch_manager_transactions as fetch_nasdaq_nordic
+from fi_fetcher import fetch_fi_transactions
 from filter import apply_filters
 from cluster_detector import detect_clusters
 from excel_exporter import export_to_excel
@@ -137,13 +138,15 @@ def run_pipeline(
                             ticker, fetched, keyword_miss, parsed_ok)
                 form6k_records_prefetch.extend(ticker_6k_records)
 
-                # Step B: if Form 6-K yielded nothing, try Nasdaq Nordic announcement API
+                # Step B: if Form 6-K yielded nothing, try Nasdaq Nordic then FI
                 if not ticker_6k_records:
                     if stop_event and stop_event.is_set():
                         pass
                     else:
-                        logger.info("  Form 6-K empty for %s — trying Nasdaq Nordic API ...", ticker)
                         edgar_name = fetch_company_name(cik)
+
+                        logger.info("  Form 6-K empty for %s — trying Nasdaq Nordic API ...", ticker)
+                        nordic_recs = []
                         try:
                             nordic_recs = fetch_nasdaq_nordic(edgar_name, ticker, date_from, date_to)
                             if nordic_recs:
@@ -154,6 +157,18 @@ def run_pipeline(
                                 logger.info("  Nasdaq Nordic: no manager transactions for %s", ticker)
                         except Exception as exc:
                             logger.warning("  Nasdaq Nordic error for %s: %s", ticker, exc)
+
+                        if not nordic_recs:
+                            logger.info("  Nasdaq Nordic empty for %s — trying FI Insynsregistret ...", ticker)
+                            try:
+                                fi_recs = fetch_fi_transactions(edgar_name, ticker, date_from, date_to)
+                                if fi_recs:
+                                    logger.info("  FI: %d transactions found for %s", len(fi_recs), ticker)
+                                    form6k_records_prefetch.extend(fi_recs)
+                                else:
+                                    logger.info("  FI: no transactions for %s", ticker)
+                            except Exception as exc:
+                                logger.warning("  FI error for %s: %s", ticker, exc)
     else:
         filings = fetch_form4_index(date_from, date_to)
 
