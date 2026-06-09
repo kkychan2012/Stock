@@ -343,15 +343,16 @@ def _extract_transaction(block: str, filed_date: str, company_name: str,
         d, m, y = tx_date.split('-')
         tx_date = f"{y}-{m}-{d}"
 
-    # Nature must be ACQUISITION (skip DISPOSAL)
+    # Nature must be ACQUISITION or DISPOSAL (skip grants, transfers, etc.)
     nature = _find(block, r'Nature of the transaction:\s*([^\n]{3,40})')
     if not nature:
         return None
     nat_lower = nature.lower()
-    if any(w in nat_lower for w in ("disposal", "sale", "sold", "transfer")):
+    is_sale     = any(w in nat_lower for w in ("disposal", "sale", "sold"))
+    is_purchase = any(w in nat_lower for w in ("acquisition", "purchase", "buy", "subscri"))
+    if not is_sale and not is_purchase:
         return None
-    if not any(w in nat_lower for w in ("acquisition", "purchase", "buy", "subscri")):
-        return None
+    transaction_type = "Sale" if is_sale else "Purchase"
 
     # Volume and price — the format is:
     #   (1): Volume: 22713 Unit price: 16.0179 USD
@@ -387,7 +388,7 @@ def _extract_transaction(block: str, filed_date: str, company_name: str,
         "company_name":     company_name,
         "insider_name":     insider_name or "Unknown",
         "role":             role,
-        "transaction_type": "Purchase",
+        "transaction_type": transaction_type,
         "shares":           shares,
         "price":            price,
         "total_value":      total_value,

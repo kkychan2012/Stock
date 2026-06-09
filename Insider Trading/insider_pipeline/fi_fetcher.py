@@ -206,8 +206,11 @@ def _row_to_record(row: list[str], ticker: str) -> Optional[dict]:
         return None
 
     nature = row[_COL["nature"]].lower()
-    if "acqui" not in nature and "purch" not in nature:
-        return None  # skip Allotment, Disposal, etc.
+    is_purchase = any(w in nature for w in ("acqui", "purch"))
+    is_sale     = any(w in nature for w in ("dispos", "sale", "sold"))
+    if not is_purchase and not is_sale:
+        return None  # skip Allotment, transfers, etc.
+    transaction_type = "Sale" if is_sale else "Purchase"
 
     price = _parse_number(row[_COL["price"]])
     if price == 0.0:
@@ -238,7 +241,7 @@ def _row_to_record(row: list[str], ticker: str) -> Optional[dict]:
         "company_name":     company_name,
         "insider_name":     insider_name,
         "role":             role,
-        "transaction_type": "Purchase",
+        "transaction_type": transaction_type,
         "shares":           volume,
         "price":            price,
         "total_value":      total_value,

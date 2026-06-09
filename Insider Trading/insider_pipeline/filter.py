@@ -19,39 +19,46 @@ def _role_matches(role: str) -> bool:
     return any(r in lower for r in _ROLE_SET)
 
 
+def _base_filter(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply role, value, and date filters common to both purchases and sales."""
+    if df.empty:
+        return df
+    df = df[df["role"].apply(_role_matches)]
+    if df.empty:
+        return df
+    df = df[df["total_value"] >= MIN_TRANSACTION_VALUE]
+    df = df.dropna(subset=["transaction_date", "total_value"])
+    df = df[df["total_value"] > 0]
+    df["filed_date"] = pd.to_datetime(df["filed_date"], errors="coerce")
+    df["transaction_date"] = pd.to_datetime(df["transaction_date"], errors="coerce")
+    df = df.dropna(subset=["filed_date"])
+    return df
+
+
 def apply_filters(records: list[dict]) -> pd.DataFrame:
     """
-    Filter raw records to high-conviction buys.
-    Returns a DataFrame of qualifying transactions.
+    Filter raw records to high-conviction purchases and significant sales.
+    Returns a DataFrame of qualifying transactions sorted newest first.
     """
     if not records:
         return pd.DataFrame()
 
     df = pd.DataFrame(records)
-
     before = len(df)
 
-    # Only open-market purchases (code=P already enforced in parser, but guard here)
-    df = df[df["transaction_type"] == "Purchase"]
+    purchases = _base_filter(df[df["transaction_type"] == "Purchase"].copy())
+    sales     = _base_filter(df[df["transaction_type"] == "Sale"].copy())
 
-    # Role filter
-    df = df[df["role"].apply(_role_matches)]
-
-    # Value filter
-    df = df[df["total_value"] >= MIN_TRANSACTION_VALUE]
-
-    # Drop rows with missing critical fields
-    df = df.dropna(subset=["transaction_date", "total_value"])
-    df = df[df["total_value"] > 0]
-
-    # Parse dates
-    df["filed_date"] = pd.to_datetime(df["filed_date"], errors="coerce")
-    df["transaction_date"] = pd.to_datetime(df["transaction_date"], errors="coerce")
-    df = df.dropna(subset=["filed_date"])
-
-    after = len(df)
+    result = pd.concat([purchases, sales], ignore_index=True)
+    after = len(result)
     logger.info("Filter: %d -> %d records after applying criteria", before, after)
 
-    # Sort newest first
-    df = df.sort_values("filed_date", ascending=False).reset_index(drop=True)
-    return df
+    if result.empty:
+        return result
+
+    # Re-coerce after concat (empty frames can revert dtypes to object)
+    result["filed_date"] = pd.to_datetime(result["filed_date"], errors="coerce")
+    result["transaction_date"] = pd.to_datetime(result["transaction_date"], errors="coerce")
+
+    result = result.sort_values("filed_date", ascending=False).reset_index(drop=True)
+    return result

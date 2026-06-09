@@ -92,7 +92,11 @@ def parse_form4(xml_text: str, cik: str, accession: str,
     for tx in root.findall(".//nonDerivativeTransaction"):
         # Code is under transactionCoding, NOT transactionAmounts
         code = _text(tx, "transactionCoding/transactionCode")
-        if code != "P":
+        if code == "P":
+            transaction_type = "Purchase"
+        elif code == "S":
+            transaction_type = "Sale"
+        else:
             continue
 
         shares_raw = _text(tx, "transactionAmounts/transactionShares/value")
@@ -114,7 +118,7 @@ def parse_form4(xml_text: str, cik: str, accession: str,
             "company_name": issuer_name,
             "insider_name": insider_name,
             "role": role,
-            "transaction_type": "Purchase",
+            "transaction_type": transaction_type,
             "shares": shares,
             "price": price,
             "total_value": total_value,
@@ -123,6 +127,7 @@ def parse_form4(xml_text: str, cik: str, accession: str,
             "filing_url": filing_url,
             "cik": cik,
             "accession": accession,
+            "source": "Form 4",
         })
 
     return records

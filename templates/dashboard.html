@@ -250,6 +250,7 @@
     .ins-nordic { background: #f0fdf4; } .ins-nordic:hover { background: #dcfce7; }
     .ins-6k     { background: #fefce8; } .ins-6k:hover     { background: #fef9c3; }
     .ins-fi     { background: #eff6ff; } .ins-fi:hover     { background: #dbeafe; }
+    .ins-sale   { background: #fff1f2; } .ins-sale:hover   { background: #ffe4e6; }
     .ins-cluster{ border-left: 3px solid #f97316; }
 
     .scan-date-col { display: none; }
@@ -820,6 +821,7 @@
           <th class="left">Company</th>
           <th class="left">Insider</th>
           <th class="left">Role</th>
+          <th>Type</th>
           <th class="right">Shares</th>
           <th class="right">Price</th>
           <th class="right">Total Value</th>
@@ -829,7 +831,7 @@
           <th></th>
         </tr></thead>
         <tbody id="insider-body">
-          <tr><td colspan="13" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
+          <tr><td colspan="14" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
         </tbody>
       </table>
     </div>
@@ -2313,7 +2315,7 @@ function loadInsider() {
 }
 
 async function fetchInsider() {
-  loading('insider-body', 13);
+  loading('insider-body', 14);
   const from = document.getElementById('insider-from').value;
   const to   = document.getElementById('insider-to').value;
   const tk   = (document.getElementById('insider-ticker').value || '').trim().toUpperCase();
@@ -2324,24 +2326,25 @@ async function fetchInsider() {
   try {
     const data = (await apiFetch('/api/insider?' + qs)).data;
     renderInsider(data);
-  } catch(e) { empty('insider-body', 13, '⚠ ' + e.message); }
+  } catch(e) { empty('insider-body', 14, '⚠ ' + e.message); }
 }
 
 function renderInsider(rows) {
   if (!rows || !rows.length) {
-    empty('insider-body', 13, 'No insider signals found for this date range.');
+    empty('insider-body', 14, 'No insider signals found for this date range.');
     return;
   }
-  const sourceClass = s => {
-    if (!s) return '';
-    const sl = s.toLowerCase();
+  const rowClass = r => {
+    const isSale = r.transaction_type === 'Sale';
+    if (isSale) return 'ins-sale';
+    const sl = (r.source || '').toLowerCase();
     if (sl.includes('nordic')) return 'ins-nordic';
     if (sl.includes('6-k') || sl.includes('6k')) return 'ins-6k';
     if (sl.includes('fi (')) return 'ins-fi';
     return '';
   };
   document.getElementById('insider-body').innerHTML = rows.map(r => {
-    const rowCls = [sourceClass(r.source), r.cluster_buy ? 'ins-cluster' : ''].filter(Boolean).join(' ');
+    const rowCls = [rowClass(r), r.cluster_buy ? 'ins-cluster' : ''].filter(Boolean).join(' ');
     const clusterBadge = r.cluster_buy
       ? '<span style="background:#fed7aa;color:#9a3412;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:600">CLUSTER</span>'
       : '<span class="dim">—</span>';
@@ -2357,6 +2360,10 @@ function renderInsider(rows) {
     const sharesStr = r.shares != null
       ? Number(r.shares).toLocaleString('en-US', {maximumFractionDigits:0})
       : '<span class="dim">—</span>';
+    const isSale = r.transaction_type === 'Sale';
+    const typeBadge = isSale
+      ? '<span style="background:#fee2e2;color:#b91c1c;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:600">SELL</span>'
+      : '<span style="background:#dcfce7;color:#15803d;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:600">BUY</span>';
     return `<tr class="${rowCls}">
       <td style="font-family:monospace">${fmtDate(r.transaction_date)}</td>
       <td style="font-family:monospace;color:var(--muted)">${fmtDate(r.filed_date)}</td>
@@ -2364,6 +2371,7 @@ function renderInsider(rows) {
       <td class="left" style="max-width:160px;color:var(--muted)">${r.company_name || '—'}</td>
       <td class="left" style="max-width:160px">${r.insider_name || '—'}</td>
       <td class="left" style="color:var(--muted)">${r.role || '—'}</td>
+      <td style="text-align:center">${typeBadge}</td>
       <td class="right">${sharesStr}</td>
       <td class="right">${priceStr}</td>
       <td class="right"><strong>${totalVal}</strong></td>
