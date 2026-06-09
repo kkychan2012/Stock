@@ -783,14 +783,29 @@
   <div id="tab-insider" class="tab-pane">
     <div class="toolbar">
       <input id="insider-from" type="date" class="ticker-add-input"
-             style="font-size:12px;font-family:monospace;width:130px" title="From date">
+             style="font-size:12px;font-family:monospace;width:130px" title="View from date">
       <input id="insider-to"   type="date" class="ticker-add-input"
-             style="font-size:12px;font-family:monospace;width:130px" title="To date">
+             style="font-size:12px;font-family:monospace;width:130px" title="View to date">
       <input id="insider-ticker" class="ticker-add-input"
              style="width:100px;font-size:12px;text-transform:uppercase"
              placeholder="Ticker filter" oninput="this.value=this.value.toUpperCase()">
       <button class="btn btn-primary" onclick="fetchInsider()">Load</button>
+      <span style="width:1px;background:var(--border);height:22px;margin:0 4px"></span>
+      <input id="insider-scan-tickers" class="ticker-add-input"
+             style="width:140px;font-size:12px;text-transform:uppercase"
+             placeholder="Scan: NOK,ERIC…" oninput="this.value=this.value.toUpperCase()">
+      <input id="insider-scan-from" type="date" class="ticker-add-input"
+             style="font-size:12px;font-family:monospace;width:130px" title="Scan from date">
+      <input id="insider-scan-to" type="date" class="ticker-add-input"
+             style="font-size:12px;font-family:monospace;width:130px" title="Scan to date">
+      <button id="insider-scan-btn" class="btn btn-fetch" onclick="runInsiderScan()">&#9654; Scan</button>
+      <span id="insider-scan-status" class="fetch-status-line" style="margin-left:8px"></span>
     </div>
+    <div id="insider-scan-log"
+         style="display:none;background:var(--bg2);border:1px solid var(--border);
+                border-radius:6px;padding:10px 12px;font-size:11px;font-family:monospace;
+                max-height:140px;overflow-y:auto;margin-bottom:8px;white-space:pre-wrap;
+                color:var(--text)"></div>
     <div class="table-wrap">
       <table>
         <thead><tr>
@@ -2280,10 +2295,14 @@ function loadInsider() {
     const today = new Date();
     const from  = new Date(today); from.setDate(from.getDate() - 180);
     const fmt   = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-    const fromEl = document.getElementById('insider-from');
-    const toEl   = document.getElementById('insider-to');
-    if (fromEl && !fromEl.value) fromEl.value = fmt(from);
-    if (toEl   && !toEl.value)   toEl.value   = fmt(today);
+    ['insider-from','insider-scan-from'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el && !el.value) el.value = fmt(from);
+    });
+    ['insider-to','insider-scan-to'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el && !el.value) el.value = fmt(today);
+    });
     fetchInsider();
   }
 }
@@ -2348,6 +2367,62 @@ function renderInsider(rows) {
       <td><button class="del-btn" onclick='deleteRecord("insider",${r.id})'>&#215;</button></td>
     </tr>`;
   }).join('');
+}
+
+// ── Insider scan trigger + log polling ──────────────────────────────────────
+let _insiderScanTimer = null;
+
+async function runInsiderScan() {
+  const tickers   = (document.getElementById('insider-scan-tickers').value || '').trim();
+  const from_date = document.getElementById('insider-scan-from').value;
+  const to_date   = document.getElementById('insider-scan-to').value;
+  if (!tickers)   { alert('Enter at least one ticker to scan (e.g. NOK)'); return; }
+  if (!from_date) { alert('Set a scan from-date'); return; }
+
+  const logEl  = document.getElementById('insider-scan-log');
+  const statEl = document.getElementById('insider-scan-status');
+  const btn    = document.getElementById('insider-scan-btn');
+
+  logEl.textContent = '';
+  logEl.style.display = 'block';
+  statEl.textContent  = 'Starting…';
+  btn.disabled = true;
+
+  try {
+    await apiFetch('/api/insider/scan', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({tickers, from_date, to_date}),
+    });
+  } catch(e) {
+    statEl.textContent = '⚠ ' + e.message;
+    btn.disabled = false;
+    return;
+  }
+
+  clearInterval(_insiderScanTimer);
+  _insiderScanTimer = setInterval(async () => {
+    try {
+      const s = await apiFetch('/api/insider/scan/status');
+      logEl.textContent = (s.log || []).join('\n');
+      logEl.scrollTop   = logEl.scrollHeight;
+      if (s.error) {
+        statEl.textContent = '⚠ ' + s.error;
+      } else if (s.running) {
+        statEl.textContent = 'Scanning…';
+      } else {
+        statEl.textContent = 'Done ✓';
+        btn.disabled = false;
+        clearInterval(_insiderScanTimer);
+        // Auto-refresh results
+        await fetchInsider();
+      }
+    } catch(e) {
+      statEl.textContent = '⚠ ' + e.message;
+      btn.disabled = false;
+      clearInterval(_insiderScanTimer);
+    }
+  }, 1500);
 }
 
 function _btRules() {

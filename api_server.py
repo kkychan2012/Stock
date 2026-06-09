@@ -39,6 +39,8 @@ import base64
 import csv
 import io
 import os
+import subprocess
+import sys
 import threading
 from datetime import datetime, timedelta
 
@@ -129,6 +131,13 @@ _scan_state = {
     "mode": "single", "from_date": None, "to_date": None,
 }
 _scan_lock = threading.Lock()
+
+_insider_scan_state = {"running": False, "log": [], "error": None}
+_insider_scan_lock  = threading.Lock()
+
+_INSIDER_PIPELINE = os.path.join(
+    os.path.dirname(__file__), "Insider Trading", "insider_pipeline", "main.py"
+)
 
 VALID_PERIODS = {"1mo", "3mo", "6mo", "1y", "2y"}
 
@@ -856,6 +865,67 @@ def delete_insider(rec_id):
     if cur.rowcount == 0:
         return jsonify({"error": "record not found"}), 404
     return jsonify({"deleted": rec_id})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/insider/scan   GET /api/insider/scan/status
+# ---------------------------------------------------------------------------
+
+@app.post("/api/insider/scan")
+def start_insider_scan():
+    with _insider_scan_lock:
+        if _insider_scan_state["running"]:
+            return jsonify({"status": "already_running"}), 409
+
+        body      = request.get_json(silent=True) or {}
+        tickers   = (body.get("tickers") or "").strip()
+        from_date = (body.get("from_date") or "").strip()
+        to_date   = (body.get("to_date")   or datetime.now().strftime("%Y-%m-%d")).strip()
+
+        if not tickers:
+            return jsonify({"error": "tickers is required (e.g. NOK or NOK,ERIC)"}), 400
+        if not from_date:
+            return jsonify({"error": "from_date is required (YYYY-MM-DD)"}), 400
+
+        _insider_scan_state.update({"running": True, "log": [], "error": None})
+
+    cmd = [sys.executable, _INSIDER_PIPELINE,
+           "--ticker", tickers, "--from", from_date, "--to", to_date]
+
+    def _run():
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                cwd=os.path.dirname(_INSIDER_PIPELINE),
+            )
+            for line in proc.stdout:
+                line = line.rstrip()
+                if line:
+                    _insider_scan_state["log"].append(line)
+            proc.wait()
+            if proc.returncode != 0:
+                _insider_scan_state["error"] = f"Pipeline exited with code {proc.returncode}"
+        except Exception as exc:
+            _insider_scan_state["error"] = str(exc)
+        finally:
+            _insider_scan_state["running"] = False
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"status": "started"})
+
+
+@app.get("/api/insider/scan/status")
+def insider_scan_status():
+    return jsonify({
+        "running": _insider_scan_state["running"],
+        "log":     list(_insider_scan_state["log"]),
+        "error":   _insider_scan_state["error"],
+    })
 
 
 # ---------------------------------------------------------------------------
