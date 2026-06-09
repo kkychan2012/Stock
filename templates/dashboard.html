@@ -782,10 +782,12 @@
   <!-- ── INSIDER SIGNALS ── -->
   <div id="tab-insider" class="tab-pane">
     <div class="toolbar">
-      <input id="insider-from" type="date" class="ticker-add-input"
-             style="font-size:12px;font-family:monospace;width:130px" title="View from date">
-      <input id="insider-to"   type="date" class="ticker-add-input"
-             style="font-size:12px;font-family:monospace;width:130px" title="View to date">
+      <input id="insider-from" type="text" class="ticker-add-input" maxlength="10"
+             placeholder="YYYY-MM-DD" style="font-size:12px;font-family:monospace;width:110px"
+             onblur="normaliseDateInput(this)">
+      <input id="insider-to"   type="text" class="ticker-add-input" maxlength="10"
+             placeholder="YYYY-MM-DD" style="font-size:12px;font-family:monospace;width:110px"
+             onblur="normaliseDateInput(this)">
       <input id="insider-ticker" class="ticker-add-input"
              style="width:100px;font-size:12px;text-transform:uppercase"
              placeholder="Ticker filter" oninput="this.value=this.value.toUpperCase()">
@@ -794,10 +796,12 @@
       <input id="insider-scan-tickers" class="ticker-add-input"
              style="width:140px;font-size:12px;text-transform:uppercase"
              placeholder="Scan: NOK,ERIC…" oninput="this.value=this.value.toUpperCase()">
-      <input id="insider-scan-from" type="date" class="ticker-add-input"
-             style="font-size:12px;font-family:monospace;width:130px" title="Scan from date">
-      <input id="insider-scan-to" type="date" class="ticker-add-input"
-             style="font-size:12px;font-family:monospace;width:130px" title="Scan to date">
+      <input id="insider-scan-from" type="text" class="ticker-add-input" maxlength="10"
+             placeholder="YYYY-MM-DD" style="font-size:12px;font-family:monospace;width:110px"
+             onblur="normaliseDateInput(this)">
+      <input id="insider-scan-to" type="text" class="ticker-add-input" maxlength="10"
+             placeholder="YYYY-MM-DD" style="font-size:12px;font-family:monospace;width:110px"
+             onblur="normaliseDateInput(this)">
       <button id="insider-scan-btn" class="btn btn-fetch" onclick="runInsiderScan()">&#9654; Scan</button>
       <span id="insider-scan-status" class="fetch-status-line" style="margin-left:8px"></span>
     </div>
