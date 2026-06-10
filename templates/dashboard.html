@@ -253,6 +253,12 @@
     .ins-sale   { background: #fff1f2; } .ins-sale:hover   { background: #ffe4e6; }
     .ins-cluster{ border-left: 3px solid #f97316; }
 
+    /* ── Signals tab row colours ── */
+    .sig-gt-ma200  { background: #f0fdf4; } .sig-gt-ma200:hover  { background: #dcfce7; }
+    .sig-gt-ma1030 { background: #eff6ff; } .sig-gt-ma1030:hover { background: #dbeafe; }
+    .sig-lt-ma200  { background: #fff1f2; } .sig-lt-ma200:hover  { background: #ffe4e6; }
+    .sig-lt-ma1030 { background: #fff7ed; } .sig-lt-ma1030:hover { background: #ffedd5; }
+
     .scan-date-col { display: none; }
     .range-mode .scan-date-col { display: table-cell; }
 
@@ -334,8 +340,11 @@
   <div id="tab-signals" class="tab-pane">
     <div class="controls">
       <div class="seg-group">
-        <button class="seg-btn active" id="btn-ma200"  onclick="setSignalType('ma200')">Price &gt; MA200</button>
-        <button class="seg-btn"        id="btn-ma1030" onclick="setSignalType('ma1030')">MA10 &gt; MA30</button>
+        <button class="seg-btn active" id="btn-ma200"      onclick="setSignalType('ma200')">Price &gt; MA200</button>
+        <button class="seg-btn"        id="btn-ma1030"     onclick="setSignalType('ma1030')">MA10 &gt; MA30</button>
+        <button class="seg-btn"        id="btn-ma200bear"  onclick="setSignalType('ma200bear')" style="color:#dc2626">Price &lt; MA200</button>
+        <button class="seg-btn"        id="btn-ma1030bear" onclick="setSignalType('ma1030bear')" style="color:#dc2626">MA10 &lt; MA30</button>
+        <button class="seg-btn"        id="btn-sigall"     onclick="setSignalType('sigall')">All</button>
       </div>
       <label class="ctrl-label">From:
         <input type="text" id="sig-from" placeholder="YYYY-MM-DD" maxlength="10"
@@ -380,12 +389,13 @@
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th class="left">Ticker</th><th>Signal Date</th><th>Signal Close</th>
+          <th class="left">Ticker</th><th class="sig-type-col" style="display:none">Signal</th>
+          <th>Signal Date</th><th>Signal Close</th>
           <th>Current Price</th><th>Day %</th><th>MA10</th><th>MA30</th>
           <th>MA50</th><th>MA200</th><th>High 30D</th><th>Low 30D</th><th>Monitor</th>
         </tr></thead>
         <tbody id="signals-body">
-          <tr><td colspan="12" class="state-msg">Choose a signal type above.</td></tr>
+          <tr><td colspan="13" class="state-msg">Choose a signal type above.</td></tr>
         </tbody>
       </table>
     </div>
@@ -1168,10 +1178,30 @@ async function _refreshMonitorSet() {
   } catch { /* non-fatal */ }
 }
 
+const _SIGNAL_EP = {
+  ma200:      '/api/signals/ma200',
+  ma1030:     '/api/signals/ma1030',
+  ma200bear:  '/api/signals/ma200bear',
+  ma1030bear: '/api/signals/ma1030bear',
+  sigall:     '/api/signals/all',
+};
+
+const _SIGNAL_LABEL = {
+  price_gt_ma200: { text: 'Price > MA200', cls: 'sig-gt-ma200' },
+  ma10_gt_ma30:   { text: 'MA10 > MA30',   cls: 'sig-gt-ma1030' },
+  price_lt_ma200: { text: 'Price < MA200', cls: 'sig-lt-ma200' },
+  ma10_lt_ma30:   { text: 'MA10 < MA30',   cls: 'sig-lt-ma1030' },
+};
+
 function setSignalType(type) {
   currentSignalType = type;
-  document.getElementById('btn-ma200').classList.toggle('active',  type === 'ma200');
-  document.getElementById('btn-ma1030').classList.toggle('active', type === 'ma1030');
+  ['ma200','ma1030','ma200bear','ma1030bear','sigall'].forEach(k =>
+    document.getElementById('btn-' + k).classList.toggle('active', k === type)
+  );
+  // Show/hide the Signal column header for "All" view
+  document.querySelectorAll('.sig-type-col').forEach(el =>
+    el.style.display = (type === 'sigall') ? '' : 'none'
+  );
   loadSignals();
 }
 
@@ -1184,7 +1214,7 @@ async function loadSignals() {
 
   const latest   = document.getElementById('sig-latest').checked ? '&latest=1' : '';
   const lookback = parseInt(document.getElementById('sig-lookback').value) || 0;
-  const ep       = currentSignalType === 'ma200' ? '/api/signals/ma200' : '/api/signals/ma1030';
+  const ep       = _SIGNAL_EP[currentSignalType] || '/api/signals/ma200';
 
   document.getElementById('sig-lookback-badge').style.display =
     lookback > 0 ? 'inline-block' : 'none';
@@ -1192,12 +1222,13 @@ async function loadSignals() {
     lookback > 0 ? `prev ${lookback}d clean` : '';
 
   const lookbackParam = lookback > 0 ? `&lookback=${lookback}` : '';
-  loading('signals-body', 12);
+  const cols = currentSignalType === 'sigall' ? 13 : 12;
+  loading('signals-body', cols);
   try {
     await _refreshMonitorSet();
     _lastSignalRows = (await apiFetch(`${ep}?from=${from}&to=${to}${latest}${lookbackParam}`)).data;
     applySignalTickerFilter();
-  } catch(e) { empty('signals-body', 12, '⚠ ' + e.message); }
+  } catch(e) { empty('signals-body', cols, '⚠ ' + e.message); }
 }
 
 function applySignalTickerFilter() {
@@ -1216,14 +1247,22 @@ function applySignalTickerFilter() {
 }
 
 function renderSignals(rows) {
-  if (!rows.length) { empty('signals-body', 12, 'No signals match the current filters.'); return; }
+  const isAll = currentSignalType === 'sigall';
+  const cols  = isAll ? 13 : 12;
+  if (!rows.length) { empty('signals-body', cols, 'No signals match the current filters.'); return; }
   document.getElementById('signals-body').innerHTML = rows.map(r => {
     const inMonitor = _monitorTickers.has(r.ticker);
     const watchBtn  = inMonitor
       ? `<button class="del-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Watching</button>`
       : `<button class="del-btn" onclick="addToMonitor('${r.ticker}','${r.signal_date}',${r.signal_close},this)">+ Watch</button>`;
-    return `<tr>
+    const sigMeta   = _SIGNAL_LABEL[r.signal_type] || {};
+    const rowCls    = sigMeta.cls || '';
+    const sigCell   = isAll
+      ? `<td class="sig-type-col" style="white-space:nowrap"><span class="pill" style="font-size:10px">${sigMeta.text || r.signal_type}</span></td>`
+      : '';
+    return `<tr class="${rowCls}">
       <td class="left ticker-cell">${r.ticker}</td>
+      ${sigCell}
       <td>${fmtDate(r.signal_date)}</td><td>$${fmt(r.signal_close)}</td>
       <td><strong>${fmtVal(r.current_price, '$')}</strong></td>
       <td>${dayPctCell(r.day_pct_change)}</td>

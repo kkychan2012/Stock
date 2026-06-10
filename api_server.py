@@ -216,32 +216,41 @@ def get_holdings():
 # GET /api/signals/ma200   GET /api/signals/ma1030
 # ---------------------------------------------------------------------------
 
-def _get_signals(signal_type: str):
-    """Query signals directly from stocks_daily so every historical date is
-    visible regardless of when the fetcher was run.
-    """
-    today = datetime.now().strftime("%Y-%m-%d")
-    ago30 = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+_SIGNAL_CONDS = {
+    "price_gt_ma200": {
+        "sig_where": "sig.close > sig.ma200 AND sig.ma200 IS NOT NULL",
+        "sub_where": "sub.close > sub.ma200 AND sub.ma200 IS NOT NULL",
+        "indicator":  "sig.ma200",
+        "lookback":   "prev.close > prev.ma200 AND prev.ma200 IS NOT NULL",
+    },
+    "ma10_gt_ma30": {
+        "sig_where": "sig.ma10 > sig.ma30 AND sig.ma10 IS NOT NULL AND sig.ma30 IS NOT NULL",
+        "sub_where": "sub.ma10 > sub.ma30 AND sub.ma10 IS NOT NULL AND sub.ma30 IS NOT NULL",
+        "indicator":  "sig.ma10",
+        "lookback":   "prev.ma10 > prev.ma30 AND prev.ma10 IS NOT NULL",
+    },
+    "price_lt_ma200": {
+        "sig_where": "sig.close < sig.ma200 AND sig.ma200 IS NOT NULL",
+        "sub_where": "sub.close < sub.ma200 AND sub.ma200 IS NOT NULL",
+        "indicator":  "sig.ma200",
+        "lookback":   "prev.close < prev.ma200 AND prev.ma200 IS NOT NULL",
+    },
+    "ma10_lt_ma30": {
+        "sig_where": "sig.ma10 < sig.ma30 AND sig.ma10 IS NOT NULL AND sig.ma30 IS NOT NULL",
+        "sub_where": "sub.ma10 < sub.ma30 AND sub.ma10 IS NOT NULL AND sub.ma30 IS NOT NULL",
+        "indicator":  "sig.ma10",
+        "lookback":   "prev.ma10 < prev.ma30 AND prev.ma10 IS NOT NULL",
+    },
+}
 
-    date_from   = request.args.get("from",     ago30)
-    date_to     = request.args.get("to",       today)
-    latest_only = request.args.get("latest",   "0") in ("1", "true", "yes")
-    lookback    = request.args.get("lookback", 0, type=int)
-    ticker_sql, ticker_params = _ticker_filter("sig")
 
-    # Per-type WHERE conditions (all with explicit alias)
-    if signal_type == "price_gt_ma200":
-        sig_where_sig  = "sig.close > sig.ma200  AND sig.ma200  IS NOT NULL"
-        sig_where_sub  = "sub.close > sub.ma200  AND sub.ma200  IS NOT NULL"
-        indicator_col  = "sig.ma200"
-        lookback_cond  = "prev.close > prev.ma200 AND prev.ma200 IS NOT NULL"
-    else:
-        sig_where_sig  = "sig.ma10 > sig.ma30 AND sig.ma10 IS NOT NULL AND sig.ma30 IS NOT NULL"
-        sig_where_sub  = "sub.ma10 > sub.ma30 AND sub.ma10 IS NOT NULL AND sub.ma30 IS NOT NULL"
-        indicator_col  = "sig.ma10"
-        lookback_cond  = "prev.ma10 > prev.ma30 AND prev.ma10 IS NOT NULL"
+def _fetch_signal_rows(signal_type, date_from, date_to, latest_only, lookback, ticker_sql, ticker_params):
+    cond = _SIGNAL_CONDS[signal_type]
+    sig_where_sig = cond["sig_where"]
+    sig_where_sub = cond["sub_where"]
+    indicator_col = cond["indicator"]
+    lookback_cond = cond["lookback"]
 
-    # Latest-per-ticker: find the most recent signal date per ticker in range
     if latest_only:
         dedup_cte = f"""
             , dedup AS (
@@ -255,13 +264,8 @@ def _get_signals(signal_type: str):
         dedup_join   = "JOIN dedup ON sig.ticker = dedup.ticker AND sig.date = dedup.max_sig_date"
         dedup_params = (date_from, date_to)
     else:
-        dedup_cte    = ""
-        dedup_join   = ""
-        dedup_params = ()
+        dedup_cte, dedup_join, dedup_params = "", "", ()
 
-    # Fresh-breakout: condition must NOT have been true in the X *trading days*
-    # before the signal date.  We find the boundary date by walking back X rows
-    # in stocks_daily for that ticker, so weekends and holidays are excluded.
     if lookback > 0:
         lookback_clause = f"""
             AND NOT EXISTS (
@@ -283,13 +287,13 @@ def _get_signals(signal_type: str):
         """
         lookback_params = (lookback,)
     else:
-        lookback_clause = ""
-        lookback_params = ()
+        lookback_clause, lookback_params = "", ()
 
     sql = f"""
         {_LATEST_PRICE_CTE}
         {dedup_cte}
         SELECT
+            '{signal_type}'          AS signal_type,
             sig.ticker,
             sig.date                 AS signal_date,
             sig.close                AS signal_close,
@@ -313,7 +317,26 @@ def _get_signals(signal_type: str):
     """
     params = dedup_params + (date_from, date_to) + lookback_params + ticker_params
     with get_connection() as conn:
-        return _ok(_rows(conn, sql, params))
+        return _rows(conn, sql, params)
+
+
+def _get_signals(signal_type: str):
+    today = datetime.now().strftime("%Y-%m-%d")
+    ago30 = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    date_from   = request.args.get("from",     ago30)
+    date_to     = request.args.get("to",       today)
+    latest_only = request.args.get("latest",   "0") in ("1", "true", "yes")
+    lookback    = request.args.get("lookback", 0, type=int)
+    ticker_sql, ticker_params = _ticker_filter("sig")
+
+    if signal_type == "all":
+        rows = []
+        for st in _SIGNAL_CONDS:
+            rows += _fetch_signal_rows(st, date_from, date_to, latest_only, lookback, ticker_sql, ticker_params)
+        rows.sort(key=lambda r: (r.get("signal_date") or ""), reverse=True)
+        return _ok(rows)
+
+    return _ok(_fetch_signal_rows(signal_type, date_from, date_to, latest_only, lookback, ticker_sql, ticker_params))
 
 
 @app.get("/api/signals/ma200")
@@ -324,6 +347,21 @@ def get_signals_ma200():
 @app.get("/api/signals/ma1030")
 def get_signals_ma1030():
     return _get_signals("ma10_gt_ma30")
+
+
+@app.get("/api/signals/ma200bear")
+def get_signals_ma200bear():
+    return _get_signals("price_lt_ma200")
+
+
+@app.get("/api/signals/ma1030bear")
+def get_signals_ma1030bear():
+    return _get_signals("ma10_lt_ma30")
+
+
+@app.get("/api/signals/all")
+def get_signals_all():
+    return _get_signals("all")
 
 
 # ---------------------------------------------------------------------------
