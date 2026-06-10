@@ -1859,6 +1859,7 @@ async function saveRecord() {
       comment:      document.getElementById('rf-comment').value.trim()     || null,
       signal_date:  document.getElementById('rf-signal-date').value.trim() || null,
       signal_price: isNaN(sp) ? null : sp,
+      watchlist_id: _currentWlId || 1,
     };
   } else {
     body = {
