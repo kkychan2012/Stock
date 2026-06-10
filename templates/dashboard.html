@@ -1533,8 +1533,9 @@ function showWlPicker(btn, callback) {
 }
 
 async function wlPickerSelect(watchlistId) {
+  const cb = _wlPickerCallback;
   closeWlPicker();
-  if (_wlPickerCallback) await _wlPickerCallback(watchlistId);
+  if (cb) await cb(watchlistId);
 }
 
 function closeWlPicker() {
@@ -2900,6 +2901,7 @@ async function restoreBackup(input) {
 document.getElementById('last-updated').textContent =
   'Updated ' + new Date().toLocaleTimeString();
 loadHoldings();
+_loadWatchlists(); // pre-load so + Watch picker works from any tab
 </script>
 </body>
 </html>
