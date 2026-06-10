@@ -158,6 +158,7 @@ _LATEST_PRICE_CTE = """
     WITH lp AS (
         SELECT ticker, MAX(date) AS max_date
         FROM stocks_daily
+        WHERE close IS NOT NULL
         GROUP BY ticker
     )
 """
