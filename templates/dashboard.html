@@ -432,13 +432,22 @@
 
   <!-- ── MONITOR ── -->
   <div id="tab-monitor" class="tab-pane">
+    <!-- Watchlist selector strip -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+      <div id="watchlist-tabs" class="seg-group" style="flex-wrap:wrap"></div>
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px" onclick="openNewWatchlistModal()">+ New List</button>
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px" id="wl-rename-btn"
+              onclick="openRenameWatchlistModal()" style="display:none">Rename</button>
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px;color:var(--red)" id="wl-delete-btn"
+              onclick="deleteCurrentWatchlist()" style="display:none">Delete List</button>
+    </div>
     <div class="toolbar">
       <button class="btn btn-primary" onclick="openRecordModal('monitor')">+ Add</button>
       <span class="file-btn-wrap">
         <button class="btn btn-ghost">&#8679; Upload CSV / XLSX</button>
         <input type="file" accept=".csv,.xlsx" onchange="uploadRecords('monitor', this)">
       </span>
-      <a href="/api/monitor/download" download="monitor_list.csv">
+      <a id="monitor-download-link" href="/api/monitor/download" download="monitor_list.csv">
         <button class="btn btn-ghost">&#8681; Download CSV</button>
       </a>
       <span id="monitor-upload-status" style="font-size:12px;min-height:18px"></span>
@@ -457,6 +466,19 @@
           <tr><td colspan="18" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
         </tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- Watchlist picker popup (for + Watch buttons across all tabs) -->
+  <div id="wl-picker-overlay" style="display:none;position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.35)"
+       onclick="closeWlPicker()"></div>
+  <div id="wl-picker" style="display:none;position:fixed;z-index:3001;background:var(--surface);
+       border:1px solid var(--border);border-radius:10px;padding:14px 16px;min-width:200px;
+       box-shadow:0 8px 32px rgba(0,0,0,.18)">
+    <div style="font-weight:600;font-size:13px;margin-bottom:10px">Add to watchlist</div>
+    <div id="wl-picker-list" style="display:flex;flex-direction:column;gap:6px"></div>
+    <div style="margin-top:10px;display:flex;justify-content:flex-end">
+      <button class="btn btn-ghost" style="font-size:12px" onclick="closeWlPicker()">Cancel</button>
     </div>
   </div>
 
@@ -1274,37 +1296,51 @@ function renderSignals(rows) {
   }).join('');
 }
 
-async function addToMonitor(ticker, signalDate, signalPrice, btn) {
+function addToMonitor(ticker, signalDate, signalPrice, btn) {
+  if (!_watchlists.length) {
+    _doAddToMonitor(ticker, signalDate, signalPrice, 1, btn, '#signals-body');
+    return;
+  }
+  if (_watchlists.length === 1) {
+    _doAddToMonitor(ticker, signalDate, signalPrice, _watchlists[0].id, btn, '#signals-body');
+    return;
+  }
+  showWlPicker(btn, wlId => _doAddToMonitor(ticker, signalDate, signalPrice, wlId, btn, '#signals-body'));
+}
+
+async function _doAddToMonitor(ticker, signalDate, signalPrice, watchlistId, btn, bodySelector) {
   btn.disabled = true; btn.textContent = '…';
   try {
     await apiFetch('/api/monitor', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
-        ticker,
+        ticker, watchlist_id: watchlistId,
         reason:       `Signal on ${signalDate}`,
         signal_date:  signalDate,
         signal_price: signalPrice,
       }),
     });
     _monitorTickers.add(ticker);
-    // Flip all Watch buttons for this ticker in the table
-    document.querySelectorAll('#signals-body tr').forEach(tr => {
+    document.querySelectorAll(`${bodySelector} tr`).forEach(tr => {
       const cell = tr.querySelector('.ticker-cell');
       if (cell && cell.textContent.trim() === ticker) {
-        const b = tr.querySelector('button');
+        const b = tr.querySelector('.del-btn:not([disabled])');
         if (b) {
           b.textContent = '✓ Watching';
-          b.style.color = 'var(--green)';
-          b.style.borderColor = 'var(--green)';
-          b.style.cursor = 'default';
-          b.disabled = true; b.onclick = null;
+          b.style.color = 'var(--green)'; b.style.borderColor = 'var(--green)';
+          b.style.cursor = 'default'; b.disabled = true; b.onclick = null;
         }
       }
     });
+    await _loadWatchlists(); // refresh counts
   } catch(e) {
-    btn.disabled = false; btn.textContent = '+ Watch';
-    alert(e.message);
+    if ((e.message || '').toLowerCase().includes('already')) {
+      _monitorTickers.add(ticker);
+      btn.textContent = '✓ Watching'; btn.style.color = 'var(--green)'; btn.disabled = true;
+    } else {
+      btn.disabled = false; btn.textContent = '+ Watch';
+      alert(e.message);
+    }
   }
 }
 
@@ -1344,21 +1380,107 @@ function renderSold(rows) {
 // ═══════════════════════════════════════
 //  Monitor
 // ═══════════════════════════════════════
+//  Watchlists
+// ═══════════════════════════════════════
+let _watchlists      = [];   // [{id, name, ticker_count}]
+let _currentWlId     = null; // null = "All"
+
+async function _loadWatchlists() {
+  const { data } = await apiFetch('/api/watchlists');
+  _watchlists = data;
+  _renderWatchlistTabs();
+}
+
+function _renderWatchlistTabs() {
+  const container = document.getElementById('watchlist-tabs');
+  const allActive = _currentWlId === null;
+  let html = `<button class="seg-btn${allActive ? ' active' : ''}" onclick="selectWatchlist(null)">All</button>`;
+  _watchlists.forEach(wl => {
+    const active = _currentWlId === wl.id;
+    html += `<button class="seg-btn${active ? ' active' : ''}" onclick="selectWatchlist(${wl.id})">${wl.name} <span style="opacity:.55;font-size:10px">${wl.ticker_count}</span></button>`;
+  });
+  container.innerHTML = html;
+
+  const isDefault = _currentWlId === 1 || _currentWlId === null;
+  document.getElementById('wl-rename-btn').style.display = (_currentWlId && _currentWlId !== 1) ? '' : 'none';
+  document.getElementById('wl-delete-btn').style.display = (_currentWlId && _currentWlId !== 1) ? '' : 'none';
+
+  // Update download link
+  const link = document.getElementById('monitor-download-link');
+  if (link) link.href = _currentWlId ? `/api/monitor/download?watchlist=${_currentWlId}` : '/api/monitor/download';
+}
+
+function selectWatchlist(id) {
+  _currentWlId = id;
+  _renderWatchlistTabs();
+  loadMonitor();
+}
+
+async function openNewWatchlistModal() {
+  const name = prompt('New watchlist name:');
+  if (!name || !name.trim()) return;
+  try {
+    const res = await apiFetch('/api/watchlists', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ name: name.trim() }),
+    });
+    await _loadWatchlists();
+    selectWatchlist(res.id);
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function openRenameWatchlistModal() {
+  const wl = _watchlists.find(w => w.id === _currentWlId);
+  if (!wl) return;
+  const name = prompt('Rename watchlist:', wl.name);
+  if (!name || !name.trim() || name.trim() === wl.name) return;
+  try {
+    await apiFetch(`/api/watchlists/${_currentWlId}`, {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ name: name.trim() }),
+    });
+    await _loadWatchlists();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function deleteCurrentWatchlist() {
+  const wl = _watchlists.find(w => w.id === _currentWlId);
+  if (!wl) return;
+  if (!confirm(`Delete watchlist "${wl.name}" and all its entries?`)) return;
+  try {
+    await apiFetch(`/api/watchlists/${_currentWlId}`, { method: 'DELETE' });
+    _currentWlId = null;
+    await _loadWatchlists();
+    loadMonitor();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// ═══════════════════════════════════════
+//  Monitor
+// ═══════════════════════════════════════
 async function loadMonitor() {
-  loading('monitor-body', 17);
+  loading('monitor-body', 18);
   try {
     await _refreshMonitorSet();
-    renderMonitor((await apiFetch('/api/monitor')).data);
+    if (!_watchlists.length) await _loadWatchlists();
+    const qs = _currentWlId ? `?watchlist=${_currentWlId}` : '';
+    renderMonitor((await apiFetch(`/api/monitor${qs}`)).data);
   }
-  catch(e) { empty('monitor-body', 17, '⚠ ' + e.message); }
+  catch(e) { empty('monitor-body', 18, '⚠ ' + e.message); }
 }
+
 function renderMonitor(rows) {
-  if (!rows.length) { empty('monitor-body', 18, 'Monitor list is empty. Click + Add or upload a CSV.'); return; }
+  const showListCol = _currentWlId === null && _watchlists.length > 1;
+  const cols = showListCol ? 19 : 18;
+  if (!rows.length) { empty('monitor-body', cols, 'Monitor list is empty. Click + Add or upload a CSV.'); return; }
   document.getElementById('monitor-body').innerHTML = rows.map(r => {
     const inQueue = !!_btQueue.find(x => x.ticker === r.ticker);
     const btBtn   = inQueue
       ? `<button class="del-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Queued</button>`
       : `<button class="del-btn" onclick="monitorAddToBacktest('${r.ticker}',${r.signal_price||0},'${r.signal_date||''}',this)">+ Backtest</button>`;
+    const listCell = showListCol
+      ? `<td style="font-size:11px;color:var(--muted);white-space:nowrap">${r.watchlist_name || '—'}</td>`
+      : '';
     return `<tr>
       <td class="left ticker-cell">${r.ticker}</td>
       <td class="left name-cell">${r.stock_name || '—'}</td>
@@ -1373,6 +1495,7 @@ function renderMonitor(rows) {
       <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma200)}</td>
       <td>${fmtVal(r.high_30d)}</td><td>${fmtVal(r.low_30d)}</td>
       <td style="font-size:11px;color:var(--muted)">${fmtDate(r.added_at)}</td>
+      ${listCell}
       <td>${btBtn}</td>
       <td style="white-space:nowrap">
         <button class="del-btn" style="color:var(--accent);border-color:var(--accent)"
@@ -1384,16 +1507,40 @@ function renderMonitor(rows) {
 }
 
 function monitorAddToBacktest(ticker, p0, signalDate, btn) {
-  const added = addToBacktestQueue(ticker, p0, signalDate, 'Monitor');
-  if (added) {
-    btn.textContent = '✓ Queued';
-    btn.style.color = 'var(--green)'; btn.style.borderColor = 'var(--green)';
-    btn.style.cursor = 'default'; btn.disabled = true; btn.onclick = null;
-  } else {
-    btn.textContent = '✓ Queued';
-    btn.style.color = 'var(--green)'; btn.style.borderColor = 'var(--green)';
-    btn.style.cursor = 'default'; btn.disabled = true; btn.onclick = null;
-  }
+  addToBacktestQueue(ticker, p0, signalDate, 'Monitor');
+  btn.textContent = '✓ Queued';
+  btn.style.color = 'var(--green)'; btn.style.borderColor = 'var(--green)';
+  btn.style.cursor = 'default'; btn.disabled = true; btn.onclick = null;
+}
+
+// ── Watchlist picker popup ──────────────────────────────────────────────────
+let _wlPickerCallback = null;
+
+function showWlPicker(btn, callback) {
+  _wlPickerCallback = callback;
+  const picker = document.getElementById('wl-picker');
+  const list   = document.getElementById('wl-picker-list');
+  list.innerHTML = _watchlists.map(wl =>
+    `<button class="btn btn-ghost" style="text-align:left;padding:6px 12px;font-size:13px"
+       onclick="wlPickerSelect(${wl.id})">${wl.name}</button>`
+  ).join('');
+  // Position near the button
+  const rect = btn.getBoundingClientRect();
+  picker.style.display = 'block';
+  document.getElementById('wl-picker-overlay').style.display = 'block';
+  picker.style.top  = Math.min(rect.bottom + 4, window.innerHeight - 200) + 'px';
+  picker.style.left = Math.min(rect.left, window.innerWidth  - 220) + 'px';
+}
+
+async function wlPickerSelect(watchlistId) {
+  closeWlPicker();
+  if (_wlPickerCallback) await _wlPickerCallback(watchlistId);
+}
+
+function closeWlPicker() {
+  document.getElementById('wl-picker').style.display = 'none';
+  document.getElementById('wl-picker-overlay').style.display = 'none';
+  _wlPickerCallback = null;
 }
 
 // ═══════════════════════════════════════
@@ -2165,38 +2312,16 @@ function _renderPatternRows(rows) {
   }).join('');
 }
 
-async function addPatternToMonitor(ticker, patternName, signalDate, closePrice, btn) {
-  btn.disabled = true; btn.textContent = '…';
-  try {
-    await apiFetch('/api/monitor', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
-        ticker, reason: patternName,
-        signal_date: signalDate || null,
-        signal_price: closePrice || null,
-      }),
-    });
-    _monitorTickers.add(ticker);
-    document.querySelectorAll('#patterns-body tr').forEach(tr => {
-      const cell = tr.querySelector('.ticker-cell');
-      if (cell && cell.textContent.trim() === ticker) {
-        const b = tr.querySelector('.watch-btn');
-        if (b && !b.disabled) {
-          b.textContent = '✓ Watching';
-          b.style.color = 'var(--green)'; b.style.borderColor = 'var(--green)';
-          b.style.cursor = 'default'; b.disabled = true; b.onclick = null;
-        }
-      }
-    });
-  } catch(e) {
-    if ((e.message || '').toLowerCase().includes('already')) {
-      _monitorTickers.add(ticker);
-      btn.textContent = '✓ Watching'; btn.style.color = 'var(--green)'; btn.disabled = true;
-    } else {
-      btn.disabled = false; btn.textContent = '+ Watch';
-      alert('Error: ' + e.message);
-    }
+function addPatternToMonitor(ticker, patternName, signalDate, closePrice, btn) {
+  if (!_watchlists.length) {
+    _doAddToMonitor(ticker, signalDate, closePrice, 1, btn, '#patterns-body');
+    return;
   }
+  if (_watchlists.length === 1) {
+    _doAddToMonitor(ticker, signalDate, closePrice, _watchlists[0].id, btn, '#patterns-body');
+    return;
+  }
+  showWlPicker(btn, wlId => _doAddToMonitor(ticker, signalDate, closePrice, wlId, btn, '#patterns-body'));
 }
 
 function patternAddToBacktest(ticker, p0, signalDate, patternName, btn) {

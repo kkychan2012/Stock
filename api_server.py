@@ -741,14 +741,80 @@ def _csv_response(rows, filename):
 # GET /api/monitor
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# GET /api/watchlists  — watchlist management
+# ---------------------------------------------------------------------------
+
+@app.get("/api/watchlists")
+def get_watchlists():
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT w.id, w.name, COUNT(m.id) AS ticker_count
+            FROM watchlists w
+            LEFT JOIN monitor_list m ON m.watchlist_id = w.id
+            GROUP BY w.id, w.name
+            ORDER BY w.id
+        """).fetchall()
+    return _ok([dict(r) for r in rows])
+
+
+@app.post("/api/watchlists")
+def create_watchlist():
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+    with get_connection() as conn:
+        try:
+            cur = conn.execute("INSERT INTO watchlists (name) VALUES (?)", (name,))
+            return jsonify({"id": cur.lastrowid, "name": name}), 201
+        except Exception:
+            return jsonify({"error": f"Watchlist '{name}' already exists"}), 409
+
+
+@app.put("/api/watchlists/<int:wl_id>")
+def rename_watchlist(wl_id):
+    if wl_id == 1:
+        return jsonify({"error": "Cannot rename the Default watchlist"}), 400
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+    with get_connection() as conn:
+        cur = conn.execute("UPDATE watchlists SET name=? WHERE id=?", (name, wl_id))
+    if cur.rowcount == 0:
+        return jsonify({"error": "watchlist not found"}), 404
+    return jsonify({"updated": wl_id, "name": name})
+
+
+@app.delete("/api/watchlists/<int:wl_id>")
+def delete_watchlist(wl_id):
+    if wl_id == 1:
+        return jsonify({"error": "Cannot delete the Default watchlist"}), 400
+    with get_connection() as conn:
+        conn.execute("DELETE FROM monitor_list WHERE watchlist_id = ?", (wl_id,))
+        cur = conn.execute("DELETE FROM watchlists WHERE id = ?", (wl_id,))
+    if cur.rowcount == 0:
+        return jsonify({"error": "watchlist not found"}), 404
+    return jsonify({"deleted": wl_id})
+
+
+# ---------------------------------------------------------------------------
+# GET /api/monitor
+# ---------------------------------------------------------------------------
+
 @app.get("/api/monitor")
 def get_monitor():
     ticker_sql, ticker_params = _ticker_filter("m")
+    watchlist_id = request.args.get("watchlist", type=int)
+    wl_clause  = "AND m.watchlist_id = ?" if watchlist_id else ""
+    wl_params  = (watchlist_id,) if watchlist_id else ()
     sql = f"""
         {_LATEST_PRICE_CTE}
         SELECT
-            m.id, m.ticker, m.stock_name, m.reason, m.comment,
+            m.id, m.watchlist_id, m.ticker, m.stock_name, m.reason, m.comment,
             m.signal_date, m.signal_price, m.added_at,
+            w.name           AS watchlist_name,
             sd.close         AS current_price,
             sd.date          AS price_date,
             sd.ma6, sd.ma10, sd.ma30, sd.ma50, sd.ma200,
@@ -761,13 +827,14 @@ def get_monitor():
                 ELSE NULL
             END AS since_signal_pct
         FROM monitor_list m
+        LEFT JOIN watchlists w ON w.id = m.watchlist_id
         LEFT JOIN lp ON m.ticker = lp.ticker
         LEFT JOIN stocks_daily sd ON sd.ticker = lp.ticker AND sd.date = lp.max_date
-        WHERE 1=1 {ticker_sql}
+        WHERE 1=1 {wl_clause} {ticker_sql}
         ORDER BY m.ticker
     """
     with get_connection() as conn:
-        return _ok(_rows(conn, sql, ticker_params))
+        return _ok(_rows(conn, sql, wl_params + ticker_params))
 
 
 # ---------------------------------------------------------------------------
@@ -776,9 +843,16 @@ def get_monitor():
 
 @app.get("/api/monitor/tickers")
 def list_monitor_tickers():
-    """Lightweight endpoint — returns just the ticker strings in the monitor list."""
-    with get_connection() as conn:
-        rows = conn.execute("SELECT ticker FROM monitor_list ORDER BY ticker").fetchall()
+    watchlist_id = request.args.get("watchlist", type=int)
+    if watchlist_id:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT ticker FROM monitor_list WHERE watchlist_id=? ORDER BY ticker",
+                (watchlist_id,)
+            ).fetchall()
+    else:
+        with get_connection() as conn:
+            rows = conn.execute("SELECT ticker FROM monitor_list ORDER BY ticker").fetchall()
     return jsonify({"tickers": [r["ticker"] for r in rows]})
 
 
@@ -788,6 +862,11 @@ def add_monitor():
     ticker       = (body.get("ticker")       or "").strip().upper()
     if not ticker:
         return jsonify({"error": "ticker is required"}), 400
+    watchlist_id = body.get("watchlist_id", 1)
+    try:
+        watchlist_id = int(watchlist_id)
+    except (TypeError, ValueError):
+        watchlist_id = 1
     stock_name   = (body.get("stock_name")   or "").strip() or None
     reason       = (body.get("reason")       or "").strip() or None
     comment      = (body.get("comment")      or "").strip() or None
@@ -800,12 +879,13 @@ def add_monitor():
     with get_connection() as conn:
         try:
             conn.execute(
-                """INSERT INTO monitor_list (ticker, stock_name, reason, comment, signal_date, signal_price)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (ticker, stock_name, reason, comment, signal_date, signal_price)
+                """INSERT INTO monitor_list
+                   (watchlist_id, ticker, stock_name, reason, comment, signal_date, signal_price)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (watchlist_id, ticker, stock_name, reason, comment, signal_date, signal_price)
             )
         except Exception:
-            return jsonify({"error": f"{ticker} already in monitor list"}), 409
+            return jsonify({"error": f"{ticker} already in this watchlist"}), 409
     return jsonify({"added": ticker}), 201
 
 
@@ -857,11 +937,19 @@ def upload_monitor():
 
 @app.get("/api/monitor/download")
 def download_monitor():
+    watchlist_id = request.args.get("watchlist", type=int)
     with get_connection() as conn:
-        rows = conn.execute(
-            """SELECT ticker, stock_name, reason, comment, signal_date, signal_price, added_at
-               FROM monitor_list ORDER BY ticker"""
-        ).fetchall()
+        if watchlist_id:
+            rows = conn.execute(
+                """SELECT ticker, stock_name, reason, comment, signal_date, signal_price, added_at
+                   FROM monitor_list WHERE watchlist_id=? ORDER BY ticker""",
+                (watchlist_id,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT ticker, stock_name, reason, comment, signal_date, signal_price, added_at
+                   FROM monitor_list ORDER BY ticker"""
+            ).fetchall()
     return _csv_response(rows, "monitor_list.csv")
 
 

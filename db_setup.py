@@ -105,15 +105,23 @@ def setup_database():
                 UNIQUE(ticker, signal_type, signal_date)
             );
 
+            CREATE TABLE IF NOT EXISTS watchlists (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name       TEXT    NOT NULL UNIQUE,
+                created_at TEXT    DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS monitor_list (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                ticker       TEXT    NOT NULL UNIQUE,
+                watchlist_id INTEGER NOT NULL DEFAULT 1,
+                ticker       TEXT    NOT NULL,
                 stock_name   TEXT,
                 reason       TEXT,
                 comment      TEXT,
                 signal_date  TEXT,
                 signal_price REAL,
-                added_at     TEXT    DEFAULT CURRENT_TIMESTAMP
+                added_at     TEXT    DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(watchlist_id, ticker)
             );
 
             CREATE TABLE IF NOT EXISTS skipped_stocks (
@@ -242,6 +250,50 @@ def _migrate(conn):
         conn.execute("ALTER TABLE monitor_list ADD COLUMN signal_price REAL")
     if "comment" not in monitor_cols:
         conn.execute("ALTER TABLE monitor_list ADD COLUMN comment TEXT")
+
+    existing_tables = {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    )}
+
+    # Add watchlists table and migrate monitor_list to support multiple watchlists
+    if "watchlists" not in existing_tables:
+        conn.execute("""
+            CREATE TABLE watchlists (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name       TEXT    NOT NULL UNIQUE,
+                created_at TEXT    DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("INSERT OR IGNORE INTO watchlists (id, name) VALUES (1, 'Default')")
+
+    if "watchlist_id" not in monitor_cols:
+        # Recreate monitor_list with watchlist_id and new UNIQUE(watchlist_id, ticker)
+        conn.execute("""
+            CREATE TABLE monitor_list_new (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                watchlist_id INTEGER NOT NULL DEFAULT 1,
+                ticker       TEXT    NOT NULL,
+                stock_name   TEXT,
+                reason       TEXT,
+                comment      TEXT,
+                signal_date  TEXT,
+                signal_price REAL,
+                added_at     TEXT    DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(watchlist_id, ticker)
+            )
+        """)
+        conn.execute("""
+            INSERT INTO monitor_list_new
+                (id, watchlist_id, ticker, stock_name, reason, comment, signal_date, signal_price, added_at)
+            SELECT id, 1, ticker, stock_name, reason, comment, signal_date, signal_price, added_at
+            FROM monitor_list
+        """)
+        conn.execute("DROP TABLE monitor_list")
+        conn.execute("ALTER TABLE monitor_list_new RENAME TO monitor_list")
+        print("  Migration: monitor_list upgraded to support multiple watchlists.")
+
+    # Ensure Default watchlist always exists
+    conn.execute("INSERT OR IGNORE INTO watchlists (id, name) VALUES (1, 'Default')")
 
     existing_tables = {row[0] for row in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'"
