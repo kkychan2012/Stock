@@ -363,6 +363,13 @@ def _migrate(conn):
             "ON insider_signals(transaction_date DESC)"
         )
 
+    stocks_daily_cols = {row[1] for row in conn.execute("PRAGMA table_info(stocks_daily)")}
+    if "rsi14" not in stocks_daily_cols:
+        try:
+            conn.execute("ALTER TABLE stocks_daily ADD COLUMN rsi14 REAL")
+        except Exception:
+            pass
+
     _fix_existing_dates(conn)
 
 

@@ -294,6 +294,7 @@
 <nav class="tabs">
   <button class="tab-btn active" onclick="showTab('holdings')">Holdings</button>
   <button class="tab-btn"        onclick="showTab('signals')">Signals</button>
+  <button class="tab-btn"        onclick="showTab('rsi')">RSI Signals</button>
   <button class="tab-btn"        onclick="showTab('sold')">Sold</button>
   <button class="tab-btn"        onclick="showTab('monitor')">Monitor</button>
   <button class="tab-btn"        onclick="showTab('patterns')">Pattern Scanner</button>
@@ -326,11 +327,11 @@
           <th>Buy Date</th><th>Avg Buy</th><th>Qty</th>
           <th>Price</th><th>Day %</th><th>P/L $</th><th>P/L %</th>
           <th>Cut Off</th>
-          <th>MA10</th><th>MA30</th><th>MA50</th><th>MA200</th>
+          <th>MA10</th><th>MA30</th><th>MA50</th><th>MA200</th><th>RSI</th>
           <th>High 30D</th><th>Low 30D</th><th>Action</th>
         </tr></thead>
         <tbody id="holdings-body">
-          <tr><td colspan="17" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
+          <tr><td colspan="18" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
         </tbody>
       </table>
     </div>
@@ -401,6 +402,53 @@
     </div>
   </div>
 
+  <!-- ── RSI SIGNALS ── -->
+  <div id="tab-rsi" class="tab-pane">
+    <div class="controls">
+      <label class="ctrl-label">Zone:
+        <select id="rsi-zone" onchange="loadRsiSignals()"
+                style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;
+                       font-size:12px;background:var(--surface);color:var(--text)">
+          <option value="">All</option>
+          <option value="oversold">Oversold (&lt;30)</option>
+          <option value="overbought">Overbought (&gt;70)</option>
+          <option value="neutral">Neutral (30–70)</option>
+        </select>
+      </label>
+      <label class="ctrl-label">From:
+        <input type="text" id="rsi-from" placeholder="YYYY-MM-DD" maxlength="10"
+               onchange="loadRsiSignals()"
+               style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;
+                      font-size:12px;background:var(--surface);color:var(--text);width:110px;
+                      font-family:monospace">
+      </label>
+      <label class="ctrl-label">To:
+        <input type="text" id="rsi-to" placeholder="YYYY-MM-DD" maxlength="10"
+               onchange="loadRsiSignals()"
+               style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;
+                      font-size:12px;background:var(--surface);color:var(--text);width:110px;
+                      font-family:monospace">
+      </label>
+      <label class="ctrl-label">
+        <input type="checkbox" id="rsi-latest" onchange="loadRsiSignals()"> Latest per ticker only
+      </label>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th class="left">Ticker</th>
+          <th>Date</th><th>RSI</th><th>Close</th>
+          <th>Current Price</th><th>Day %</th>
+          <th>MA10</th><th>MA30</th><th>MA200</th>
+          <th>Direction</th><th>Monitor</th>
+        </tr></thead>
+        <tbody id="rsi-signals-body">
+          <tr><td colspan="11" class="state-msg">Select a date range above to load RSI data.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- ── SOLD ── -->
   <div id="tab-sold" class="tab-pane">
     <div class="summary-row" id="sold-cards"></div>
@@ -459,11 +507,11 @@
           <th class="left">Reason</th><th class="left">Comment</th>
           <th>Signal Date</th><th>Signal Price</th><th>Since Signal</th>
           <th>Current Price</th><th>Day %</th>
-          <th>MA10</th><th>MA30</th><th>MA50</th><th>MA200</th>
+          <th>MA10</th><th>MA30</th><th>MA50</th><th>MA200</th><th>RSI</th>
           <th>High 30D</th><th>Low 30D</th><th>Added Date</th><th>Backtest</th><th>Action</th>
         </tr></thead>
         <tbody id="monitor-body">
-          <tr><td colspan="18" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
+          <tr><td colspan="19" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
         </tbody>
       </table>
     </div>
@@ -1069,7 +1117,7 @@ let _pollTimer        = null;
 let _lastLogLen       = 0;
 let _fetchRunning     = false;
 
-const TABS = ['holdings', 'signals', 'sold', 'monitor', 'patterns', 'tickers', 'backtester', 'insider'];
+const TABS = ['holdings', 'signals', 'rsi', 'sold', 'monitor', 'patterns', 'tickers', 'backtester', 'insider'];
 
 // ═══════════════════════════════════════
 //  Formatting
@@ -1096,6 +1144,13 @@ function pillCell(v) {
   const n = Number(v), cls = n >= 0 ? 'green' : 'red', sign = n >= 0 ? '+' : '';
   return `<span class="pill ${cls}">${sign}${n.toFixed(2)}%</span>`;
 }
+function rsiCell(v) {
+  if (v == null) return '<span class="dim">—</span>';
+  const n = Number(v);
+  if (n < 30) return `<span style="color:var(--green);font-weight:600">${n.toFixed(1)}</span>`;
+  if (n > 70) return `<span style="color:var(--red);font-weight:600">${n.toFixed(1)}</span>`;
+  return n.toFixed(1);
+}
 
 // ═══════════════════════════════════════
 //  Tab switching
@@ -1106,7 +1161,7 @@ function showTab(name) {
     document.querySelectorAll('.tab-btn')[i].classList.toggle('active', t === name);
   });
   currentTab = name;
-  ({holdings: loadHoldings, signals: loadSignals, sold: loadSold,
+  ({holdings: loadHoldings, signals: loadSignals, rsi: loadRsiSignals, sold: loadSold,
     monitor: loadMonitor, patterns: loadPatterns, tickers: loadTickerList,
     backtester: loadBacktester, insider: loadInsider})[name]();
 }
@@ -1135,9 +1190,9 @@ function empty(id, cols, msg = 'No records found.') {
 //  Holdings
 // ═══════════════════════════════════════
 async function loadHoldings() {
-  loading('holdings-body', 17);
+  loading('holdings-body', 18);
   try { renderHoldings((await apiFetch('/api/holdings')).data); }
-  catch(e) { empty('holdings-body', 17, '⚠ ' + e.message); }
+  catch(e) { empty('holdings-body', 18, '⚠ ' + e.message); }
 }
 function renderHoldings(rows) {
   let cost = 0, value = 0;
@@ -1153,7 +1208,7 @@ function renderHoldings(rows) {
     <div class="card"><div class="card-label">Market Value</div><div class="card-value">$${value.toFixed(0)}</div></div>
     <div class="card"><div class="card-label">Unrealised P/L</div><div class="card-value ${plCls}">${sign}$${Math.abs(pl).toFixed(0)}</div></div>
     <div class="card"><div class="card-label">P/L %</div><div class="card-value ${plCls}">${sign}${plPct.toFixed(2)}%</div></div>`;
-  if (!rows.length) { empty('holdings-body', 17, 'No holdings found. Click + Add or upload a CSV.'); return; }
+  if (!rows.length) { empty('holdings-body', 18, 'No holdings found. Click + Add or upload a CSV.'); return; }
   document.getElementById('holdings-body').innerHTML = rows.map(r => {
     const cp = r.current_price, ab = r.avg_buy_price, h30 = r.high_30d;
     let cutOff = null;
@@ -1173,7 +1228,7 @@ function renderHoldings(rows) {
       <td>${plCell(r.pl_value)}</td><td>${pillCell(r.pl_pct)}</td>
       ${cutOffCell}
       <td>${fmtVal(r.ma10)}</td><td>${fmtVal(r.ma30)}</td>
-      <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma200)}</td>
+      <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma200)}</td><td>${rsiCell(r.rsi14)}</td>
       <td>${fmtVal(r.high_30d)}</td><td>${fmtVal(r.low_30d)}</td>
       <td style="white-space:nowrap">
         <button class="del-btn" style="color:var(--green);border-color:var(--green)"
@@ -1345,6 +1400,63 @@ async function _doAddToMonitor(ticker, signalDate, signalPrice, watchlistId, btn
 }
 
 // ═══════════════════════════════════════
+//  RSI Signals
+// ═══════════════════════════════════════
+let _lastRsiRows = [];
+
+async function loadRsiSignals() {
+  const from = document.getElementById('rsi-from').value.trim();
+  const to   = document.getElementById('rsi-to').value.trim();
+  if (!DATE_RE.test(from) || !DATE_RE.test(to)) return;
+
+  const zone    = document.getElementById('rsi-zone').value;
+  const latest  = document.getElementById('rsi-latest').checked ? '&latest=1' : '';
+  const zoneParam = zone ? `&zone=${zone}` : '';
+
+  loading('rsi-signals-body', 11);
+  try {
+    await _refreshMonitorSet();
+    _lastRsiRows = (await apiFetch(`/api/signals/rsi?from=${from}&to=${to}${zoneParam}${latest}`)).data;
+    renderRsiSignals(_lastRsiRows);
+  } catch(e) { empty('rsi-signals-body', 11, '⚠ ' + e.message); }
+}
+
+function renderRsiSignals(rows) {
+  if (!rows.length) { empty('rsi-signals-body', 11, 'No RSI signals match the current filters.'); return; }
+  document.getElementById('rsi-signals-body').innerHTML = rows.map(r => {
+    const inMonitor = _monitorTickers.has(r.ticker);
+    const watchBtn  = inMonitor
+      ? `<button class="del-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Watching</button>`
+      : `<button class="del-btn" onclick="rsiAddToMonitor('${r.ticker}','${r.date}',${r.close},this)">+ Watch</button>`;
+    return `<tr>
+      <td class="left ticker-cell">${r.ticker}</td>
+      <td>${fmtDate(r.date)}</td>
+      <td>${rsiCell(r.rsi14)}</td>
+      <td>$${fmt(r.close)}</td>
+      <td><strong>${fmtVal(r.current_price, '$')}</strong></td>
+      <td>${dayPctCell(r.day_pct_change)}</td>
+      <td>${fmtVal(r.ma10)}</td>
+      <td>${fmtVal(r.ma30)}</td>
+      <td>${fmtVal(r.ma200)}</td>
+      <td>${r.direction || '<span class="dim">—</span>'}</td>
+      <td>${watchBtn}</td>
+    </tr>`;
+  }).join('');
+}
+
+function rsiAddToMonitor(ticker, signalDate, signalPrice, btn) {
+  if (!_watchlists.length) {
+    _doAddToMonitor(ticker, signalDate, signalPrice, 1, btn, '#rsi-signals-body');
+    return;
+  }
+  if (_watchlists.length === 1) {
+    _doAddToMonitor(ticker, signalDate, signalPrice, _watchlists[0].id, btn, '#rsi-signals-body');
+    return;
+  }
+  showWlPicker(btn, wlId => _doAddToMonitor(ticker, signalDate, signalPrice, wlId, btn, '#rsi-signals-body'));
+}
+
+// ═══════════════════════════════════════
 //  Sold
 // ═══════════════════════════════════════
 async function loadSold() {
@@ -1459,7 +1571,7 @@ async function deleteCurrentWatchlist() {
 //  Monitor
 // ═══════════════════════════════════════
 async function loadMonitor() {
-  loading('monitor-body', 18);
+  loading('monitor-body', 19);
   try {
     await _refreshMonitorSet();
     if (!_watchlists.length) await _loadWatchlists();
@@ -1471,7 +1583,7 @@ async function loadMonitor() {
 
 function renderMonitor(rows) {
   const showListCol = _currentWlId === null && _watchlists.length > 1;
-  const cols = showListCol ? 19 : 18;
+  const cols = showListCol ? 20 : 19;
   if (!rows.length) { empty('monitor-body', cols, 'Monitor list is empty. Click + Add or upload a CSV.'); return; }
   document.getElementById('monitor-body').innerHTML = rows.map(r => {
     const inQueue = !!_btQueue.find(x => x.ticker === r.ticker);
@@ -1492,7 +1604,7 @@ function renderMonitor(rows) {
       <td><strong>${fmtVal(r.current_price, '$')}</strong></td>
       <td>${dayPctCell(r.day_pct_change)}</td>
       <td>${fmtVal(r.ma10)}</td><td>${fmtVal(r.ma30)}</td>
-      <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma200)}</td>
+      <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma200)}</td><td>${rsiCell(r.rsi14)}</td>
       <td>${fmtVal(r.high_30d)}</td><td>${fmtVal(r.low_30d)}</td>
       <td style="font-size:11px;color:var(--muted)">${fmtDate(r.added_at)}</td>
       ${listCell}
@@ -2399,7 +2511,7 @@ function _renderBtQueue() {
 
 function _updateBtTabBadge() {
   const n   = _btQueue.length;
-  const btn = document.querySelectorAll('.tab-btn')[6];
+  const btn = document.querySelectorAll('.tab-btn')[7];
   if (btn) btn.textContent = n > 0 ? `Backtester (${n})` : 'Backtester';
 }
 
@@ -2896,6 +3008,8 @@ async function restoreBackup(input) {
   const ago30 = new Date(today); ago30.setDate(today.getDate() - 30);
   document.getElementById('sig-to').value   = fmt(today);
   document.getElementById('sig-from').value = fmt(ago30);
+  document.getElementById('rsi-to').value   = fmt(today);
+  document.getElementById('rsi-from').value = fmt(ago30);
 })();
 
 document.getElementById('last-updated').textContent =

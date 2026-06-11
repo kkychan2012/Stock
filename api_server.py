@@ -193,7 +193,7 @@ def get_holdings():
             h.buy_date, h.notes, h.added_at,
             sd.close                                                    AS current_price,
             sd.date                                                     AS price_date,
-            sd.ma6, sd.ma10, sd.ma30, sd.ma50, sd.ma200,
+            sd.ma6, sd.ma10, sd.ma30, sd.ma50, sd.ma200, sd.rsi14,
             sd.high_30d, sd.low_30d, sd.vol_ma10,
             sd.pct_change                                               AS day_pct_change,
             sd.direction,
@@ -363,6 +363,72 @@ def get_signals_ma1030bear():
 @app.get("/api/signals/all")
 def get_signals_all():
     return _get_signals("all")
+
+
+# ---------------------------------------------------------------------------
+# GET /api/signals/rsi
+# ---------------------------------------------------------------------------
+
+@app.get("/api/signals/rsi")
+def get_rsi_signals():
+    today = datetime.now().strftime("%Y-%m-%d")
+    ago30 = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    date_from   = request.args.get("from",   ago30)
+    date_to     = request.args.get("to",     today)
+    zone        = request.args.get("zone",   "").strip().lower()
+    latest_only = request.args.get("latest", "0") in ("1", "true", "yes")
+    ticker_sql, ticker_params = _ticker_filter("sig")
+
+    if zone == "oversold":
+        zone_sql = " AND sig.rsi14 < 30"
+    elif zone == "overbought":
+        zone_sql = " AND sig.rsi14 > 70"
+    elif zone == "neutral":
+        zone_sql = " AND sig.rsi14 >= 30 AND sig.rsi14 <= 70"
+    else:
+        zone_sql = ""
+
+    if latest_only:
+        dedup_cte = """
+            , dedup AS (
+                SELECT sub.ticker, MAX(sub.date) AS max_sig_date
+                FROM stocks_daily sub
+                WHERE sub.rsi14 IS NOT NULL
+                  AND sub.date >= ? AND sub.date <= ?
+                GROUP BY sub.ticker
+            )
+        """
+        dedup_join   = "JOIN dedup ON sig.ticker = dedup.ticker AND sig.date = dedup.max_sig_date"
+        dedup_params = (date_from, date_to)
+    else:
+        dedup_cte, dedup_join, dedup_params = "", "", ()
+
+    sql = f"""
+        {_LATEST_PRICE_CTE}
+        {dedup_cte}
+        SELECT
+            sig.ticker,
+            sig.date,
+            sig.close,
+            sig.rsi14,
+            cur.close      AS current_price,
+            cur.date       AS current_price_date,
+            cur.ma10, cur.ma30, cur.ma200,
+            cur.pct_change AS day_pct_change,
+            cur.direction
+        FROM stocks_daily sig
+        {dedup_join}
+        LEFT JOIN lp ON sig.ticker = lp.ticker
+        LEFT JOIN stocks_daily cur ON cur.ticker = lp.ticker AND cur.date = lp.max_date
+        WHERE sig.rsi14 IS NOT NULL
+          AND sig.date >= ? AND sig.date <= ?
+          {zone_sql}
+          {ticker_sql}
+        ORDER BY sig.date DESC, sig.ticker
+    """
+    params = dedup_params + (date_from, date_to) + ticker_params
+    with get_connection() as conn:
+        return _ok(_rows(conn, sql, params))
 
 
 # ---------------------------------------------------------------------------
@@ -818,7 +884,7 @@ def get_monitor():
             w.name           AS watchlist_name,
             sd.close         AS current_price,
             sd.date          AS price_date,
-            sd.ma6, sd.ma10, sd.ma30, sd.ma50, sd.ma200,
+            sd.ma6, sd.ma10, sd.ma30, sd.ma50, sd.ma200, sd.rsi14,
             sd.high_30d, sd.low_30d, sd.vol_ma10,
             sd.pct_change    AS day_pct_change,
             sd.direction,

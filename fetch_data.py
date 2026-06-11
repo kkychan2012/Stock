@@ -39,6 +39,13 @@ def _calculate_indicators(data: pd.DataFrame) -> pd.DataFrame:
     data["Direction"]   = data["Price_Change"].apply(
         lambda x: "Up" if x > 0 else ("Down" if x < 0 else "No Change")
     )
+    delta    = data["Close"].diff()
+    gain     = delta.clip(lower=0)
+    loss     = (-delta).clip(lower=0)
+    avg_gain = gain.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    rs       = avg_gain / avg_loss
+    data["RSI14"] = 100 - (100 / (1 + rs))
     return data
 
 
@@ -110,6 +117,7 @@ def _upsert_daily_rows(conn, ticker: str, data: pd.DataFrame, fetched_at: str):
             _safe(row.get("Price_Change")),
             _safe(row.get("Pct_Change")),
             row.get("Direction", ""),
+            _safe(row.get("RSI14")),
             fetched_at,
         ))
 
@@ -118,8 +126,8 @@ def _upsert_daily_rows(conn, ticker: str, data: pd.DataFrame, fetched_at: str):
             (ticker, date, open, high, low, close, volume,
              ma6, ma10, ma30, ma50, ma200,
              high_30d, low_30d, vol_ma10,
-             price_change, pct_change, direction, fetched_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             price_change, pct_change, direction, rsi14, fetched_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(ticker, date) DO UPDATE SET
             open=excluded.open, high=excluded.high, low=excluded.low,
             close=excluded.close, volume=excluded.volume,
@@ -128,7 +136,8 @@ def _upsert_daily_rows(conn, ticker: str, data: pd.DataFrame, fetched_at: str):
             high_30d=excluded.high_30d, low_30d=excluded.low_30d,
             vol_ma10=excluded.vol_ma10,
             price_change=excluded.price_change, pct_change=excluded.pct_change,
-            direction=excluded.direction, fetched_at=excluded.fetched_at
+            direction=excluded.direction, rsi14=excluded.rsi14,
+            fetched_at=excluded.fetched_at
     """, rows)
 
 
