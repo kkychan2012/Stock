@@ -303,7 +303,11 @@ def _fetch_signal_rows(signal_type, date_from, date_to, latest_only, lookback, t
             sig.high_30d, sig.low_30d,
             cur.close                AS current_price,
             cur.date                 AS current_price_date,
-            cur.pct_change           AS day_pct_change,
+            CASE
+                WHEN sig.close > 0 AND cur.close IS NOT NULL
+                THEN ROUND((cur.close - sig.close) / sig.close * 100, 2)
+                ELSE NULL
+            END                      AS day_pct_change,
             cur.direction
         FROM stocks_daily sig
         {dedup_join}
@@ -414,7 +418,11 @@ def get_rsi_signals():
             sig.ma10, sig.ma30, sig.ma200,
             cur.close      AS current_price,
             cur.date       AS current_price_date,
-            cur.pct_change AS day_pct_change,
+            CASE
+                WHEN sig.close > 0 AND cur.close IS NOT NULL
+                THEN ROUND((cur.close - sig.close) / sig.close * 100, 2)
+                ELSE NULL
+            END            AS day_pct_change,
             cur.direction
         FROM stocks_daily sig
         {dedup_join}
