@@ -299,10 +299,10 @@ def _fetch_signal_rows(signal_type, date_from, date_to, latest_only, lookback, t
             sig.date                 AS signal_date,
             sig.close                AS signal_close,
             {indicator_col}          AS indicator_value,
+            sig.ma6, sig.ma10, sig.ma30, sig.ma50, sig.ma200,
+            sig.high_30d, sig.low_30d,
             cur.close                AS current_price,
             cur.date                 AS current_price_date,
-            cur.ma6, cur.ma10, cur.ma30, cur.ma50, cur.ma200,
-            cur.high_30d, cur.low_30d,
             cur.pct_change           AS day_pct_change,
             cur.direction
         FROM stocks_daily sig
