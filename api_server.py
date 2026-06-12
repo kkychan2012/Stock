@@ -411,9 +411,9 @@ def get_rsi_signals():
             sig.date,
             sig.close,
             sig.rsi14,
+            sig.ma10, sig.ma30, sig.ma200,
             cur.close      AS current_price,
             cur.date       AS current_price_date,
-            cur.ma10, cur.ma30, cur.ma200,
             cur.pct_change AS day_pct_change,
             cur.direction
         FROM stocks_daily sig
