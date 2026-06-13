@@ -135,6 +135,9 @@ _scan_lock = threading.Lock()
 _insider_scan_state = {"running": False, "log": [], "error": None}
 _insider_scan_lock  = threading.Lock()
 
+_market_cache      = {"data": None, "date": None}
+_market_cache_lock = threading.Lock()
+
 _INSIDER_PIPELINE = os.path.join(
     os.path.dirname(__file__), "Insider Trading", "insider_pipeline", "main.py"
 )
@@ -1127,6 +1130,39 @@ def insider_scan_status():
         "log":     list(_insider_scan_state["log"]),
         "error":   _insider_scan_state["error"],
     })
+
+
+# ---------------------------------------------------------------------------
+# GET /api/market/status   — Distribution Day / Follow-Through Day health
+# ---------------------------------------------------------------------------
+
+@app.get("/api/market/status")
+def get_market_status():
+    """
+    Returns IBD-style market health: Distribution Day counts, Follow-Through
+    Days, market status, and 60-day chart data for ^IXIC and ^GSPC.
+
+    Cache: result is cached in memory for the current calendar day.
+    Pass ?refresh=1 to force a new fetch from yfinance.
+    """
+    refresh = request.args.get("refresh", "0") in ("1", "true", "yes")
+    today   = datetime.now().strftime("%Y-%m-%d")
+
+    with _market_cache_lock:
+        if not refresh and _market_cache["data"] and _market_cache["date"] == today:
+            return jsonify(_market_cache["data"])
+
+    try:
+        from market_health import get_market_health
+        data = get_market_health()
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    with _market_cache_lock:
+        _market_cache["data"] = data
+        _market_cache["date"] = today
+
+    return jsonify(data)
 
 
 # ---------------------------------------------------------------------------

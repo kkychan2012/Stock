@@ -301,6 +301,7 @@
   <button class="tab-btn"        onclick="showTab('tickers')">Ticker List</button>
   <button class="tab-btn"        onclick="showTab('backtester')">Backtester</button>
   <button class="tab-btn"        onclick="showTab('insider')">Insider</button>
+  <button class="tab-btn"        onclick="showTab('market')">Market</button>
 </nav>
 
 <!-- ════════════ MAIN ════════════ -->
@@ -927,6 +928,54 @@
                 background:var(--bg2);border:1px solid var(--border)"></div>
   </div>
 
+  <!-- ── MARKET HEALTH (Distribution Day / FTD) ── -->
+  <div id="tab-market" class="tab-pane">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <button class="btn btn-primary" onclick="loadMarket(true)">&#8635; Refresh</button>
+      <span id="market-computed-at" style="font-size:12px;color:var(--muted)"></span>
+    </div>
+
+    <!-- Status badge -->
+    <div id="market-status-card" style="margin-bottom:14px"></div>
+
+    <!-- Summary cards -->
+    <div class="summary-row" id="market-cards"></div>
+
+    <!-- 60-day chart -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;
+                padding:16px 20px;margin-bottom:14px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:10px">
+        Index Performance — Last 60 Trading Days (Indexed to 100)
+        <span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:10px">
+          <span style="color:#dc2626;font-weight:700">●</span> Distribution Day &nbsp;
+          <span style="color:#16a34a;font-weight:700">●</span> Follow-Through Day
+        </span>
+      </div>
+      <div style="position:relative;height:280px">
+        <canvas id="market-chart"></canvas>
+      </div>
+    </div>
+
+    <!-- Active DD table -->
+    <div style="font-size:13px;font-weight:600;margin-bottom:8px">
+      Active Distribution Days — 25-Day Rolling Window
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th class="left">Date</th>
+          <th class="left">Index</th>
+          <th>% Change</th>
+          <th>Vol vs Prior Day</th>
+          <th>Days Until Expiry</th>
+        </tr></thead>
+        <tbody id="market-dd-body">
+          <tr><td colspan="5" class="state-msg">Click Refresh to load market health data.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
 </main>
 
 <!-- ════════════ RECORD EDIT MODAL ════════════ -->
@@ -1084,6 +1133,7 @@
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
 // ═══════════════════════════════════════
 //  Date normalisation
@@ -1128,7 +1178,7 @@ let _pollTimer        = null;
 let _lastLogLen       = 0;
 let _fetchRunning     = false;
 
-const TABS = ['holdings', 'signals', 'rsi', 'sold', 'monitor', 'patterns', 'tickers', 'backtester', 'insider'];
+const TABS = ['holdings', 'signals', 'rsi', 'sold', 'monitor', 'patterns', 'tickers', 'backtester', 'insider', 'market'];
 
 // ═══════════════════════════════════════
 //  Formatting
@@ -1174,7 +1224,7 @@ function showTab(name) {
   currentTab = name;
   ({holdings: loadHoldings, signals: loadSignals, rsi: loadRsiSignals, sold: loadSold,
     monitor: loadMonitor, patterns: loadPatterns, tickers: loadTickerList,
-    backtester: loadBacktester, insider: loadInsider})[name]();
+    backtester: loadBacktester, insider: loadInsider, market: loadMarket})[name]();
 }
 
 // ═══════════════════════════════════════
@@ -2997,6 +3047,210 @@ function refreshCurrent() {
   document.getElementById('last-updated').textContent =
     'Updated ' + new Date().toLocaleTimeString();
   showTab(currentTab);
+}
+
+// ═══════════════════════════════════════
+//  Market Health (Distribution Day / FTD)
+// ═══════════════════════════════════════
+let _marketChart       = null;
+let _marketInitialised = false;
+
+async function loadMarket(force = false) {
+  if (_marketInitialised && !force) return;
+  const tbody = document.getElementById('market-dd-body');
+  tbody.innerHTML = '<tr><td colspan="5" class="state-msg"><span class="spinner"></span>Loading market health data…</td></tr>';
+  document.getElementById('market-status-card').innerHTML = '';
+  document.getElementById('market-cards').innerHTML = '';
+  document.getElementById('market-computed-at').textContent = '';
+  try {
+    const url = '/api/market/status' + (force ? '?refresh=1' : '');
+    const d   = await apiFetch(url);
+    _marketInitialised = true;
+    _renderMarket(d);
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="5" class="state-msg" style="color:var(--red)">Error: ${e.message}</td></tr>`;
+  }
+}
+
+function _renderMarket(d) {
+  const s    = d.status   || {};
+  const ixic = d.indices?.['^IXIC'] || {};
+  const gspc = d.indices?.['^GSPC'] || {};
+  const ftd  = d.recent_ftd;
+
+  // ── Status badge ────────────────────────────────────────────
+  const CLRS  = { green: '#15803d', yellow: '#b45309', red: '#dc2626' };
+  const BGS   = { green: '#dcfce7', yellow: '#fef9c3', red: '#fee2e2' };
+  const EMJS  = { green: '🟢', yellow: '🟡', red: '🔴' };
+  const clr   = CLRS[s.color] || '#64748b';
+  const bg    = BGS[s.color]  || '#f1f5f9';
+  const emoji = EMJS[s.color] || '⚪';
+  document.getElementById('market-status-card').innerHTML = `
+    <div style="background:${bg};border:2px solid ${clr};border-radius:10px;
+                padding:14px 20px;display:flex;align-items:center;gap:14px">
+      <span style="font-size:30px;line-height:1">${emoji}</span>
+      <div>
+        <div style="font-size:16px;font-weight:700;color:${clr}">${s.label || '—'}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:3px">
+          Combined DD count (higher of Nasdaq / S&amp;P): <strong>${s.dd_max ?? '—'}</strong> in 25-day window
+        </div>
+      </div>
+    </div>`;
+
+  // ── Summary cards ────────────────────────────────────────────
+  const ixicCnt = ixic.dd_count ?? 0;
+  const gspcCnt = gspc.dd_count ?? 0;
+
+  const allDds = [
+    ...(ixic.dd_list || []).map(dd => ({...dd, idx_label: 'Nasdaq'})),
+    ...(gspc.dd_list || []).map(dd => ({...dd, idx_label: 'S&P 500'})),
+  ].sort((a, b) => b.date.localeCompare(a.date));
+
+  const latestDd = allDds[0];
+
+  function ddCls(n) { return n >= 6 ? 'red' : n >= 4 ? '' : 'green'; }
+
+  document.getElementById('market-cards').innerHTML = `
+    <div class="card">
+      <div class="card-label">Nasdaq DDs (25D)</div>
+      <div class="card-value ${ddCls(ixicCnt)}">${ixicCnt}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">S&amp;P 500 DDs (25D)</div>
+      <div class="card-value ${ddCls(gspcCnt)}">${gspcCnt}</div>
+    </div>
+    <div class="card" style="min-width:220px">
+      <div class="card-label">Latest Distribution Day</div>
+      <div style="font-size:13px;font-weight:600;margin-top:4px">
+        ${latestDd
+          ? `${latestDd.date} <span style="color:var(--muted);font-weight:400">(${latestDd.idx_label})</span><br>
+             <span style="font-size:11px;color:var(--muted);font-weight:400">${latestDd.pct_change.toFixed(2)}% &nbsp;·&nbsp; vol ${latestDd.vol_ratio.toFixed(2)}×</span>`
+          : '<span class="dim">None active</span>'}
+      </div>
+    </div>
+    <div class="card" style="min-width:220px">
+      <div class="card-label">Recent Follow-Through Day</div>
+      <div style="font-size:13px;font-weight:600;margin-top:4px;color:${ftd ? 'var(--green)' : 'var(--muted)'}">
+        ${ftd
+          ? `${ftd.date}<br>
+             <span style="font-size:11px;font-weight:400">+${ftd.pct_change.toFixed(2)}% &nbsp;·&nbsp; Rally Day ${ftd.rally_day}</span>`
+          : '<span class="dim">None in last 10 days</span>'}
+      </div>
+    </div>`;
+
+  // ── Distribution days table ───────────────────────────────────
+  const tbody = document.getElementById('market-dd-body');
+  if (allDds.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="state-msg">No active distribution days in the 25-day window.</td></tr>';
+  } else {
+    tbody.innerHTML = allDds.map(dd => `
+      <tr>
+        <td class="left">${dd.date}</td>
+        <td class="left">${dd.idx_label}</td>
+        <td class="red">${dd.pct_change.toFixed(2)}%</td>
+        <td>${dd.vol_ratio.toFixed(2)}×</td>
+        <td>${dd.days_remaining}</td>
+      </tr>`).join('');
+  }
+
+  // ── Computed-at timestamp ─────────────────────────────────────
+  if (d.computed_at) {
+    try {
+      document.getElementById('market-computed-at').textContent =
+        'Data as of ' + new Date(d.computed_at).toLocaleString();
+    } catch(_) {}
+  }
+
+  // ── Chart ─────────────────────────────────────────────────────
+  _renderMarketChart(d);
+}
+
+function _renderMarketChart(d) {
+  if (!window.Chart) return;
+  const canvas = document.getElementById('market-chart');
+  if (!canvas) return;
+
+  if (_marketChart) { _marketChart.destroy(); _marketChart = null; }
+
+  const ixicData = d.chart_data?.['^IXIC'];
+  const gspcData = d.chart_data?.['^GSPC'];
+  if (!ixicData || !ixicData.closes.length) return;
+
+  const labels  = ixicData.dates;
+  const ddAll   = new Set([...(ixicData.dd_dates  || []), ...(gspcData?.dd_dates  || [])]);
+  const ftdAll  = new Set([...(ixicData.ftd_dates || []), ...(gspcData?.ftd_dates || [])]);
+
+  function normalize(closes) {
+    const base = closes[0] || 1;
+    return closes.map(c => Math.round(c / base * 10000) / 100);
+  }
+  function ptColors(dates) {
+    return dates.map(d => ftdAll.has(d) ? '#16a34a' : ddAll.has(d) ? '#dc2626' : 'transparent');
+  }
+  function ptRadii(dates) {
+    return dates.map(d => (ftdAll.has(d) || ddAll.has(d)) ? 5 : 0);
+  }
+
+  const ixicNorm = normalize(ixicData.closes);
+  const ptC      = ptColors(labels);
+  const ptR      = ptRadii(labels);
+
+  const datasets = [{
+    label:                'Nasdaq ^IXIC',
+    data:                 ixicNorm,
+    borderColor:          '#2563eb',
+    backgroundColor:      'transparent',
+    borderWidth:          2,
+    pointBackgroundColor: ptC,
+    pointBorderColor:     ptC,
+    pointRadius:          ptR,
+    pointHoverRadius:     7,
+    tension:              0.1,
+  }];
+
+  if (gspcData && gspcData.closes.length) {
+    datasets.push({
+      label:                'S&P 500 ^GSPC',
+      data:                 normalize(gspcData.closes),
+      borderColor:          '#16a34a',
+      backgroundColor:      'transparent',
+      borderWidth:          2,
+      pointBackgroundColor: ptC,
+      pointBorderColor:     ptC,
+      pointRadius:          ptR,
+      pointHoverRadius:     7,
+      tension:              0.1,
+    });
+  }
+
+  _marketChart = new Chart(canvas, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive:          true,
+      maintainAspectRatio: false,
+      interaction:         { mode: 'index', intersect: false },
+      plugins: {
+        legend:  { display: true, position: 'top' },
+        tooltip: {
+          callbacks: {
+            label: (item) => {
+              const date = labels[item.dataIndex];
+              const tag  = ftdAll.has(date) ? ' ★ FTD' : ddAll.has(date) ? ' ● DD' : '';
+              return `${item.dataset.label}: ${item.parsed.y.toFixed(2)}${tag}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { maxTicksLimit: 12, maxRotation: 0 } },
+        y: {
+          title: { display: true, text: 'Indexed (start = 100)' },
+          ticks: { callback: v => v.toFixed(1) },
+        }
+      }
+    }
+  });
 }
 
 // ═══════════════════════════════════════
