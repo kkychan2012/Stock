@@ -394,10 +394,10 @@
           <th class="left">Ticker</th><th class="sig-type-col" style="display:none">Signal</th>
           <th>Signal Date</th><th>Signal Close</th>
           <th>Current Price</th><th>vs Signal %</th><th>MA10</th><th>MA30</th>
-          <th>MA50</th><th>MA200</th><th>High 30D</th><th>Low 30D</th><th>Monitor</th>
+          <th>MA50</th><th>MA200</th><th>High 30D</th><th>Low 30D</th><th>Monitor</th><th>Backtest</th>
         </tr></thead>
         <tbody id="signals-body">
-          <tr><td colspan="13" class="state-msg">Choose a signal type above.</td></tr>
+          <tr><td colspan="14" class="state-msg">Choose a signal type above.</td></tr>
         </tbody>
       </table>
     </div>
@@ -452,10 +452,10 @@
           <th>Date</th><th>RSI</th><th>Close</th>
           <th>Current Price</th><th>vs Signal %</th>
           <th>MA10</th><th>MA30</th><th>MA200</th>
-          <th>Direction</th><th>Monitor</th>
+          <th>Direction</th><th>Monitor</th><th>Backtest</th>
         </tr></thead>
         <tbody id="rsi-signals-body">
-          <tr><td colspan="11" class="state-msg">Select a date range above to load RSI data.</td></tr>
+          <tr><td colspan="12" class="state-msg">Select a date range above to load RSI data.</td></tr>
         </tbody>
       </table>
     </div>
@@ -1386,7 +1386,7 @@ function applySignalTickerFilter() {
 
 function renderSignals(rows) {
   const isAll = currentSignalType === 'sigall';
-  const cols  = isAll ? 13 : 12;
+  const cols  = isAll ? 14 : 13;
   if (!rows.length) { empty('signals-body', cols, 'No signals match the current filters.'); return; }
   document.getElementById('signals-body').innerHTML = rows.map(r => {
     const inMonitor = _monitorTickers.has(r.ticker);
@@ -1408,8 +1408,15 @@ function renderSignals(rows) {
       <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma200)}</td>
       <td>${fmtVal(r.high_30d)}</td><td>${fmtVal(r.low_30d)}</td>
       <td>${watchBtn}</td>
+      <td><button class="del-btn" onclick="signalAddToBacktest('${r.ticker}',${r.signal_close||0},'${r.signal_date||''}',this)">+ Backtest</button></td>
     </tr>`;
   }).join('');
+}
+
+function signalAddToBacktest(ticker, p0, signalDate, btn) {
+  const added = addToBacktestQueue(ticker, p0, signalDate, 'Signal');
+  if (added) { btn.textContent = '✓ Added'; btn.disabled = true; }
+  else        { btn.textContent = '✓ Already'; btn.disabled = true; }
 }
 
 function addToMonitor(ticker, signalDate, signalPrice, btn) {
@@ -1474,12 +1481,12 @@ async function loadRsiSignals() {
   const latest  = document.getElementById('rsi-latest').checked ? '&latest=1' : '';
   const zoneParam = zone ? `&zone=${zone}` : '';
 
-  loading('rsi-signals-body', 11);
+  loading('rsi-signals-body', 12);
   try {
     await _refreshMonitorSet();
     _lastRsiRows = (await apiFetch(`/api/signals/rsi?from=${from}&to=${to}${zoneParam}${latest}`)).data;
     applyRsiTickerFilter();
-  } catch(e) { empty('rsi-signals-body', 11, '⚠ ' + e.message); }
+  } catch(e) { empty('rsi-signals-body', 12, '⚠ ' + e.message); }
 }
 
 function applyRsiTickerFilter() {
@@ -1498,7 +1505,7 @@ function applyRsiTickerFilter() {
 }
 
 function renderRsiSignals(rows) {
-  if (!rows.length) { empty('rsi-signals-body', 11, 'No RSI signals match the current filters.'); return; }
+  if (!rows.length) { empty('rsi-signals-body', 12, 'No RSI signals match the current filters.'); return; }
   document.getElementById('rsi-signals-body').innerHTML = rows.map(r => {
     const inMonitor = _monitorTickers.has(r.ticker);
     const watchBtn  = inMonitor
@@ -1516,8 +1523,15 @@ function renderRsiSignals(rows) {
       <td>${fmtVal(r.ma200)}</td>
       <td>${r.direction || '<span class="dim">—</span>'}</td>
       <td>${watchBtn}</td>
+      <td><button class="del-btn" onclick="rsiAddToBacktest('${r.ticker}',${r.close||0},'${r.date||''}',this)">+ Backtest</button></td>
     </tr>`;
   }).join('');
+}
+
+function rsiAddToBacktest(ticker, p0, signalDate, btn) {
+  const added = addToBacktestQueue(ticker, p0, signalDate, 'RSI Signal');
+  if (added) { btn.textContent = '✓ Added'; btn.disabled = true; }
+  else        { btn.textContent = '✓ Already'; btn.disabled = true; }
 }
 
 function rsiAddToMonitor(ticker, signalDate, signalPrice, btn) {
