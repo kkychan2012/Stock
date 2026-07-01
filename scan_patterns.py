@@ -19,6 +19,14 @@ CUP_VOL_MULT        = 1.5    # breakout volume ≥ 1.5× Vol_MA10
 MA200_VOL_MULT      = 1.2    # MA200 breakout volume ≥ 1.2× Vol_MA10
 VOL_SURGE_MULT      = 1.5    # volume surge ≥ 1.5× Vol_MA10
 PULLBACK_PCT        = 0.05   # within 5% above Low_30D
+
+MOMENTUM_WINDOW     = 15     # rolling window in trading days
+MOMENTUM_UP_DAYS    = 12     # minimum up-days in the window
+MOMENTUM_VOL_EXP    = 1.25   # recent avg vol ≥ 1.25× prior window avg vol
+MOMENTUM_PRICE_GAIN = 0.20   # close at end of window ≥ 20% above close at start
+
+MOMENTUM_SHORT_WINDOW   = 10  # rolling window for 10/8 pattern
+MOMENTUM_SHORT_UP_DAYS  = 8   # minimum up-days in the 10-day window
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -196,7 +204,117 @@ def _pullback_bounce(ticker: str, rows: list):
     }
 
 
-_SCANNERS = [_cup_handle, _golden_cross, _ma200_breakout, _volume_surge, _pullback_bounce]
+# ── Pattern 6: Momentum Expansion ─────────────────────────────────────────────
+def _momentum_expansion(ticker: str, rows: list):
+    needed = MOMENTUM_WINDOW * 2  # 30 rows: 15 recent + 15 prior
+    if len(rows) < needed:
+        return None
+
+    recent_rows = rows[-MOMENTUM_WINDOW:]               # last 15 days
+    prior_rows  = rows[-(MOMENTUM_WINDOW * 2):-MOMENTUM_WINDOW]  # days 16–30
+
+    # Up-day count: need one extra row before the window for the first comparison
+    if len(rows) < MOMENTUM_WINDOW + 1:
+        return None
+    window_for_updays = rows[-(MOMENTUM_WINDOW + 1):]  # 16 rows
+    up_days = sum(
+        1 for i in range(1, MOMENTUM_WINDOW + 1)
+        if (window_for_updays[i].get("close") is not None
+            and window_for_updays[i - 1].get("close") is not None
+            and window_for_updays[i]["close"] > window_for_updays[i - 1]["close"])
+    )
+    if up_days < MOMENTUM_UP_DAYS:
+        return None
+
+    # Price gain: close at end of window ≥ 20% above close at start
+    close_start = recent_rows[0].get("close")
+    close_end   = recent_rows[-1].get("close")
+    if close_start is None or close_end is None or close_start == 0:
+        return None
+    price_gain = (close_end - close_start) / close_start
+    if price_gain < MOMENTUM_PRICE_GAIN:
+        return None
+
+    recent_vols = [r["volume"] for r in recent_rows if r.get("volume") is not None]
+    prior_vols  = [r["volume"] for r in prior_rows  if r.get("volume") is not None]
+    if not recent_vols or not prior_vols:
+        return None
+
+    avg_recent = sum(recent_vols) / len(recent_vols)
+    avg_prior  = sum(prior_vols)  / len(prior_vols)
+    if avg_prior == 0 or avg_recent < MOMENTUM_VOL_EXP * avg_prior:
+        return None
+
+    vol_ratio = avg_recent / avg_prior
+    last = rows[-1]
+    return {
+        "ticker": ticker, "pattern_name": "Momentum Expansion",
+        "signal_detail": (
+            f"{up_days}/15 up-days, +{price_gain*100:.1f}% in 15D, "
+            f"vol {vol_ratio:.2f}× prior avg"
+        ),
+        "mom_15d_start":    round(close_start, 4),
+        "mom_15d_gain_pct": round(price_gain * 100, 2),
+        **_ef(last),
+    }
+
+
+# ── Pattern 7: Momentum 10/8 ──────────────────────────────────────────────────
+def _momentum_10_8(ticker: str, rows: list):
+    needed = MOMENTUM_SHORT_WINDOW * 2  # 20 rows: 10 recent + 10 prior
+    if len(rows) < needed:
+        return None
+
+    recent_rows = rows[-MOMENTUM_SHORT_WINDOW:]
+    prior_rows  = rows[-(MOMENTUM_SHORT_WINDOW * 2):-MOMENTUM_SHORT_WINDOW]
+
+    # Up-day count: need one extra row before the window for the first comparison
+    if len(rows) < MOMENTUM_SHORT_WINDOW + 1:
+        return None
+    window_for_updays = rows[-(MOMENTUM_SHORT_WINDOW + 1):]
+    up_days = sum(
+        1 for i in range(1, MOMENTUM_SHORT_WINDOW + 1)
+        if (window_for_updays[i].get("close") is not None
+            and window_for_updays[i - 1].get("close") is not None
+            and window_for_updays[i]["close"] > window_for_updays[i - 1]["close"])
+    )
+    if up_days < MOMENTUM_SHORT_UP_DAYS:
+        return None
+
+    # Volume expansion: last 10D avg ≥ 1.25× prior 10D avg
+    recent_vols = [r["volume"] for r in recent_rows if r.get("volume") is not None]
+    prior_vols  = [r["volume"] for r in prior_rows  if r.get("volume") is not None]
+    if not recent_vols or not prior_vols:
+        return None
+
+    avg_recent = sum(recent_vols) / len(recent_vols)
+    avg_prior  = sum(prior_vols)  / len(prior_vols)
+    if avg_prior == 0 or avg_recent < MOMENTUM_VOL_EXP * avg_prior:
+        return None
+
+    # Price gain over the 10-day window
+    close_start = recent_rows[0].get("close")
+    close_end   = recent_rows[-1].get("close")
+    price_gain  = ((close_end - close_start) / close_start
+                   if close_start and close_end and close_start != 0 else None)
+
+    vol_ratio = avg_recent / avg_prior
+    last = rows[-1]
+    return {
+        "ticker": ticker, "pattern_name": "Momentum 10/8",
+        "signal_detail": (
+            f"{up_days}/10 up-days"
+            + (f", +{price_gain*100:.1f}% in 10D" if price_gain is not None else "")
+            + f", vol {vol_ratio:.2f}× prior 10D avg"
+        ),
+        "mom_15d_start":    round(close_start, 4) if close_start else None,
+        "mom_15d_gain_pct": round(price_gain * 100, 2) if price_gain is not None else None,
+        **_ef(last),
+    }
+
+
+_SCANNERS = [_cup_handle, _golden_cross, _ma200_breakout, _volume_surge, _pullback_bounce,
+             _momentum_expansion, _momentum_10_8]
 
 
 def scan_date_range(from_date: str, to_date: str, progress_cb=None) -> list:
@@ -267,15 +385,19 @@ def _save_results(scan_date: str, results: list):
         conn.execute("DELETE FROM pattern_scan_results WHERE scan_date = ?", (scan_date,))
         for r in results:
             try:
+                r.setdefault("mom_15d_start", None)
+                r.setdefault("mom_15d_gain_pct", None)
                 conn.execute("""
                     INSERT INTO pattern_scan_results
                         (scan_date, ticker, pattern_name, signal_detail,
                          signal_date, close, ma10, ma30, ma50, ma200,
-                         volume, vol_ma10, high_30d, low_30d, pct_change)
+                         volume, vol_ma10, high_30d, low_30d, pct_change,
+                         mom_15d_start, mom_15d_gain_pct)
                     VALUES
                         (:scan_date, :ticker, :pattern_name, :signal_detail,
                          :signal_date, :close, :ma10, :ma30, :ma50, :ma200,
-                         :volume, :vol_ma10, :high_30d, :low_30d, :pct_change)
+                         :volume, :vol_ma10, :high_30d, :low_30d, :pct_change,
+                         :mom_15d_start, :mom_15d_gain_pct)
                 """, r)
             except Exception:
                 pass

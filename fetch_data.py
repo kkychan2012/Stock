@@ -7,6 +7,7 @@ Run:  python fetch_data.py
 """
 
 import argparse
+import math
 import sys
 from datetime import datetime, timezone
 
@@ -14,6 +15,15 @@ import pandas as pd
 import yfinance as yf
 
 from db_setup import get_connection, setup_database, DB_PATH
+
+
+def _nb(cond: pd.Series, *deps) -> pd.Series:
+    """Nullable boolean: 1.0/0.0 where all deps are non-NaN, NaN otherwise.
+    Stored as float so _safe_int converts NaN → NULL in SQLite."""
+    valid = pd.Series(True, index=cond.index)
+    for dep in deps:
+        valid &= dep.notna()
+    return cond.astype("float64").where(valid)
 
 
 # ---------------------------------------------------------------------------
@@ -32,6 +42,7 @@ def _calculate_indicators(data: pd.DataFrame) -> pd.DataFrame:
     data["MA10"]        = data["Close"].rolling(window=10).mean()
     data["MA30"]        = data["Close"].rolling(window=30).mean()
     data["MA50"]        = data["Close"].rolling(window=50).mean()
+    data["MA150"]       = data["Close"].rolling(window=150).mean()
     data["MA200"]       = data["Close"].rolling(window=200).mean()
     data["Vol_MA10"]    = data["Volume"].rolling(window=10).mean()
     data["Price_Change"] = data["Close"].diff()
@@ -46,6 +57,47 @@ def _calculate_indicators(data: pd.DataFrame) -> pd.DataFrame:
     avg_loss = loss.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
     rs       = avg_gain / avg_loss
     data["RSI14"] = 100 - (100 / (1 + rs))
+
+    # ── 52-week range ─────────────────────────────────────────────────
+    data["High_52wk"] = data["Close"].rolling(window=252, min_periods=1).max()
+    data["Low_52wk"]  = data["Close"].rolling(window=252, min_periods=1).min()
+
+    # ── RS raw: weighted price performance (IBD-style approximation) ──
+    p63  = data["Close"].pct_change(63)
+    p126 = data["Close"].pct_change(126)
+    p189 = data["Close"].pct_change(189)
+    p252 = data["Close"].pct_change(252)
+    w63, w126, w189, w252 = 0.4, 0.2, 0.2, 0.2
+    avail_w = (
+        p63.notna().astype(float)  * w63  +
+        p126.notna().astype(float) * w126 +
+        p189.notna().astype(float) * w189 +
+        p252.notna().astype(float) * w252
+    )
+    rs_num = (
+        p63.fillna(0)  * w63  +
+        p126.fillna(0) * w126 +
+        p189.fillna(0) * w189 +
+        p252.fillna(0) * w252
+    )
+    data["RS_raw"] = (rs_num / avail_w).where(avail_w > 0)
+
+    # ── Trend Template criteria C1-C6, C8 (C7 needs cross-ticker RS rank) ──
+    ma200_lag21 = data["MA200"].shift(21)
+    data["C1"] = _nb(
+        (data["Close"] > data["MA150"]) & (data["Close"] > data["MA200"]),
+        data["MA150"], data["MA200"],
+    )
+    data["C2"] = _nb(data["MA150"] > data["MA200"], data["MA150"], data["MA200"])
+    data["C3"] = _nb(data["MA200"] > ma200_lag21, data["MA200"], ma200_lag21)
+    data["C4"] = _nb(
+        (data["MA50"] > data["MA150"]) & (data["MA50"] > data["MA200"]),
+        data["MA50"], data["MA150"], data["MA200"],
+    )
+    data["C5"] = _nb(data["Close"] >= 1.25 * data["Low_52wk"],  data["Low_52wk"])
+    data["C6"] = _nb(data["Close"] >= 0.75 * data["High_52wk"], data["High_52wk"])
+    data["C8"] = _nb(data["Close"] > data["MA50"], data["MA50"])
+
     return data
 
 
@@ -118,6 +170,17 @@ def _upsert_daily_rows(conn, ticker: str, data: pd.DataFrame, fetched_at: str):
             _safe(row.get("Pct_Change")),
             row.get("Direction", ""),
             _safe(row.get("RSI14")),
+            _safe(row.get("MA150")),
+            _safe(row.get("High_52wk")),
+            _safe(row.get("Low_52wk")),
+            _safe(row.get("RS_raw")),
+            _safe_int(row.get("C1")),
+            _safe_int(row.get("C2")),
+            _safe_int(row.get("C3")),
+            _safe_int(row.get("C4")),
+            _safe_int(row.get("C5")),
+            _safe_int(row.get("C6")),
+            _safe_int(row.get("C8")),
             fetched_at,
         ))
 
@@ -126,8 +189,11 @@ def _upsert_daily_rows(conn, ticker: str, data: pd.DataFrame, fetched_at: str):
             (ticker, date, open, high, low, close, volume,
              ma6, ma10, ma30, ma50, ma200,
              high_30d, low_30d, vol_ma10,
-             price_change, pct_change, direction, rsi14, fetched_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             price_change, pct_change, direction, rsi14,
+             ma150, high_52wk, low_52wk, rs_raw,
+             c1, c2, c3, c4, c5, c6, c8,
+             fetched_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(ticker, date) DO UPDATE SET
             open=excluded.open, high=excluded.high, low=excluded.low,
             close=excluded.close, volume=excluded.volume,
@@ -137,6 +203,11 @@ def _upsert_daily_rows(conn, ticker: str, data: pd.DataFrame, fetched_at: str):
             vol_ma10=excluded.vol_ma10,
             price_change=excluded.price_change, pct_change=excluded.pct_change,
             direction=excluded.direction, rsi14=excluded.rsi14,
+            ma150=excluded.ma150, high_52wk=excluded.high_52wk,
+            low_52wk=excluded.low_52wk, rs_raw=excluded.rs_raw,
+            c1=excluded.c1, c2=excluded.c2, c3=excluded.c3, c4=excluded.c4,
+            c5=excluded.c5, c6=excluded.c6, c8=excluded.c8,
+            rs_rank=NULL, c7=NULL, trend_score=NULL,
             fetched_at=excluded.fetched_at
     """, rows)
 
@@ -176,6 +247,59 @@ def _safe_int(val):
         return int(val)
     except (TypeError, ValueError):
         return None
+
+
+# ---------------------------------------------------------------------------
+# Cross-ticker RS Rank + Trend Template post-pass
+# ---------------------------------------------------------------------------
+
+def _compute_rs_rank(conn, emit):
+    """Cross-sectional percentile rank (1-99) of RS_raw per trading date."""
+    emit("RS Rank: loading RS_raw data...")
+    raw = conn.execute(
+        "SELECT ticker, date, rs_raw FROM stocks_daily WHERE rs_raw IS NOT NULL ORDER BY date"
+    ).fetchall()
+
+    by_date = {}
+    for r in raw:
+        by_date.setdefault(r["date"], []).append((r["ticker"], r["rs_raw"]))
+
+    updates = []
+    for date, entries in by_date.items():
+        n = len(entries)
+        if n < 2:
+            continue
+        sorted_e = sorted(entries, key=lambda x: x[1], reverse=True)
+        for rank_0, (ticker, _) in enumerate(sorted_e):
+            pct = 1.0 - rank_0 / (n - 1)          # 1.0 = best, 0.0 = worst
+            rs_rank = max(1, min(99, math.ceil(pct * 99)))
+            updates.append((rs_rank, ticker, date))
+
+    if updates:
+        conn.executemany(
+            "UPDATE stocks_daily SET rs_rank = ? WHERE ticker = ? AND date = ?",
+            updates,
+        )
+    emit(f"RS Rank: updated {len(updates)} rows across {len(by_date)} dates.")
+
+
+def _compute_trend_template(conn, emit):
+    """Compute C7 (rs_rank >= 70) and trend_score for every row via SQL."""
+    conn.execute("""
+        UPDATE stocks_daily SET
+            c7 = CASE
+                    WHEN rs_rank IS NULL  THEN NULL
+                    WHEN rs_rank >= 70    THEN 1
+                    ELSE 0
+                 END,
+            trend_score = (
+                COALESCE(c1,0) + COALESCE(c2,0) + COALESCE(c3,0) +
+                COALESCE(c4,0) + COALESCE(c5,0) + COALESCE(c6,0) +
+                CASE WHEN rs_rank IS NOT NULL AND rs_rank >= 70 THEN 1 ELSE 0 END +
+                COALESCE(c8,0)
+            )
+    """)
+    emit("Trend Template: C7 and scores updated.")
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +343,13 @@ def fetch_all(tickers: list[str], period: str = "2y", progress_cb=None):
                 _emit(f"ERROR {ticker} — {exc}")
                 _log_skipped(conn, ticker, str(exc))
 
-    _emit(f"Done — {total} tickers processed. DB: {DB_PATH}")
+    _emit(f"Done fetching — {total} tickers processed.")
+
+    with get_connection() as conn:
+        _compute_rs_rank(conn, _emit)
+        _compute_trend_template(conn, _emit)
+
+    _emit(f"All done. DB: {DB_PATH}")
 
 
 # ---------------------------------------------------------------------------

@@ -171,6 +171,28 @@
       position: absolute; inset: 0; opacity: 0; cursor: pointer; font-size: 0;
     }
 
+    /* ── Sortable table headers ── */
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { color: var(--accent); }
+    th.sort-asc::after  { content: ' ▲'; font-size: 10px; }
+    th.sort-desc::after { content: ' ▼'; font-size: 10px; }
+
+    /* ── Minervini Trend Template badge ── */
+    .tt-badge { display:inline-block;padding:2px 8px;border-radius:10px;
+                font-size:11px;font-weight:700;cursor:default;white-space:nowrap;
+                letter-spacing:.3px; }
+    .tt-green { background:#dcfce7;color:#15803d; }
+    .tt-amber { background:#fef3c7;color:#92400e; }
+    .tt-grey  { background:#f1f5f9;color:#64748b; }
+    /* Trend Template checkbox panel */
+    .tt-panel { margin-bottom:12px;padding:10px 14px;background:var(--surface);
+                border:1px solid var(--border);border-radius:8px; }
+    .tt-panel-head { display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap }
+    .tt-panel-title { font-size:12px;font-weight:700;color:var(--text) }
+    .tt-checks { display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:3px 14px }
+    .tt-checks label { font-size:11px;display:flex;align-items:center;gap:5px;cursor:pointer;
+                       padding:2px 0; }
+
     /* ── Delete row button ── */
     .del-btn {
       padding: 2px 8px; background: none; border: 1px solid var(--border);
@@ -245,6 +267,8 @@
     .pat-ma200  { background: #f0fdf4; } .pat-ma200:hover  { background: #dcfce7; }
     .pat-vol    { background: #fff7ed; } .pat-vol:hover    { background: #ffedd5; }
     .pat-pull   { background: #faf5ff; } .pat-pull:hover   { background: #f3e8ff; }
+    .pat-mom    { background: #ecfeff; } .pat-mom:hover    { background: #cffafe; }
+    .pat-m108   { background: #fff1f2; } .pat-m108:hover   { background: #ffe4e6; }
 
     /* ── Insider signals row colours ── */
     .ins-nordic { background: #f0fdf4; } .ins-nordic:hover { background: #dcfce7; }
@@ -269,6 +293,8 @@
     .ppill-ma200  { background:#bbf7d0; color:#166534; }
     .ppill-vol    { background:#fed7aa; color:#9a3412; }
     .ppill-pull   { background:#e9d5ff; color:#6b21a8; }
+    .ppill-mom    { background:#a5f3fc; color:#155e75; }
+    .ppill-m108   { background:#fecdd3; color:#9f1239; }
   </style>
 </head>
 <body>
@@ -302,6 +328,7 @@
   <button class="tab-btn"        onclick="showTab('backtester')">Backtester</button>
   <button class="tab-btn"        onclick="showTab('insider')">Insider</button>
   <button class="tab-btn"        onclick="showTab('market')">Market</button>
+  <button class="tab-btn"        onclick="showTab('dataview')">Data</button>
 </nav>
 
 <!-- ════════════ MAIN ════════════ -->
@@ -623,12 +650,34 @@
         <button class="seg-btn"        id="psub-golden-cross"    onclick="setPatternsub('golden-cross')">Golden Cross</button>
         <button class="seg-btn"        id="psub-ma200-breakout"  onclick="setPatternsub('ma200-breakout')">MA200 Breakout</button>
         <button class="seg-btn"        id="psub-volume-surge"    onclick="setPatternsub('volume-surge')">Volume Surge</button>
-        <button class="seg-btn"        id="psub-pullback-bounce" onclick="setPatternsub('pullback-bounce')">Pullback Bounce</button>
+        <button class="seg-btn"        id="psub-pullback-bounce"      onclick="setPatternsub('pullback-bounce')">Pullback Bounce</button>
+        <button class="seg-btn"        id="psub-momentum-expansion"   onclick="setPatternsub('momentum-expansion')">Momentum Expansion</button>
+        <button class="seg-btn"        id="psub-momentum-108"         onclick="setPatternsub('momentum-108')">Momentum 10/8</button>
       </div>
       <input id="pattern-ticker-filter" type="text" placeholder="Filter ticker…"
         oninput="_applyPatternsub()"
         style="margin-left:12px;padding:3px 8px;font-size:12px;width:130px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px">
       <span id="pattern-count" style="font-size:11px;color:var(--muted);margin-left:10px"></span>
+    </div>
+
+    <!-- Trend Template filter panel -->
+    <div class="tt-panel" id="pat-tt-panel">
+      <div class="tt-panel-head">
+        <span class="tt-panel-title">&#9672; Minervini Trend Template filter</span>
+        <button class="btn btn-ghost" style="padding:2px 10px;font-size:11px" onclick="_ttSelectAll('pat')">All 8</button>
+        <button class="btn btn-ghost" style="padding:2px 10px;font-size:11px" onclick="_ttClearAll('pat')">Clear</button>
+        <span id="pat-tt-count" style="font-size:11px;color:var(--muted)"></span>
+      </div>
+      <div class="tt-checks">
+        <label><input type="checkbox" id="pat-tt-c1" onchange="_ttChanged('pat')"> C1 · Price &gt; MA150 &amp; MA200</label>
+        <label><input type="checkbox" id="pat-tt-c2" onchange="_ttChanged('pat')"> C2 · MA150 &gt; MA200</label>
+        <label><input type="checkbox" id="pat-tt-c3" onchange="_ttChanged('pat')"> C3 · MA200 trending up (1mo+)</label>
+        <label><input type="checkbox" id="pat-tt-c4" onchange="_ttChanged('pat')"> C4 · MA50 &gt; MA150 &amp; MA200</label>
+        <label><input type="checkbox" id="pat-tt-c5" onchange="_ttChanged('pat')"> C5 · ≥25% above 52wk Low</label>
+        <label><input type="checkbox" id="pat-tt-c6" onchange="_ttChanged('pat')"> C6 · Within 25% of 52wk High</label>
+        <label><input type="checkbox" id="pat-tt-c7" onchange="_ttChanged('pat')"> C7 · RS Rank ≥ 70</label>
+        <label><input type="checkbox" id="pat-tt-c8" onchange="_ttChanged('pat')"> C8 · Price &gt; MA50</label>
+      </div>
     </div>
 
     <!-- Results table -->
@@ -640,12 +689,14 @@
           <th class="left">Pattern</th>
           <th class="left">Signal Detail</th>
           <th>Date</th>
-          <th>Close</th><th>Day&nbsp;%</th>
+          <th>Close</th><th>Win. Start</th><th>Win. Gain%</th><th>Day&nbsp;%</th>
           <th>MA10</th><th>MA30</th><th>MA50</th><th>MA200</th>
+          <th>MA150</th><th title="52-week Low">52wk Low</th><th title="52-week High">52wk High</th><th title="RS Rank (1–99)">RS</th>
+          <th>Trend</th>
           <th>Monitor</th><th>Backtest</th>
         </tr></thead>
         <tbody id="patterns-body">
-          <tr><td colspan="12" class="state-msg">Select a date and click &#9654; Scan Now to find patterns.</td></tr>
+          <tr><td colspan="20" class="state-msg">Select a date and click &#9654; Scan Now to find patterns.</td></tr>
         </tbody>
       </table>
     </div>
@@ -777,10 +828,29 @@
           </div>
         </div>
 
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">
+          <div>
+            <div class="field-label">Stage 1 Qty (sell at T1)</div>
+            <input id="bt-q1" class="ticker-add-input" type="number" style="width:100%"
+                   value="2" step="1" min="1" oninput="btUpdateMatrix()">
+          </div>
+          <div>
+            <div class="field-label">Stage 2 Qty (sell at T2)</div>
+            <input id="bt-q2" class="ticker-add-input" type="number" style="width:100%"
+                   value="2" step="1" min="1" oninput="btUpdateMatrix()">
+          </div>
+          <div>
+            <div class="field-label">Stage 3 Qty (final)</div>
+            <input id="bt-q3" class="ticker-add-input" type="number" style="width:100%"
+                   value="2" step="1" min="1" oninput="btUpdateMatrix()">
+          </div>
+        </div>
+
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button class="btn btn-primary" onclick="runSingleBacktest()">&#9654; Run Single</button>
           <button id="bt-batch-btn" class="btn btn-fetch" onclick="runSelectionBacktest()" disabled
                   style="opacity:.5">&#9654;&#9654; Batch — Selection (0)</button>
+          <button class="btn btn-ghost" onclick="resetBacktester()" title="Clear queue and results">&#8635; Reset</button>
           <span id="bt-spinner" class="spinner" style="display:none"></span>
         </div>
         <div id="bt-error" style="font-size:12px;color:var(--red);margin-top:6px;min-height:16px"></div>
@@ -1133,6 +1203,90 @@
   </div>
 </div>
 
+  <!-- ── DATA BROWSER ── -->
+  <div id="tab-dataview" class="tab-pane">
+    <div class="toolbar" style="flex-wrap:wrap;gap:8px">
+      <button class="btn btn-primary" onclick="loadDataView(true)">&#8635; Refresh</button>
+      <input id="dv-filter" class="ticker-add-input" placeholder="Filter ticker…"
+             style="width:160px" oninput="_dvFilter()">
+      <span id="dv-count" style="font-size:12px;color:var(--muted);align-self:center"></span>
+    </div>
+
+    <!-- Trend Template filter panel -->
+    <div class="tt-panel" id="dv-tt-panel" style="margin-top:10px">
+      <div class="tt-panel-head">
+        <span class="tt-panel-title">&#9672; Minervini Trend Template filter</span>
+        <button class="btn btn-ghost" style="padding:2px 10px;font-size:11px" onclick="_ttSelectAll('dv')">All 8</button>
+        <button class="btn btn-ghost" style="padding:2px 10px;font-size:11px" onclick="_ttClearAll('dv')">Clear</button>
+        <span id="dv-tt-count" style="font-size:11px;color:var(--muted)"></span>
+      </div>
+      <div class="tt-checks">
+        <label><input type="checkbox" id="dv-tt-c1" onchange="_ttChanged('dv')"> C1 · Price &gt; MA150 &amp; MA200</label>
+        <label><input type="checkbox" id="dv-tt-c2" onchange="_ttChanged('dv')"> C2 · MA150 &gt; MA200</label>
+        <label><input type="checkbox" id="dv-tt-c3" onchange="_ttChanged('dv')"> C3 · MA200 trending up (1mo+)</label>
+        <label><input type="checkbox" id="dv-tt-c4" onchange="_ttChanged('dv')"> C4 · MA50 &gt; MA150 &amp; MA200</label>
+        <label><input type="checkbox" id="dv-tt-c5" onchange="_ttChanged('dv')"> C5 · ≥25% above 52wk Low</label>
+        <label><input type="checkbox" id="dv-tt-c6" onchange="_ttChanged('dv')"> C6 · Within 25% of 52wk High</label>
+        <label><input type="checkbox" id="dv-tt-c7" onchange="_ttChanged('dv')"> C7 · RS Rank ≥ 70</label>
+        <label><input type="checkbox" id="dv-tt-c8" onchange="_ttChanged('dv')"> C8 · Price &gt; MA50</label>
+      </div>
+    </div>
+
+    <div class="table-wrap" style="margin-top:10px">
+      <table class="data-table">
+        <thead>
+          <tr id="dv-head">
+            <th class="left sortable" data-col="ticker"      onclick="_dvSort(this)">Ticker &#x25B4;</th>
+            <th class="sortable"      data-col="date"        onclick="_dvSort(this)">Date</th>
+            <th class="sortable"      data-col="close"       onclick="_dvSort(this)">Close</th>
+            <th class="sortable"      data-col="pct_change"  onclick="_dvSort(this)">Day&nbsp;%</th>
+            <th class="sortable"      data-col="volume"      onclick="_dvSort(this)">Volume</th>
+            <th class="sortable"      data-col="ma10"        onclick="_dvSort(this)">MA10</th>
+            <th class="sortable"      data-col="ma30"        onclick="_dvSort(this)">MA30</th>
+            <th class="sortable"      data-col="ma50"        onclick="_dvSort(this)">MA50</th>
+            <th class="sortable"      data-col="ma150"       onclick="_dvSort(this)">MA150</th>
+            <th class="sortable"      data-col="ma200"       onclick="_dvSort(this)">MA200</th>
+            <th class="sortable"      data-col="low_52wk"    onclick="_dvSort(this)" title="52-week Low">52wk Low</th>
+            <th class="sortable"      data-col="high_52wk"   onclick="_dvSort(this)" title="52-week High">52wk High</th>
+            <th class="sortable"      data-col="rs_rank"     onclick="_dvSort(this)" title="RS Rank (1–99 percentile vs all fetched stocks)">RS Rank</th>
+            <th title="MA10 > MA30">MA10&gt;30</th>
+            <th title="Close > MA200">&gt;MA200</th>
+            <th class="sortable"      data-col="trend_score" onclick="_dvSort(this)" title="Minervini Trend Template score (0-8). Hover badge for detail.">Trend</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="dv-body">
+          <tr><td colspan="17" class="state-msg">Click Refresh to load data.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- History modal -->
+  <div id="dv-history-overlay" style="display:none;position:fixed;inset:0;z-index:2000;
+       background:rgba(0,0,0,.45)" onclick="if(event.target===this)closeDvHistory()">
+    <div style="background:var(--surface);border-radius:12px;padding:24px;
+                max-width:900px;width:95%;max-height:85vh;overflow-y:auto;
+                margin:5vh auto;position:relative">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <span id="dv-hist-title" style="font-size:16px;font-weight:700"></span>
+        <button class="btn btn-ghost" onclick="closeDvHistory()">&#x2715; Close</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Date</th><th>Open</th><th>High</th><th>Low</th>
+              <th>Close</th><th>Volume</th><th>MA10</th><th>MA30</th>
+              <th>MA50</th><th>MA200</th><th>Day&nbsp;%</th><th>Dir</th>
+            </tr>
+          </thead>
+          <tbody id="dv-hist-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
 // ═══════════════════════════════════════
@@ -1178,7 +1332,7 @@ let _pollTimer        = null;
 let _lastLogLen       = 0;
 let _fetchRunning     = false;
 
-const TABS = ['holdings', 'signals', 'rsi', 'sold', 'monitor', 'patterns', 'tickers', 'backtester', 'insider', 'market'];
+const TABS = ['holdings', 'signals', 'rsi', 'sold', 'monitor', 'patterns', 'tickers', 'backtester', 'insider', 'market', 'dataview'];
 
 // ═══════════════════════════════════════
 //  Formatting
@@ -1224,7 +1378,8 @@ function showTab(name) {
   currentTab = name;
   ({holdings: loadHoldings, signals: loadSignals, rsi: loadRsiSignals, sold: loadSold,
     monitor: loadMonitor, patterns: loadPatterns, tickers: loadTickerList,
-    backtester: loadBacktester, insider: loadInsider, market: loadMarket})[name]();
+    backtester: loadBacktester, insider: loadInsider, market: loadMarket,
+    dataview: loadDataView})[name]();
 }
 
 // ═══════════════════════════════════════
@@ -1293,9 +1448,9 @@ function renderHoldings(rows) {
       <td>${fmtVal(r.high_30d)}</td><td>${fmtVal(r.low_30d)}</td>
       <td style="white-space:nowrap">
         <button class="del-btn" style="color:var(--green);border-color:var(--green)"
-          onclick='openSellModal(${JSON.stringify(r)})'>Sell</button>
+          onclick='openSellModal(${JSON.stringify(r).replace(/'/g,"\\u0027")})'>Sell</button>
         <button class="del-btn" style="color:var(--accent);border-color:var(--accent)"
-          onclick='openRecordModal("holdings",${JSON.stringify(r)})'>Edit</button>
+          onclick='openRecordModal("holdings",${JSON.stringify(r).replace(/'/g,"\\u0027")})'>Edit</button>
         <button class="del-btn" onclick='deleteRecord("holdings",${r.id})'>&#215;</button>
       </td>
     </tr>`;
@@ -1391,8 +1546,8 @@ function renderSignals(rows) {
   document.getElementById('signals-body').innerHTML = rows.map(r => {
     const inMonitor = _monitorTickers.has(r.ticker);
     const watchBtn  = inMonitor
-      ? `<button class="del-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Watching</button>`
-      : `<button class="del-btn" onclick="addToMonitor('${r.ticker}','${r.signal_date}',${r.signal_close},this)">+ Watch</button>`;
+      ? `<button class="del-btn watch-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Watching</button>`
+      : `<button class="del-btn watch-btn" onclick="addToMonitor('${r.ticker}','${r.signal_date}',${r.signal_close},this)">+ Watch</button>`;
     const sigMeta   = _SIGNAL_LABEL[r.signal_type] || {};
     const rowCls    = sigMeta.cls || '';
     const sigCell   = isAll
@@ -1431,14 +1586,14 @@ function addToMonitor(ticker, signalDate, signalPrice, btn) {
   showWlPicker(btn, wlId => _doAddToMonitor(ticker, signalDate, signalPrice, wlId, btn, '#signals-body'));
 }
 
-async function _doAddToMonitor(ticker, signalDate, signalPrice, watchlistId, btn, bodySelector) {
+async function _doAddToMonitor(ticker, signalDate, signalPrice, watchlistId, btn, bodySelector, reason) {
   btn.disabled = true; btn.textContent = '…';
   try {
     await apiFetch('/api/monitor', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         ticker, watchlist_id: watchlistId,
-        reason:       `Signal on ${signalDate}`,
+        reason:       reason || `Signal on ${signalDate}`,
         signal_date:  signalDate,
         signal_price: signalPrice,
       }),
@@ -1447,7 +1602,7 @@ async function _doAddToMonitor(ticker, signalDate, signalPrice, watchlistId, btn
     document.querySelectorAll(`${bodySelector} tr`).forEach(tr => {
       const cell = tr.querySelector('.ticker-cell');
       if (cell && cell.textContent.trim() === ticker) {
-        const b = tr.querySelector('.del-btn:not([disabled])');
+        const b = tr.querySelector('.watch-btn');
         if (b) {
           b.textContent = '✓ Watching';
           b.style.color = 'var(--green)'; b.style.borderColor = 'var(--green)';
@@ -1509,8 +1664,8 @@ function renderRsiSignals(rows) {
   document.getElementById('rsi-signals-body').innerHTML = rows.map(r => {
     const inMonitor = _monitorTickers.has(r.ticker);
     const watchBtn  = inMonitor
-      ? `<button class="del-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Watching</button>`
-      : `<button class="del-btn" onclick="rsiAddToMonitor('${r.ticker}','${r.date}',${r.close},this)">+ Watch</button>`;
+      ? `<button class="del-btn watch-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Watching</button>`
+      : `<button class="del-btn watch-btn" onclick="rsiAddToMonitor('${r.ticker}','${r.date}',${r.close},this)">+ Watch</button>`;
     return `<tr>
       <td class="left ticker-cell">${r.ticker}</td>
       <td>${fmtDate(r.date)}</td>
@@ -1573,7 +1728,7 @@ function renderSold(rows) {
       <td class="left" style="color:var(--muted)">${r.notes || '—'}</td>
       <td style="white-space:nowrap">
         <button class="del-btn" style="color:var(--accent);border-color:var(--accent)"
-          onclick='openRecordModal("sold",${JSON.stringify(r)})'>Edit</button>
+          onclick='openRecordModal("sold",${JSON.stringify(r).replace(/'/g,"\\u0027")})'>Edit</button>
         <button class="del-btn" onclick='deleteRecord("sold",${r.id})'>&#215;</button>
       </td>
     </tr>`).join('');
@@ -1701,7 +1856,7 @@ function renderMonitor(rows) {
       <td>${btBtn}</td>
       <td style="white-space:nowrap">
         <button class="del-btn" style="color:var(--accent);border-color:var(--accent)"
-          onclick='openRecordModal("monitor",${JSON.stringify(r)})'>Edit</button>
+          onclick='openRecordModal("monitor",${JSON.stringify(r).replace(/'/g,"\\u0027")})'>Edit</button>
         <button class="del-btn" onclick='deleteRecord("monitor",${r.id})'>&#215;</button>
       </td>
     </tr>`;
@@ -2225,6 +2380,79 @@ async function executeSell() {
 }
 
 // ═══════════════════════════════════════
+//  Minervini Trend Template — shared
+// ═══════════════════════════════════════
+const TT_LABELS = [
+  'C1 · Price > MA150 & MA200',
+  'C2 · MA150 > MA200',
+  'C3 · MA200 trending up (1mo+)',
+  'C4 · MA50 > MA150 & MA200',
+  'C5 · ≥25% above 52wk Low',
+  'C6 · Within 25% of 52wk High',
+  'C7 · RS Rank ≥ 70',
+  'C8 · Price > MA50',
+];
+
+function _ttBadge(ttData) {
+  if (!ttData) return '<span class="tt-badge tt-grey" title="No trend data — run Fetch Data">N/A</span>';
+  const score = ttData.trend_score;
+  if (score == null) return '<span class="tt-badge tt-grey" title="Run Fetch Data to compute">—/8</span>';
+  const cls = score >= 7 ? 'tt-green' : score >= 5 ? 'tt-amber' : 'tt-grey';
+  const tip = TT_LABELS.map((lbl, i) => {
+    const v = ttData[`c${i + 1}`];
+    return (v == null ? '— ' : v ? '✅ ' : '❌ ') + lbl;
+  }).join('\n');
+  return `<span class="tt-badge ${cls}" title="${tip}">${score}/8</span>`;
+}
+
+function _ttChecked(prefix) {
+  return [1,2,3,4,5,6,7,8]
+    .filter(n => document.getElementById(`${prefix}-tt-c${n}`)?.checked)
+    .map(n => `c${n}`);
+}
+
+function _ttPassRow(ttData, checkedKeys) {
+  if (!checkedKeys.length) return true;
+  if (!ttData) return false;
+  return checkedKeys.every(k => ttData[k] === 1);
+}
+
+function _ttSelectAll(prefix) {
+  [1,2,3,4,5,6,7,8].forEach(n => {
+    const el = document.getElementById(`${prefix}-tt-c${n}`);
+    if (el) el.checked = true;
+  });
+  _ttChanged(prefix);
+}
+
+function _ttClearAll(prefix) {
+  [1,2,3,4,5,6,7,8].forEach(n => {
+    const el = document.getElementById(`${prefix}-tt-c${n}`);
+    if (el) el.checked = false;
+  });
+  _ttChanged(prefix);
+}
+
+function _ttChanged(prefix) {
+  if (prefix === 'dv')  _dvRender();
+  if (prefix === 'pat') _applyPatternsub();
+}
+
+// Ticker-keyed TT lookup for Pattern Scanner (loaded from /api/data/summary)
+let _ttMap = null;
+
+async function _ensureTtMap() {
+  if (_ttMap) return;
+  try {
+    const rows = await apiFetch('/api/data/summary');
+    _ttMap = {};
+    rows.forEach(r => { _ttMap[r.ticker] = r; });
+  } catch(_) {
+    _ttMap = {};
+  }
+}
+
+// ═══════════════════════════════════════
 //  Pattern Scanner
 // ═══════════════════════════════════════
 let _lastPatternRows   = [];
@@ -2242,26 +2470,32 @@ function setScanMode(mode) {
 }
 
 const PATTERN_ROW_CLASS = {
-  'Cup & Handle':   'pat-cup',
-  'Golden Cross':   'pat-golden',
-  'MA200 Breakout': 'pat-ma200',
-  'Volume Surge':   'pat-vol',
-  'Pullback Bounce':'pat-pull',
+  'Cup & Handle':        'pat-cup',
+  'Golden Cross':        'pat-golden',
+  'MA200 Breakout':      'pat-ma200',
+  'Volume Surge':        'pat-vol',
+  'Pullback Bounce':     'pat-pull',
+  'Momentum Expansion':  'pat-mom',
+  'Momentum 10/8':       'pat-m108',
 };
 const PATTERN_PILL_CLASS = {
-  'Cup & Handle':   'ppill-cup',
-  'Golden Cross':   'ppill-golden',
-  'MA200 Breakout': 'ppill-ma200',
-  'Volume Surge':   'ppill-vol',
-  'Pullback Bounce':'ppill-pull',
+  'Cup & Handle':        'ppill-cup',
+  'Golden Cross':        'ppill-golden',
+  'MA200 Breakout':      'ppill-ma200',
+  'Volume Surge':        'ppill-vol',
+  'Pullback Bounce':     'ppill-pull',
+  'Momentum Expansion':  'ppill-mom',
+  'Momentum 10/8':       'ppill-m108',
 };
 const PATTERN_SUB_MAP = {
-  'all':            null,
-  'cup-handle':     'Cup & Handle',
-  'golden-cross':   'Golden Cross',
-  'ma200-breakout': 'MA200 Breakout',
-  'volume-surge':   'Volume Surge',
-  'pullback-bounce':'Pullback Bounce',
+  'all':                  null,
+  'cup-handle':           'Cup & Handle',
+  'golden-cross':         'Golden Cross',
+  'ma200-breakout':       'MA200 Breakout',
+  'volume-surge':         'Volume Surge',
+  'pullback-bounce':      'Pullback Bounce',
+  'momentum-expansion':   'Momentum Expansion',
+  'momentum-108':         'Momentum 10/8',
 };
 
 let _patternsInitialised = false;
@@ -2274,7 +2508,7 @@ async function loadPatterns() {
     const el = document.getElementById(id);
     if (el && !el.value) el.value = today;
   });
-  await _refreshMonitorSet();
+  await Promise.all([_refreshMonitorSet(), _ensureTtMap()]);
   if (!_patternsInitialised) {
     _patternsInitialised = true;
     await _loadPatternResults(document.getElementById('scan-date').value);
@@ -2303,7 +2537,7 @@ async function loadPatternRange() {
   _setPatternRangeView(true);
   document.getElementById('scan-hist-select').value = '';
   document.getElementById('patterns-body').innerHTML =
-    `<tr><td colspan="12" class="state-msg"><span class="spinner"></span>Loading…</td></tr>`;
+    `<tr><td colspan="20" class="state-msg"><span class="spinner"></span>Loading…</td></tr>`;
   document.getElementById('pattern-count').textContent = '';
   document.getElementById('pattern-ticker-filter').value = '';
 
@@ -2313,13 +2547,13 @@ async function loadPatternRange() {
     _lastPatternRows = data.data || [];
     if (!_lastPatternRows.length) {
       document.getElementById('patterns-body').innerHTML =
-        `<tr><td colspan="12" class="state-msg">No scan results for ${from} → ${to}. Run a range scan first.</td></tr>`;
+        `<tr><td colspan="20" class="state-msg">No scan results for ${from} → ${to}. Run a range scan first.</td></tr>`;
     } else {
       _applyPatternsub();
     }
   } catch(e) {
     document.getElementById('patterns-body').innerHTML =
-      `<tr><td colspan="12" class="state-msg">⚠ ${e.message}</td></tr>`;
+      `<tr><td colspan="20" class="state-msg">⚠ ${e.message}</td></tr>`;
   }
 }
 
@@ -2328,7 +2562,7 @@ function clearPatternRange() {
   document.getElementById('view-from').value = '';
   document.getElementById('view-to').value   = '';
   document.getElementById('patterns-body').innerHTML =
-    `<tr><td colspan="12" class="state-msg">Select a date above or pick a range to view results.</td></tr>`;
+    `<tr><td colspan="20" class="state-msg">Select a date above or pick a range to view results.</td></tr>`;
   document.getElementById('pattern-count').textContent = '';
   document.getElementById('pattern-ticker-filter').value = '';
   _lastPatternRows = [];
@@ -2337,7 +2571,7 @@ function clearPatternRange() {
 async function _loadPatternResults(date) {
   _setPatternRangeView(false);
   document.getElementById('patterns-body').innerHTML =
-    `<tr><td colspan="12" class="state-msg"><span class="spinner"></span>Loading…</td></tr>`;
+    `<tr><td colspan="20" class="state-msg"><span class="spinner"></span>Loading…</td></tr>`;
   document.getElementById('pattern-count').textContent = '';
   document.getElementById('pattern-ticker-filter').value = '';
   try {
@@ -2345,13 +2579,13 @@ async function _loadPatternResults(date) {
     _lastPatternRows = data.data || [];
     if (!_lastPatternRows.length) {
       document.getElementById('patterns-body').innerHTML =
-        `<tr><td colspan="12" class="state-msg">No scan results for ${date}. Click &#9654; Scan Now to generate.</td></tr>`;
+        `<tr><td colspan="20" class="state-msg">No scan results for ${date}. Click &#9654; Scan Now to generate.</td></tr>`;
     } else {
       _applyPatternsub();
     }
   } catch(e) {
     document.getElementById('patterns-body').innerHTML =
-      `<tr><td colspan="12" class="state-msg">&#9888; ${e.message}</td></tr>`;
+      `<tr><td colspan="20" class="state-msg">&#9888; ${e.message}</td></tr>`;
   }
 }
 
@@ -2474,19 +2708,28 @@ function setPatternsub(sub) {
 function _applyPatternsub() {
   const patFilter    = PATTERN_SUB_MAP[_currentPatternsub];
   const tickerFilter = (document.getElementById('pattern-ticker-filter').value || '').trim().toUpperCase();
+  const ttKeys       = _ttChecked('pat');
   let rows = patFilter ? _lastPatternRows.filter(r => r.pattern_name === patFilter) : _lastPatternRows;
   if (tickerFilter) rows = rows.filter(r => (r.ticker || '').toUpperCase().includes(tickerFilter));
-  const countEl = document.getElementById('pattern-count');
-  countEl.textContent = (patFilter || tickerFilter)
+  if (ttKeys.length) rows = rows.filter(r => _ttPassRow(_ttMap?.[r.ticker], ttKeys));
+
+  const anyFilter = patFilter || tickerFilter || ttKeys.length;
+  document.getElementById('pattern-count').textContent = anyFilter
     ? `${rows.length} of ${_lastPatternRows.length} shown`
     : `${_lastPatternRows.length} result${_lastPatternRows.length !== 1 ? 's' : ''}`;
+
+  const ttCountEl = document.getElementById('pat-tt-count');
+  if (ttCountEl) ttCountEl.textContent = ttKeys.length
+    ? `${rows.length} match${rows.length !== 1 ? '' : 'es'} TT filter`
+    : '';
+
   _renderPatternRows(rows);
 }
 
 function _renderPatternRows(rows) {
   if (!rows.length) {
     document.getElementById('patterns-body').innerHTML =
-      `<tr><td colspan="12" class="state-msg">No patterns match this filter.</td></tr>`;
+      `<tr><td colspan="20" class="state-msg">No patterns match this filter.</td></tr>`;
     return;
   }
   document.getElementById('patterns-body').innerHTML = rows.map(r => {
@@ -2500,6 +2743,16 @@ function _renderPatternRows(rows) {
     const btBtn = inQueue
       ? `<button class="del-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Queued</button>`
       : `<button class="del-btn" onclick="patternAddToBacktest('${r.ticker}',${r.close||0},'${r.signal_date||''}','${(r.pattern_name||'').replace(/'/g,'\\u0027')}',this)">+ Backtest</button>`;
+    const isMom = r.pattern_name === 'Momentum Expansion' || r.pattern_name === 'Momentum 10/8';
+    const momStart = isMom && r.mom_15d_start != null ? fmtVal(r.mom_15d_start, '$') : '—';
+    const momGain  = isMom && r.mom_15d_gain_pct != null
+      ? `<span style="color:var(--green);font-weight:600">+${r.mom_15d_gain_pct.toFixed(1)}%</span>` : '—';
+    const ttData  = _ttMap?.[r.ticker];
+    const fmtTt   = v => v != null ? Number(v).toFixed(2) : '—';
+    const rsRank  = ttData?.rs_rank;
+    const rsCell  = rsRank != null
+      ? `<span style="font-weight:600;color:${rsRank >= 70 ? 'var(--green)' : rsRank >= 50 ? 'var(--text)' : 'var(--muted)'}">${rsRank}</span>`
+      : '—';
     return `<tr class="${rowCls}">
       <td class="left ticker-cell">${r.ticker}</td>
       <td class="scan-date-col" style="font-size:11px;color:var(--muted);font-family:monospace">${fmtDate(r.scan_date)}</td>
@@ -2507,9 +2760,16 @@ function _renderPatternRows(rows) {
       <td class="left" style="color:var(--muted);font-size:11px;white-space:normal;max-width:240px">${r.signal_detail || '—'}</td>
       <td>${fmtDate(r.signal_date)}</td>
       <td><strong>${fmtVal(r.close,'$')}</strong></td>
+      <td>${momStart}</td>
+      <td>${momGain}</td>
       <td>${dayPctCell(r.pct_change)}</td>
       <td>${fmtVal(r.ma10)}</td><td>${fmtVal(r.ma30)}</td>
       <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma200)}</td>
+      <td>${fmtTt(ttData?.ma150)}</td>
+      <td>${fmtTt(ttData?.low_52wk)}</td>
+      <td>${fmtTt(ttData?.high_52wk)}</td>
+      <td style="text-align:center">${rsCell}</td>
+      <td style="text-align:center">${_ttBadge(ttData)}</td>
       <td>${watchBtn}</td>
       <td>${btBtn}</td>
     </tr>`;
@@ -2517,15 +2777,16 @@ function _renderPatternRows(rows) {
 }
 
 function addPatternToMonitor(ticker, patternName, signalDate, closePrice, btn) {
+  const reason = patternName ? `${patternName} on ${signalDate}` : `Signal on ${signalDate}`;
   if (!_watchlists.length) {
-    _doAddToMonitor(ticker, signalDate, closePrice, 1, btn, '#patterns-body');
+    _doAddToMonitor(ticker, signalDate, closePrice, 1, btn, '#patterns-body', reason);
     return;
   }
   if (_watchlists.length === 1) {
-    _doAddToMonitor(ticker, signalDate, closePrice, _watchlists[0].id, btn, '#patterns-body');
+    _doAddToMonitor(ticker, signalDate, closePrice, _watchlists[0].id, btn, '#patterns-body', reason);
     return;
   }
-  showWlPicker(btn, wlId => _doAddToMonitor(ticker, signalDate, closePrice, wlId, btn, '#patterns-body'));
+  showWlPicker(btn, wlId => _doAddToMonitor(ticker, signalDate, closePrice, wlId, btn, '#patterns-body', reason));
 }
 
 function patternAddToBacktest(ticker, p0, signalDate, patternName, btn) {
@@ -2568,6 +2829,14 @@ function clearBtQueue() {
   _btQueue = [];
   _renderBtQueue();
   _updateBtTabBadge();
+}
+
+function resetBacktester() {
+  clearBtQueue();
+  document.getElementById('bt-cards').style.display        = 'none';
+  document.getElementById('bt-results-wrap').style.display = 'none';
+  document.getElementById('bt-error').textContent          = '';
+  _btBatchData = [];
 }
 
 function _renderBtQueue() {
@@ -2637,6 +2906,7 @@ async function runSelectionBacktest() {
       body: JSON.stringify({
         items,
         t1: r.t1, sl: r.sl, t2: r.t2, rev: r.rev, prot: r.prot, trail: r.trail,
+        q1: r.q1, q2: r.q2, q3: r.q3,
       }),
     });
     _renderBatchResult(data);
@@ -2837,6 +3107,9 @@ function _btRules() {
     rev:   parseFloat(document.getElementById('bt-rev').value)   ||  0.0,
     prot:  parseFloat(document.getElementById('bt-prot').value)  || 10.0,
     trail: parseFloat(document.getElementById('bt-trail').value) || 10.0,
+    q1:    Math.max(1, parseInt(document.getElementById('bt-q1').value)  || 2),
+    q2:    Math.max(1, parseInt(document.getElementById('bt-q2').value)  || 2),
+    q3:    Math.max(1, parseInt(document.getElementById('bt-q3').value)  || 2),
   };
 }
 
@@ -2847,23 +3120,24 @@ function btUpdateMatrix() {
 
   const px = v => p0 > 0 ? '$' + (p0 * v).toFixed(2) : '—';
 
+  const total = r.q1 + r.q2 + r.q3;
   document.getElementById('bt-matrix').textContent =
-`STRATEGY EXECUTION MATRIX  (Initial: 4 QTY)
+`STRATEGY EXECUTION MATRIX  (Initial: ${total} QTY = ${r.q1}+${r.q2}+${r.q3})
 ════════════════════════════════════════════
 Ticker  : ${ticker}
 Entry   : ${p0 > 0 ? '$' + p0.toFixed(2) : '—'}
 
-STAGE 1 — FULL POSITION (Holding 4 QTY)
-  ▲ Target 1 (+${r.t1}%)    Sell 2  if High ≥ ${px(1 + r.t1/100)}
-  ▼ Stop Loss (-${r.sl}%)   Sell ALL if Low ≤ ${px(1 - r.sl/100)}
+STAGE 1 — FULL POSITION (Holding ${total} QTY)
+  ▲ Target 1 (+${r.t1}%)    Sell ${r.q1}  if High ≥ ${px(1 + r.t1/100)}
+  ▼ Stop Loss (-${r.sl}%)   Sell ALL (${total}) if Low ≤ ${px(1 - r.sl/100)}
 
-STAGE 2 — RUNNER (Holding 2 QTY)
-  ▲ Target 2 (+${r.t2}%)    Sell 1  if High ≥ ${px(1 + r.t2/100)}
-  ▼ Reversal (${r.rev}%)     Sell 2  if Low  ≤ ${px(1 + r.rev/100)}
+STAGE 2 — RUNNER (Holding ${r.q2 + r.q3} QTY)
+  ▲ Target 2 (+${r.t2}%)    Sell ${r.q2}  if High ≥ ${px(1 + r.t2/100)}
+  ▼ Reversal (${r.rev}%)     Sell ALL (${r.q2 + r.q3}) if Low ≤ ${px(1 + r.rev/100)}
 
-STAGE 3 — FINAL (Holding 1 QTY)
-  ▼ Protection (+${r.prot}%) Sell 1  if Low  ≤ ${px(1 + r.prot/100)}
-  ▼ Trailing (-${r.trail}%)  Sell 1  if Low  ≤ High_30D × ${(1 - r.trail/100).toFixed(2)}`;
+STAGE 3 — FINAL (Holding ${r.q3} QTY)
+  ▼ Protection (+${r.prot}%) Sell ${r.q3}  if Low ≤ ${px(1 + r.prot/100)}
+  ▼ Trailing (-${r.trail}%)  Sell ${r.q3}  if Low ≤ High_30D × ${(1 - r.trail/100).toFixed(2)}`;
 }
 
 function _setBtRunning(on) {
@@ -2891,6 +3165,7 @@ async function runSingleBacktest() {
       body: JSON.stringify({
         ticker, p0, start_date: start, end_date: end || null,
         t1: r.t1, sl: r.sl, t2: r.t2, rev: r.rev, prot: r.prot, trail: r.trail,
+        q1: r.q1, q2: r.q2, q3: r.q3,
       }),
     });
     _renderSingleResult(data);
@@ -2956,7 +3231,7 @@ async function runBatchBacktest() {
     const data = await apiFetch('/api/backtest/batch', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({t1: r.t1, sl: r.sl, t2: r.t2, rev: r.rev, prot: r.prot, trail: r.trail}),
+      body: JSON.stringify({t1: r.t1, sl: r.sl, t2: r.t2, rev: r.rev, prot: r.prot, trail: r.trail, q1: r.q1, q2: r.q2, q3: r.q3}),
     });
     _renderBatchResult(data);
   } catch(e) {
@@ -3112,8 +3387,9 @@ function _renderMarket(d) {
     </div>`;
 
   // ── Summary cards ────────────────────────────────────────────
-  const ixicCnt = ixic.dd_count ?? 0;
-  const gspcCnt = gspc.dd_count ?? 0;
+  const ixicCnt      = ixic.dd_count ?? 0;
+  const gspcCnt      = gspc.dd_count ?? 0;
+  const rallyDay     = ixic.current_rally_day ?? 0;
 
   const allDds = [
     ...(ixic.dd_list || []).map(dd => ({...dd, idx_label: 'Nasdaq'})),
@@ -3123,6 +3399,7 @@ function _renderMarket(d) {
   const latestDd = allDds[0];
 
   function ddCls(n) { return n >= 6 ? 'red' : n >= 4 ? '' : 'green'; }
+  function rdCls(d)  { return d >= 4 && d <= 20 ? 'green' : ''; }
 
   document.getElementById('market-cards').innerHTML = `
     <div class="card">
@@ -3132,6 +3409,11 @@ function _renderMarket(d) {
     <div class="card">
       <div class="card-label">S&amp;P 500 DDs (25D)</div>
       <div class="card-value ${ddCls(gspcCnt)}">${gspcCnt}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Current Rally Day (Nasdaq)</div>
+      <div class="card-value ${rdCls(rallyDay)}">${rallyDay}</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:2px">FTD window: day 4–20</div>
     </div>
     <div class="card" style="min-width:220px">
       <div class="card-label">Latest Distribution Day</div>
@@ -3146,7 +3428,7 @@ function _renderMarket(d) {
       <div class="card-label">Recent Follow-Through Day</div>
       <div style="font-size:13px;font-weight:600;margin-top:4px;color:${ftd ? 'var(--green)' : 'var(--muted)'}">
         ${ftd
-          ? `${ftd.date}<br>
+          ? `${ftd.date} <span style="font-size:11px;color:var(--muted);font-weight:400">(${ftd.index || ''})</span><br>
              <span style="font-size:11px;font-weight:400">+${ftd.pct_change.toFixed(2)}% &nbsp;·&nbsp; Rally Day ${ftd.rally_day}</span>`
           : '<span class="dim">None in last 10 days</span>'}
       </div>
@@ -3190,34 +3472,32 @@ function _renderMarketChart(d) {
   const gspcData = d.chart_data?.['^GSPC'];
   if (!ixicData || !ixicData.closes.length) return;
 
-  const labels  = ixicData.dates;
-  const ddAll   = new Set([...(ixicData.dd_dates  || []), ...(gspcData?.dd_dates  || [])]);
-  const ftdAll  = new Set([...(ixicData.ftd_dates || []), ...(gspcData?.ftd_dates || [])]);
+  const labels   = ixicData.dates;
+  const ixicFtd  = new Set(ixicData.ftd_dates || []);
+  const ixicDd   = new Set(ixicData.dd_dates  || []);
+  const gspcFtd  = new Set(gspcData?.ftd_dates || []);
+  const gspcDd   = new Set(gspcData?.dd_dates  || []);
 
   function normalize(closes) {
     const base = closes[0] || 1;
     return closes.map(c => Math.round(c / base * 10000) / 100);
   }
-  function ptColors(dates) {
-    return dates.map(d => ftdAll.has(d) ? '#16a34a' : ddAll.has(d) ? '#dc2626' : 'transparent');
+  function ptColors(dates, ftdSet, ddSet) {
+    return dates.map(d => ftdSet.has(d) ? '#16a34a' : ddSet.has(d) ? '#dc2626' : 'transparent');
   }
-  function ptRadii(dates) {
-    return dates.map(d => (ftdAll.has(d) || ddAll.has(d)) ? 5 : 0);
+  function ptRadii(dates, ftdSet, ddSet) {
+    return dates.map(d => (ftdSet.has(d) || ddSet.has(d)) ? 5 : 0);
   }
-
-  const ixicNorm = normalize(ixicData.closes);
-  const ptC      = ptColors(labels);
-  const ptR      = ptRadii(labels);
 
   const datasets = [{
     label:                'Nasdaq ^IXIC',
-    data:                 ixicNorm,
+    data:                 normalize(ixicData.closes),
     borderColor:          '#2563eb',
     backgroundColor:      'transparent',
     borderWidth:          2,
-    pointBackgroundColor: ptC,
-    pointBorderColor:     ptC,
-    pointRadius:          ptR,
+    pointBackgroundColor: ptColors(labels, ixicFtd, ixicDd),
+    pointBorderColor:     ptColors(labels, ixicFtd, ixicDd),
+    pointRadius:          ptRadii(labels, ixicFtd, ixicDd),
     pointHoverRadius:     7,
     tension:              0.1,
   }];
@@ -3229,9 +3509,9 @@ function _renderMarketChart(d) {
       borderColor:          '#16a34a',
       backgroundColor:      'transparent',
       borderWidth:          2,
-      pointBackgroundColor: ptC,
-      pointBorderColor:     ptC,
-      pointRadius:          ptR,
+      pointBackgroundColor: ptColors(labels, gspcFtd, gspcDd),
+      pointBorderColor:     ptColors(labels, gspcFtd, gspcDd),
+      pointRadius:          ptRadii(labels, gspcFtd, gspcDd),
       pointHoverRadius:     7,
       tension:              0.1,
     });
@@ -3249,8 +3529,11 @@ function _renderMarketChart(d) {
         tooltip: {
           callbacks: {
             label: (item) => {
-              const date = labels[item.dataIndex];
-              const tag  = ftdAll.has(date) ? ' ★ FTD' : ddAll.has(date) ? ' ● DD' : '';
+              const date    = labels[item.dataIndex];
+              const isIxic  = item.dataset.label.includes('IXIC');
+              const ftdSet  = isIxic ? ixicFtd : gspcFtd;
+              const ddSet   = isIxic ? ixicDd  : gspcDd;
+              const tag     = ftdSet.has(date) ? ' ★ FTD' : ddSet.has(date) ? ' ● DD' : '';
               return `${item.dataset.label}: ${item.parsed.y.toFixed(2)}${tag}`;
             }
           }
@@ -3289,6 +3572,143 @@ async function restoreBackup(input) {
     alert('Restore error: ' + e.message);
     input.value = '';
   }
+}
+
+// ═══════════════════════════════════════
+//  Data Browser
+// ═══════════════════════════════════════
+let _dvData       = [];     // full summary rows
+let _dvSortCol    = 'ticker';
+let _dvSortAsc    = true;
+let _dvInitialised = false;
+
+async function loadDataView(force) {
+  if (_dvInitialised && !force) return;
+  loading('dv-body', 17);
+  document.getElementById('dv-count').textContent = '';
+  try {
+    _dvData = await apiFetch('/api/data/summary');
+    _dvInitialised = true;
+    _dvRender();
+  } catch(e) {
+    empty('dv-body', 17, 'Error: ' + e.message);
+  }
+}
+
+function _dvRender() {
+  const filter  = (document.getElementById('dv-filter').value || '').toUpperCase();
+  const ttKeys  = _ttChecked('dv');
+  const allRows = _dvData
+    .filter(r => !filter || r.ticker.includes(filter))
+    .filter(r => _ttPassRow(r, ttKeys))
+    .sort((a, b) => {
+      const va = a[_dvSortCol] ?? '';
+      const vb = b[_dvSortCol] ?? '';
+      const cmp = typeof va === 'number' ? va - vb : String(va).localeCompare(String(vb));
+      return _dvSortAsc ? cmp : -cmp;
+    });
+
+  document.getElementById('dv-count').textContent =
+    `${allRows.length} of ${_dvData.length} ticker${_dvData.length !== 1 ? 's' : ''}`;
+
+  const ttCountEl = document.getElementById('dv-tt-count');
+  if (ttCountEl) ttCountEl.textContent = ttKeys.length
+    ? `${allRows.length} match${allRows.length !== 1 ? '' : 'es'} TT filter`
+    : '';
+
+  if (!allRows.length) { empty('dv-body', 17, 'No tickers match.'); return; }
+
+  document.getElementById('dv-body').innerHTML = allRows.map(r => {
+    const pct     = r.pct_change;
+    const pctCell = pct != null
+      ? `<span style="color:${pct >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:600">
+           ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</span>`
+      : '—';
+    const aboveMa200 = r.close != null && r.ma200 != null && r.close > r.ma200;
+    const ma10gtMa30 = r.ma10  != null && r.ma30  != null && r.ma10  > r.ma30;
+    const dot = ok => `<span style="color:${ok ? 'var(--green)' : 'var(--red)'};font-size:16px">●</span>`;
+    const fmt = v  => v != null ? Number(v).toFixed(2) : '—';
+    const vol = v  => v != null ? Number(v).toLocaleString() : '—';
+    return `<tr>
+      <td class="left ticker-cell"><strong>${r.ticker}</strong></td>
+      <td>${r.date || '—'}</td>
+      <td><strong>${fmt(r.close)}</strong></td>
+      <td>${pctCell}</td>
+      <td style="font-size:12px">${vol(r.volume)}</td>
+      <td>${fmt(r.ma10)}</td>
+      <td>${fmt(r.ma30)}</td>
+      <td>${fmt(r.ma50)}</td>
+      <td>${fmt(r.ma150)}</td>
+      <td>${fmt(r.ma200)}</td>
+      <td>${fmt(r.low_52wk)}</td>
+      <td>${fmt(r.high_52wk)}</td>
+      <td style="text-align:center;font-weight:600;color:${r.rs_rank != null ? (r.rs_rank >= 70 ? 'var(--green)' : r.rs_rank >= 50 ? 'var(--text)' : 'var(--muted)') : 'var(--muted)'}">${r.rs_rank != null ? r.rs_rank : '—'}</td>
+      <td style="text-align:center">${dot(ma10gtMa30)}</td>
+      <td style="text-align:center">${dot(aboveMa200)}</td>
+      <td style="text-align:center">${_ttBadge(r)}</td>
+      <td><button class="del-btn" onclick="openDvHistory('${r.ticker}')">History</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function _dvFilter() { _dvRender(); }
+
+function _dvSort(th) {
+  const col = th.dataset.col;
+  if (_dvSortCol === col) {
+    _dvSortAsc = !_dvSortAsc;
+  } else {
+    _dvSortCol = col;
+    _dvSortAsc = (col === 'ticker' || col === 'date');
+  }
+  // Update header indicators
+  document.querySelectorAll('#dv-head th').forEach(h => {
+    h.classList.remove('sort-asc', 'sort-desc');
+  });
+  th.classList.add(_dvSortAsc ? 'sort-asc' : 'sort-desc');
+  _dvRender();
+}
+
+async function openDvHistory(ticker) {
+  document.getElementById('dv-hist-title').textContent = `${ticker} — Price History (last 252 days)`;
+  document.getElementById('dv-hist-body').innerHTML =
+    '<tr><td colspan="12" class="state-msg"><span class="spinner"></span>Loading…</td></tr>';
+  document.getElementById('dv-history-overlay').style.display = 'block';
+  try {
+    const rows = await apiFetch(`/api/data/history?ticker=${encodeURIComponent(ticker)}`);
+    if (!rows.length) {
+      document.getElementById('dv-hist-body').innerHTML =
+        '<tr><td colspan="12" class="state-msg">No data found.</td></tr>';
+      return;
+    }
+    const fmt = v => v != null ? Number(v).toFixed(2) : '—';
+    const vol = v => v != null ? Number(v).toLocaleString() : '—';
+    document.getElementById('dv-hist-body').innerHTML = rows.map(r => {
+      const pct = r.pct_change;
+      const pctCell = pct != null
+        ? `<span style="color:${pct >= 0 ? 'var(--green)' : 'var(--red)'}">
+             ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</span>`
+        : '—';
+      const dirColor = r.direction === 'Up' ? 'var(--green)' : r.direction === 'Down' ? 'var(--red)' : 'var(--muted)';
+      return `<tr>
+        <td>${r.date}</td>
+        <td>${fmt(r.open)}</td><td>${fmt(r.high)}</td><td>${fmt(r.low)}</td>
+        <td><strong>${fmt(r.close)}</strong></td>
+        <td style="font-size:12px">${vol(r.volume)}</td>
+        <td>${fmt(r.ma10)}</td><td>${fmt(r.ma30)}</td>
+        <td>${fmt(r.ma50)}</td><td>${fmt(r.ma200)}</td>
+        <td>${pctCell}</td>
+        <td style="color:${dirColor};font-weight:600">${r.direction || '—'}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('dv-hist-body').innerHTML =
+      `<tr><td colspan="12" class="state-msg">Error: ${e.message}</td></tr>`;
+  }
+}
+
+function closeDvHistory() {
+  document.getElementById('dv-history-overlay').style.display = 'none';
 }
 
 // ═══════════════════════════════════════

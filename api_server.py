@@ -1475,6 +1475,9 @@ def _parse_rules(body):
         "rev":   float(body.get("rev",    0.0)) / 100.0,
         "prot":  float(body.get("prot",  10.0)) / 100.0,
         "trail": float(body.get("trail", 10.0)) / 100.0,
+        "q1":    max(1, int(body.get("q1", 2))),
+        "q2":    max(1, int(body.get("q2", 2))),
+        "q3":    max(1, int(body.get("q3", 2))),
     }
 
 
@@ -1694,6 +1697,83 @@ def backup_restore():
             os.remove(tmp_path)
         return jsonify({"error": str(e)}), 500
     return jsonify({"ok": True, "message": "Database restored. Please refresh the page."})
+
+
+# ---------------------------------------------------------------------------
+# Data Browser — latest snapshot + full history
+# ---------------------------------------------------------------------------
+
+@app.route("/api/data/summary")
+def data_summary():
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT s.ticker, s.date, s.open, s.high, s.low, s.close, s.volume,
+                   s.ma10, s.ma30, s.ma50, s.ma150, s.ma200,
+                   s.high_30d, s.low_30d, s.high_52wk, s.low_52wk, s.vol_ma10,
+                   s.pct_change, s.direction,
+                   s.rs_raw, s.rs_rank,
+                   s.c1, s.c2, s.c3, s.c4, s.c5, s.c6, s.c7, s.c8,
+                   s.trend_score
+            FROM stocks_daily s
+            INNER JOIN (
+                SELECT ticker, MAX(date) AS max_date
+                FROM stocks_daily
+                GROUP BY ticker
+            ) latest ON s.ticker = latest.ticker AND s.date = latest.max_date
+            ORDER BY s.ticker
+        """).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/debug/trend-template")
+def debug_trend_template():
+    """Show last 5 rows for a ticker with all Trend Template fields for verification."""
+    ticker = request.args.get("ticker", "").strip().upper()
+    if not ticker:
+        return jsonify({"error": "?ticker= required"}), 400
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT date, close,
+                   ma50, ma150, ma200,
+                   high_52wk, low_52wk,
+                   rs_raw, rs_rank,
+                   c1, c2, c3, c4, c5, c6, c7, c8, trend_score
+            FROM stocks_daily
+            WHERE ticker = ?
+            ORDER BY date DESC
+            LIMIT 5
+        """, (ticker,)).fetchall()
+    if not rows:
+        return jsonify({"error": f"No data for {ticker}"}), 404
+    labels = ["C1:Close>MA150&200", "C2:MA150>MA200", "C3:MA200↑1mo",
+              "C4:MA50>MA150&200", "C5:25%>52wkLow", "C6:Within25%52wkHi",
+              "C7:RSRank≥70", "C8:Close>MA50"]
+    result = []
+    for r in rows:
+        rd = dict(r)
+        rd["criteria_detail"] = {
+            labels[i]: rd.get(f"c{i+1}") for i in range(8)
+        }
+        result.append(rd)
+    return jsonify({"ticker": ticker, "rows": result})
+
+
+@app.route("/api/data/history")
+def data_history():
+    ticker = request.args.get("ticker", "").strip().upper()
+    if not ticker:
+        return jsonify({"error": "ticker required"}), 400
+    limit = min(int(request.args.get("limit", 252)), 1000)
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT date, open, high, low, close, volume,
+                   ma10, ma30, ma50, ma200, pct_change, direction
+            FROM stocks_daily
+            WHERE ticker = ?
+            ORDER BY date DESC
+            LIMIT ?
+        """, (ticker, limit)).fetchall()
+    return jsonify([dict(r) for r in rows])
 
 
 # ---------------------------------------------------------------------------

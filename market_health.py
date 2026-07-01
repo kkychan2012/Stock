@@ -36,6 +36,7 @@ DD_WINDOW    = 25                   # rolling trading-day window for DD count
 RECOVERY_PCT =  0.05               # 5 % gain from DD close removes that DD early
 FETCH_PERIOD = "90d"               # ~65 trading days + buffer; adjust if needed
 FTD_START_DAY = 4                  # earliest rally day that qualifies for a FTD
+FTD_MAX_DAY   = 20                 # latest rally day considered; prevents FTDs in long uptrends
 FTD_LOOKBACK  = 10                 # flag a FTD "recent" only if within this many trading days
 
 
@@ -184,21 +185,24 @@ def apply_expiry_rules(dist_days, df):
 def detect_follow_through_days(df):
     """
     Walk through df tracking an "attempted rally" from the most-recent low.
-    A new low resets the rally counter.  On day FTD_START_DAY or later:
-      close up FTD_PCT_GAIN+  AND  volume > prior-day volume  →  FTD.
+    A new low resets the rally counter.  FTD fires on rally day FTD_START_DAY
+    through FTD_MAX_DAY (inclusive): close up FTD_PCT_GAIN+ AND volume > prior.
+    After a confirmed FTD the rally counter resets (market is now "confirmed";
+    next FTD can only appear 4+ days later).
 
-    Returns a chronological list of FTD dicts.
+    Returns (ftds, current_rally_day) where current_rally_day is how many
+    trading days the current rally attempt has been running as of the last row.
     """
     dates   = df.index.tolist()
     closes  = df["Close"].tolist()
     volumes = df["Volume"].tolist()
     n       = len(dates)
     if n < FTD_START_DAY + 1:
-        return []
+        return [], 0
 
     ftds        = []
     rally_low   = _safe_float(closes[0]) or 0.0
-    rally_start = 0                        # index of the current low
+    rally_start = 0                        # index of the current rally low
 
     for i in range(1, n):
         c   = _safe_float(closes[i])
@@ -209,14 +213,15 @@ def detect_follow_through_days(df):
         if c is None or c_p is None:
             continue
 
-        # New low → reset the rally attempt
+        # New low → invalidate current rally attempt, start fresh
         if c < rally_low:
             rally_low   = c
             rally_start = i
             continue
 
         rally_day = i - rally_start
-        if rally_day < FTD_START_DAY:
+        # FTD window: day 4 to day 20 only
+        if rally_day < FTD_START_DAY or rally_day > FTD_MAX_DAY:
             continue
 
         pct = _pct(c, c_p)
@@ -229,8 +234,12 @@ def detect_follow_through_days(df):
                 "prior_volume": int(v_p),
                 "rally_day":    rally_day,
             })
+            # Rally confirmed — reset so subsequent up-days aren't also flagged
+            rally_start = i
+            rally_low   = c
 
-    return ftds
+    current_rally_day = (n - 1) - rally_start
+    return ftds, current_rally_day
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +283,7 @@ def get_market_health():
         "chart_data":  {},
     }
 
-    ftd_candidates = []   # (ftd_dict, trading_days_from_end_of_data)
+    ftd_candidates = []   # (ftd_dict, trading_days_from_end_of_data, symbol)
 
     for sym in SYMBOLS:
         df = index_data.get(sym)
@@ -284,9 +293,9 @@ def get_market_health():
             }
             continue
 
-        raw_dds    = detect_distribution_days(df)
-        active_dds = apply_expiry_rules(raw_dds, df)
-        ftds       = detect_follow_through_days(df)
+        raw_dds                  = detect_distribution_days(df)
+        active_dds               = apply_expiry_rules(raw_dds, df)
+        ftds, current_rally_day  = detect_follow_through_days(df)
 
         # Build trading-day distance for each FTD so we can pick the "recent" one
         dates    = df.index.tolist()
@@ -295,13 +304,14 @@ def get_market_health():
         for ftd in ftds:
             idx = d_to_idx.get(ftd["date"], -1)
             if idx >= 0:
-                ftd_candidates.append((ftd, n - 1 - idx))
+                ftd_candidates.append((ftd, n - 1 - idx, sym))
 
         result["indices"][sym] = {
-            "dd_count":  len(active_dds),
-            "dd_list":   active_dds,
-            "latest_dd": active_dds[-1] if active_dds else None,
-            "ftd_list":  ftds,
+            "dd_count":        len(active_dds),
+            "dd_list":         active_dds,
+            "latest_dd":       active_dds[-1] if active_dds else None,
+            "ftd_list":        ftds,
+            "current_rally_day": current_rally_day,
         }
 
         # Chart data: last 60 trading days (closes + marker date sets)
@@ -324,10 +334,11 @@ def get_market_health():
         ]
 
     # Most recent FTD within FTD_LOOKBACK trading days of the last data point
+    _SYM_LABEL = {"^IXIC": "Nasdaq", "^GSPC": "S&P 500"}
     recent_ftd = None
-    for ftd, days_from_end in sorted(ftd_candidates, key=lambda x: x[0]["date"], reverse=True):
+    for ftd, days_from_end, sym in sorted(ftd_candidates, key=lambda x: x[0]["date"], reverse=True):
         if days_from_end <= FTD_LOOKBACK:
-            recent_ftd = ftd
+            recent_ftd = {**ftd, "index": _SYM_LABEL.get(sym, sym)}
             break
     result["recent_ftd"] = recent_ftd
 

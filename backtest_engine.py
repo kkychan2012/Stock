@@ -24,22 +24,27 @@ def run_trading_simulation(rows, p_0, start_date, rules):
     if not rows:
         return []
 
+    q1 = max(1, int(rules.get("q1", 2)))
+    q2 = max(1, int(rules.get("q2", 2)))
+    q3 = max(1, int(rules.get("q3", 2)))
+    total_qty = q1 + q2 + q3
+
     df = pd.DataFrame(rows)
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").reset_index(drop=True)
-    df = df[df["date"] >= pd.to_datetime(start_date)].reset_index(drop=True)
+    df = df[df["date"] > pd.to_datetime(start_date)].reset_index(drop=True)
 
     if df.empty:
         return []
 
-    status = "HOLDING_4"
-    remaining_qty = 4
+    status = "STAGE1"
+    remaining_qty = total_qty
     last_processed_price = p_0
     last_date_str = pd.to_datetime(start_date).strftime("%Y-%m-%d")
 
     transactions = [{
-        "date": last_date_str, "action": "BUY", "qty": 4, "price": p_0,
-        "cash_flow": -4 * p_0, "remaining": 4, "reason": "Initial Position Setup",
+        "date": last_date_str, "action": "BUY", "qty": total_qty, "price": p_0,
+        "cash_flow": -total_qty * p_0, "remaining": total_qty, "reason": "Initial Position Setup",
     }]
 
     for _, row in df.iterrows():
@@ -56,32 +61,33 @@ def run_trading_simulation(rows, p_0, start_date, rules):
             float(row["high_30d"]) if pd.notna(row.get("high_30d")) else high
         )
 
-        if status == "HOLDING_4":
+        if status == "STAGE1":
             if low <= p_0 * (1 - rules["sl"]):
                 price = p_0 * (1 - rules["sl"])
                 transactions.append({
-                    "date": last_date_str, "action": "SELL", "qty": 4,
-                    "price": price, "cash_flow": 4 * price,
+                    "date": last_date_str, "action": "SELL", "qty": remaining_qty,
+                    "price": price, "cash_flow": remaining_qty * price,
                     "remaining": 0, "reason": "Stop Loss Hit",
                 })
                 remaining_qty = 0
                 status = "FULLY_SOLD"
             elif high >= p_0 * (1 + rules["t1"]):
                 price = p_0 * (1 + rules["t1"])
+                after = q2 + q3
                 transactions.append({
-                    "date": last_date_str, "action": "SELL", "qty": 2,
-                    "price": price, "cash_flow": 2 * price,
-                    "remaining": 2, "reason": "Profit Target 1 Hit",
+                    "date": last_date_str, "action": "SELL", "qty": q1,
+                    "price": price, "cash_flow": q1 * price,
+                    "remaining": after, "reason": "Profit Target 1 Hit",
                 })
-                remaining_qty = 2
-                status = "HOLDING_2"
+                remaining_qty = after
+                status = "STAGE2"
 
-        elif status == "HOLDING_2":
+        elif status == "STAGE2":
             if low <= p_0 * (1 + rules["rev"]):
                 price = p_0 * (1 + rules["rev"])
                 transactions.append({
-                    "date": last_date_str, "action": "SELL", "qty": 2,
-                    "price": price, "cash_flow": 2 * price,
+                    "date": last_date_str, "action": "SELL", "qty": remaining_qty,
+                    "price": price, "cash_flow": remaining_qty * price,
                     "remaining": 0, "reason": "Reversal Trigger Hit",
                 })
                 remaining_qty = 0
@@ -89,19 +95,19 @@ def run_trading_simulation(rows, p_0, start_date, rules):
             elif high >= p_0 * (1 + rules["t2"]):
                 price = p_0 * (1 + rules["t2"])
                 transactions.append({
-                    "date": last_date_str, "action": "SELL", "qty": 1,
-                    "price": price, "cash_flow": 1 * price,
-                    "remaining": 1, "reason": "Profit Target 2 Hit",
+                    "date": last_date_str, "action": "SELL", "qty": q2,
+                    "price": price, "cash_flow": q2 * price,
+                    "remaining": q3, "reason": "Profit Target 2 Hit",
                 })
-                remaining_qty = 1
-                status = "HOLDING_1"
+                remaining_qty = q3
+                status = "STAGE3"
 
-        elif status == "HOLDING_1":
+        elif status == "STAGE3":
             if low <= p_0 * (1 + rules["prot"]):
                 price = p_0 * (1 + rules["prot"])
                 transactions.append({
-                    "date": last_date_str, "action": "SELL", "qty": 1,
-                    "price": price, "cash_flow": 1 * price,
+                    "date": last_date_str, "action": "SELL", "qty": remaining_qty,
+                    "price": price, "cash_flow": remaining_qty * price,
                     "remaining": 0, "reason": "Protection Threshold Hit",
                 })
                 remaining_qty = 0
@@ -109,8 +115,8 @@ def run_trading_simulation(rows, p_0, start_date, rules):
             elif low <= high_30d * (1 - rules["trail"]):
                 price = high_30d * (1 - rules["trail"])
                 transactions.append({
-                    "date": last_date_str, "action": "SELL", "qty": 1,
-                    "price": price, "cash_flow": 1 * price,
+                    "date": last_date_str, "action": "SELL", "qty": remaining_qty,
+                    "price": price, "cash_flow": remaining_qty * price,
                     "remaining": 0, "reason": "Trailing Stop Hit",
                 })
                 remaining_qty = 0

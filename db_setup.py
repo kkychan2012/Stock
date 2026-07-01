@@ -295,6 +295,12 @@ def _migrate(conn):
     # Ensure Default watchlist always exists
     conn.execute("INSERT OR IGNORE INTO watchlists (id, name) VALUES (1, 'Default')")
 
+    pattern_cols = {row[1] for row in conn.execute("PRAGMA table_info(pattern_scan_results)")}
+    if "mom_15d_start" not in pattern_cols:
+        conn.execute("ALTER TABLE pattern_scan_results ADD COLUMN mom_15d_start REAL")
+    if "mom_15d_gain_pct" not in pattern_cols:
+        conn.execute("ALTER TABLE pattern_scan_results ADD COLUMN mom_15d_gain_pct REAL")
+
     existing_tables = {row[0] for row in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'"
     )}
@@ -327,6 +333,8 @@ def _migrate(conn):
                 high_30d     REAL,
                 low_30d      REAL,
                 pct_change   REAL,
+                mom_15d_start    REAL,
+                mom_15d_gain_pct REAL,
                 scanned_at   TEXT    DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(scan_date, ticker, pattern_name)
             )
@@ -369,6 +377,27 @@ def _migrate(conn):
             conn.execute("ALTER TABLE stocks_daily ADD COLUMN rsi14 REAL")
         except Exception:
             pass
+
+    # Minervini Trend Template columns
+    _tt_cols = {
+        "ma150":       "REAL",
+        "high_52wk":   "REAL",
+        "low_52wk":    "REAL",
+        "rs_raw":      "REAL",
+        "rs_rank":     "INTEGER",
+        "c1":          "INTEGER",
+        "c2":          "INTEGER",
+        "c3":          "INTEGER",
+        "c4":          "INTEGER",
+        "c5":          "INTEGER",
+        "c6":          "INTEGER",
+        "c7":          "INTEGER",
+        "c8":          "INTEGER",
+        "trend_score": "INTEGER",
+    }
+    for col, typ in _tt_cols.items():
+        if col not in stocks_daily_cols:
+            conn.execute(f"ALTER TABLE stocks_daily ADD COLUMN {col} {typ}")
 
     _fix_existing_dates(conn)
 
