@@ -32,6 +32,10 @@ Common query params:
   ?ticker=AAPL     Filter by ticker (market data endpoints)
   ?days=N          Signals: how many calendar days back
   ?latest=1        Signals: one most-recent row per ticker
+
+-- Volume Profile (see volume_profile.py) --
+GET  /api/volume-profile?ticker=&lookback=60&top_n=5   POC, top-N volume levels
+     (support/resistance), pivot-based S/R "channels", and the levels confirmed by BOTH
 """
 
 import argparse
@@ -50,6 +54,7 @@ from db_setup import get_connection, setup_database
 from fetch_data import fetch_all, get_tickers_from_db
 from scan_patterns import scan_all_patterns, scan_date_range, get_scan_results, get_scan_results_range, get_available_scan_dates
 from backtest_engine import run_trading_simulation, calculate_metrics
+from volume_profile import analyze as analyze_volume_profile, VP_LOOKBACK_DAYS, VP_TOP_N, VP_PIVOT_LOOKBACK_DAYS, VP_PIVOT_WINDOW
 
 # ---------------------------------------------------------------------------
 # Date normalisation
@@ -1774,6 +1779,40 @@ def data_history():
             LIMIT ?
         """, (ticker, limit)).fetchall()
     return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/volume-profile")
+def volume_profile():
+    """Volume profile (POC + top-N high-volume support/resistance levels) for
+    one ticker, cross-referenced against pivot-based S/R channels — see
+    volume_profile.py. Falls back to universe_prices the same way
+    /api/data/history does when the ticker isn't in the tracked set."""
+    ticker = request.args.get("ticker", "").strip().upper()
+    if not ticker:
+        return jsonify({"error": "ticker required"}), 400
+    lookback = min(max(int(request.args.get("lookback", VP_LOOKBACK_DAYS)), 10), 500)
+    top_n    = min(max(int(request.args.get("top_n", VP_TOP_N)), 1), 20)
+
+    # need enough rows to cover whichever lookback (volume or pivot) is longer,
+    # plus slack on each side for the pivot window to find swing points near the edges
+    fetch_rows = max(lookback, VP_PIVOT_LOOKBACK_DAYS) + VP_PIVOT_WINDOW * 2 + 20
+
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT date, open, high, low, close, volume
+            FROM stocks_daily WHERE ticker = ? ORDER BY date DESC LIMIT ?
+        """, (ticker, fetch_rows)).fetchall()
+        if not rows:
+            rows = conn.execute("""
+                SELECT date, open, high, low, close, volume
+                FROM universe_prices WHERE ticker = ? ORDER BY date DESC LIMIT ?
+            """, (ticker, fetch_rows)).fetchall()
+    if not rows:
+        return jsonify({"error": f"No price data for {ticker}"}), 404
+
+    price_rows = [dict(r) for r in reversed(rows)]  # ascending, as analyze() expects
+    result = analyze_volume_profile(ticker, price_rows, config={"lookback_days": lookback, "top_n": top_n})
+    return jsonify(result)
 
 
 # ---------------------------------------------------------------------------

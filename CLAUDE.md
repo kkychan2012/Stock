@@ -4,7 +4,7 @@
 A personal stock dashboard: Flask backend + SQLite + single-page HTML frontend.
 Tracks holdings, sold positions, named watchlists, breakout/RSI signals, a 7-pattern scanner,
 insider trading signals, IBD-style market health (Distribution/Follow-Through Days),
-and a strategy backtester.
+a per-ticker Volume Profile / pivot-based support-resistance module, and a strategy backtester.
 
 ## How to start
 ```
@@ -29,6 +29,7 @@ Optional flags:
 | `market_health.py` | IBD-style Distribution Day / Follow-Through Day market health tracker (Nasdaq + S&P 500) |
 | `Insider Trading/insider_pipeline/` | Standalone pipeline (SEC Form 4/6-K, Nasdaq Nordic, FI Insynsregistret) invoked by `/api/insider/scan`; writes into `insider_signals` |
 | `scan_cup_handle.py` | Original standalone Cup & Handle scanner (CLI only, not used by dashboard) |
+| `volume_profile.py` | Volume Profile — volume-by-price histogram (POC + top-N support/resistance levels) cross-referenced against pivot-clustered "S/R channel" levels; `analyze(ticker, rows, config=None)`, called from `/api/volume-profile` |
 | `templates/dashboard.html` | Entire frontend — HTML + CSS + JS in one file |
 | `start.bat` | Double-click launcher |
 | `stock_dashboard.db` | SQLite database (do not commit to git) |
@@ -127,6 +128,10 @@ POST /api/backup/restore                upload a .db file to replace it (atomic 
 GET /api/data/summary                   latest snapshot per ticker (all indicator columns)
 GET /api/data/history?ticker=&limit=     full OHLCV+indicator history for one ticker
 GET /api/debug/trend-template?ticker=    last 5 rows with Trend Template criteria breakdown
+
+# Volume Profile (per-ticker volume-by-price + pivot-based S/R)
+GET /api/volume-profile?ticker=&lookback=60&top_n=5   POC, top-N high-volume support/resistance
+    levels, pivot-clustered "S/R channel" levels, and confirmed_levels (both agree — highest confidence)
 ```
 
 ## Dashboard tabs (in order)
@@ -173,6 +178,33 @@ Calculated per row, shown in red:
 5. **Pullback Bounce** — close within 5% above Low_30D, above MA200, price bouncing, MA10 > MA30
 6. **Momentum Expansion** — ≥12 of last 15 days up, close gained ≥20% over the 15-day window, recent 15D avg volume ≥1.25× the prior 15D window
 7. **Momentum 10/8** — ≥8 of last 10 days up, recent 10D avg volume ≥1.25× the prior 10D window
+
+## Volume Profile module (`volume_profile.py`)
+Not a pattern scanner (no `pattern_scan_results` row, no scan-all/scan-date-range job) — a per-ticker,
+on-demand analysis surfaced via `GET /api/volume-profile?ticker=&lookback=&top_n=` and a "Volume
+Profile & S/R Levels" panel in the ticker History modal (`templates/dashboard.html`). No pivot-based
+support/resistance module existed anywhere in this codebase before this; `pivot_levels()` is a new
+companion detector alongside the volume histogram, not a pre-existing "SRchannel" feature being wired up.
+- **Volume levels**: bins the lookback window's (default `VP_LOOKBACK_DAYS`=60 trading days) full
+  low–high price range into `VP_NUM_BINS` (default 24) equal-width bins, and distributes each day's
+  volume across the bins its `[low, high]` range overlaps, proportional to overlap width (the
+  standard no-tick-data volume-profile approximation). Index-adjacent high-volume bins are greedily
+  merged into one level so a single peak straddling a bin boundary isn't reported twice. **POC**
+  (point of control) = the single raw bin with the most volume; **top N levels** (`VP_TOP_N`, default
+  5) = the merged levels ranked by total volume. Each level is classified `support` (price ≤ current
+  close) or `resistance` (price > current close).
+- **Pivot levels** (`pivot_levels()`): reuses the same N-day swing-high/low pivot window technique as
+  `vcp_detector.py` (`VP_PIVOT_WINDOW`, default 5, over a longer `VP_PIVOT_LOOKBACK_DAYS`=120 window),
+  but clusters ALL swing points (highs and lows alike) into price bands by proximity
+  (`VP_PIVOT_CLUSTER_PCT`, default 1.5%; the classic "S/R channel" technique) rather than chaining
+  pullback legs. A cluster needs ≥`VP_PIVOT_MIN_TOUCHES` (default 2) swing-point touches to count;
+  strength = touch count. Classified support/resistance the same way as volume levels.
+- **Cross-reference**: a volume level and a pivot level within `VP_CONFIRM_TOLERANCE_PCT` (default
+  1.5%) of each other are the same real-world level seen two ways — the volume level is flagged
+  `confirmed_by_pivot=True`, `confidence="high"`, and included in `confirmed_levels` (the endpoint's
+  highest-confidence support/resistance output). Unconfirmed levels stay `confidence="volume_only"`.
+- `analyze(ticker, rows, config=None)` is the single entry point; `config` overrides merge onto
+  `DEFAULT_CONFIG`. All thresholds above are tuneable at the top of `volume_profile.py`.
 
 ## Insider tab
 - Backed by `insider_signals`, populated by running `Insider Trading/insider_pipeline/main.py` as a subprocess via `POST /api/insider/scan {tickers, from_date, to_date}`.
