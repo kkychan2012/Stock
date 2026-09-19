@@ -84,6 +84,22 @@
     .tab-pane { display: none; }
     .tab-pane.active { display: block; }
 
+    /* ── Surge Strategy tab ── */
+    .surge-title { font-size: 13px; font-weight: 700; margin: 18px 0 6px; }
+    .surge-sub   { font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 8px; }
+    tr.surge-hot td { background: rgba(217,119,6,.13); }
+    tr.surge-buy td { background: rgba(22,163,74,.10); }
+    tr.surge-sell td { background: rgba(220,38,38,.14); }
+    .pill.amber { background: rgba(217,119,6,.16); color: #d97706; }
+    .surge-alert { display: flex; gap: 10px; align-items: baseline; padding: 8px 12px; margin-bottom: 6px;
+                   border-radius: 8px; font-size: 12.5px; border: 1px solid var(--border); }
+    .surge-alert.sell   { background: rgba(220,38,38,.12); border-color: rgba(220,38,38,.45); }
+    .surge-alert.warn   { background: rgba(217,119,6,.12); border-color: rgba(217,119,6,.45); }
+    .surge-alert.target,
+    .surge-alert.buy    { background: rgba(22,163,74,.10); border-color: rgba(22,163,74,.40); }
+    .surge-alert b { min-width: 58px; }
+    .surge-small { font-size: 10.5px; color: var(--muted); line-height: 1.35; max-width: 260px; }
+
     /* ── Summary cards ── */
     .summary-row { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
     .card {
@@ -99,14 +115,21 @@
     .table-wrap {
       background: var(--surface); border: 1px solid var(--border);
       border-radius: 8px; overflow: auto;
+      max-height: calc(100vh - var(--header-h) - var(--tabs-h) - 56px);
+      scrollbar-width: thin;
     }
+    .table-wrap::-webkit-scrollbar { width: 10px; height: 10px; }
+    .table-wrap::-webkit-scrollbar-track { background: var(--neutral); }
+    .table-wrap::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
+    .table-wrap::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
     table { width: 100%; border-collapse: collapse; white-space: nowrap; }
+    /* Frozen header row (like Excel "Freeze Top Row") */
     thead th {
       background: var(--neutral); padding: 9px 12px; text-align: right;
       font-size: 11px; font-weight: 600; color: var(--muted);
       text-transform: uppercase; letter-spacing: .5px;
       border-bottom: 1px solid var(--border);
-      position: sticky; top: 0; user-select: none;
+      position: sticky; top: 0; z-index: 5; user-select: none;
     }
     thead th.left { text-align: left; }
     tbody td {
@@ -116,6 +139,17 @@
     tbody td.left { text-align: left; }
     tbody tr:last-child td { border-bottom: none; }
     tbody tr:hover { background: var(--neutral); }
+    /* Frozen first column (like Excel "Freeze First Column") — keeps the
+       identifying column, e.g. Ticker, visible while scrolling right */
+    thead th:first-child {
+      position: sticky; left: 0; z-index: 6;
+    }
+    tbody td:first-child {
+      position: sticky; left: 0; z-index: 1;
+      background: var(--surface);
+      box-shadow: 1px 0 0 var(--border);
+    }
+    tbody tr:hover td:first-child { background: var(--neutral); }
     .ticker-cell { font-weight: 700; color: var(--accent); font-size: 13px; }
     .name-cell { color: var(--muted); max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
     .green { color: var(--green); }
@@ -177,13 +211,19 @@
     th.sort-asc::after  { content: ' ▲'; font-size: 10px; }
     th.sort-desc::after { content: ' ▼'; font-size: 10px; }
 
-    /* ── Minervini Trend Template badge ── */
-    .tt-badge { display:inline-block;padding:2px 8px;border-radius:10px;
-                font-size:11px;font-weight:700;cursor:default;white-space:nowrap;
-                letter-spacing:.3px; }
-    .tt-green { background:#dcfce7;color:#15803d; }
-    .tt-amber { background:#fef3c7;color:#92400e; }
-    .tt-grey  { background:#f1f5f9;color:#64748b; }
+    /* ── Minervini Trend Template compact widget (pill + C1-C8 mini-grid) ── */
+    .tt-widget { display:inline-flex; flex-direction:column; align-items:center;
+                 gap:3px; width:90px; }
+    .tt-pill { display:inline-block; padding:2px 8px; border-radius:10px;
+               font-size:11px; font-weight:700; white-space:nowrap;
+               background:#e5e7eb; color:#4b5563; }
+    .tt-pill.tt-full { background:#c8f0c8; color:#1a7a1a; }
+    .tt-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:2px; width:100%; }
+    .tt-c { display:block; text-align:center; border-radius:4px;
+            font-size:10px; font-weight:700; padding:2px 4px; cursor:default; }
+    .tt-c.pass { background:#c8f0c8; color:#1a7a1a; }
+    .tt-c.fail { background:#f8d0d0; color:#c0392b; }
+    .tt-c.na   { background:#f1f5f9; color:#94a3b8; }
     /* Trend Template checkbox panel */
     .tt-panel { margin-bottom:12px;padding:10px 14px;background:var(--surface);
                 border:1px solid var(--border);border-radius:8px; }
@@ -269,6 +309,8 @@
     .pat-pull   { background: #faf5ff; } .pat-pull:hover   { background: #f3e8ff; }
     .pat-mom    { background: #ecfeff; } .pat-mom:hover    { background: #cffafe; }
     .pat-m108   { background: #fff1f2; } .pat-m108:hover   { background: #ffe4e6; }
+    .pat-squeeze{ background: #f0fdfa; } .pat-squeeze:hover{ background: #ccfbf1; }
+    .pat-vcp    { background: #eef2ff; } .pat-vcp:hover    { background: #e0e7ff; }
 
     /* ── Insider signals row colours ── */
     .ins-nordic { background: #f0fdf4; } .ins-nordic:hover { background: #dcfce7; }
@@ -279,6 +321,14 @@
 
     /* ── Signals tab row colours ── */
     .sig-gt-ma200  { background: #f0fdf4; } .sig-gt-ma200:hover  { background: #dcfce7; }
+    .sig-gt-ma100  { background: #faf5ff; } .sig-gt-ma100:hover  { background: #f3e8ff; }
+    .sig-gt-2xlow  { background: #fffbeb; } .sig-gt-2xlow:hover  { background: #fef3c7; }
+    .sig-rsi       { background: #f0f9ff; } .sig-rsi:hover       { background: #e0f2fe; }
+
+    /* "Has Congress trading activity" badge — shown next to a ticker on the
+       Signals / Pattern Scanner / Monitor tabs; click opens the detail popup. */
+    .congress-badge { cursor: pointer; margin-left: 4px; font-size: 12px; opacity: .85; }
+    .congress-badge:hover { opacity: 1; }
     .sig-gt-ma1030 { background: #eff6ff; } .sig-gt-ma1030:hover { background: #dbeafe; }
     .sig-lt-ma200  { background: #fff1f2; } .sig-lt-ma200:hover  { background: #ffe4e6; }
     .sig-lt-ma1030 { background: #fff7ed; } .sig-lt-ma1030:hover { background: #ffedd5; }
@@ -295,6 +345,8 @@
     .ppill-pull   { background:#e9d5ff; color:#6b21a8; }
     .ppill-mom    { background:#a5f3fc; color:#155e75; }
     .ppill-m108   { background:#fecdd3; color:#9f1239; }
+    .ppill-squeeze{ background:#99f6e4; color:#115e59; }
+    .ppill-vcp    { background:#c7d2fe; color:#3730a3; }
   </style>
 </head>
 <body>
@@ -320,15 +372,16 @@
 <nav class="tabs">
   <button class="tab-btn active" onclick="showTab('holdings')">Holdings</button>
   <button class="tab-btn"        onclick="showTab('signals')">Signals</button>
-  <button class="tab-btn"        onclick="showTab('rsi')">RSI Signals</button>
   <button class="tab-btn"        onclick="showTab('sold')">Sold</button>
   <button class="tab-btn"        onclick="showTab('monitor')">Monitor</button>
   <button class="tab-btn"        onclick="showTab('patterns')">Pattern Scanner</button>
   <button class="tab-btn"        onclick="showTab('tickers')">Ticker List</button>
   <button class="tab-btn"        onclick="showTab('backtester')">Backtester</button>
   <button class="tab-btn"        onclick="showTab('insider')">Insider</button>
+  <button class="tab-btn"        onclick="showTab('congress')">Congress</button>
   <button class="tab-btn"        onclick="showTab('market')">Market</button>
   <button class="tab-btn"        onclick="showTab('dataview')">Data</button>
+  <button class="tab-btn"        onclick="showTab('surge')">Surge Strategy<span id="surge-badge" style="margin-left:5px;color:var(--green);font-weight:700"></span></button>
 </nav>
 
 <!-- ════════════ MAIN ════════════ -->
@@ -370,29 +423,58 @@
     <div class="controls">
       <div class="seg-group">
         <button class="seg-btn active" id="btn-ma200"      onclick="setSignalType('ma200')">Price &gt; MA200</button>
+        <button class="seg-btn"        id="btn-ma100"      onclick="setSignalType('ma100')">Price &gt; MA100</button>
+        <button class="seg-btn"        id="btn-2xlow"      onclick="setSignalType('2xlow')">Price &ge; 2x Low</button>
         <button class="seg-btn"        id="btn-ma1030"     onclick="setSignalType('ma1030')">MA10 &gt; MA30</button>
         <button class="seg-btn"        id="btn-ma200bear"  onclick="setSignalType('ma200bear')" style="color:#dc2626">Price &lt; MA200</button>
         <button class="seg-btn"        id="btn-ma1030bear" onclick="setSignalType('ma1030bear')" style="color:#dc2626">MA10 &lt; MA30</button>
+        <button class="seg-btn"        id="btn-rsi"        onclick="setSignalType('rsi')">RSI</button>
         <button class="seg-btn"        id="btn-sigall"     onclick="setSignalType('sigall')">All</button>
       </div>
-      <label class="ctrl-label">From:
+      <label class="ctrl-label" id="sig-daterange-wrap">From:
         <input type="text" id="sig-from" placeholder="YYYY-MM-DD" maxlength="10"
                onchange="loadSignals()"
                style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;
                       font-size:12px;background:var(--surface);color:var(--text);width:110px;
                       font-family:monospace">
       </label>
-      <label class="ctrl-label">To:
+      <label class="ctrl-label" id="sig-dateto-wrap">To:
         <input type="text" id="sig-to" placeholder="YYYY-MM-DD" maxlength="10"
                onchange="loadSignals()"
                style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;
                       font-size:12px;background:var(--surface);color:var(--text);width:110px;
                       font-family:monospace">
       </label>
-      <label class="ctrl-label">
+      <label class="ctrl-label" id="sig-latest-wrap">
         <input type="checkbox" id="sig-latest" onchange="loadSignals()"> Latest per ticker only
       </label>
-      <label class="ctrl-label" style="margin-left:4px">
+      <label class="ctrl-label" id="sig-mult-wrap" style="display:none">
+        Multiplier &ge;
+        <input id="sig-multiplier" type="number" min="1.01" max="1000" step="0.1" value="2"
+               style="width:60px;padding:4px 6px;border:1px solid var(--border);
+                      border-radius:6px;font-size:12px;text-align:center"
+               onchange="loadSignals()">
+        <span title="Flags the day a ticker's close first reaches this multiple of its lowest price ever recorded in the DB">x low</span>
+      </label>
+      <label class="ctrl-label" id="sig-2x-first-wrap" style="display:none">
+        <input type="checkbox" id="sig-2x-first" checked onchange="_updateSig2xFirstMode();loadSignals()">
+        <span title="One row per ticker — the very first date it happened, searched across your whole tracked Ticker List AND the full S&#160;&amp;&#160;P&#160;500 + Russell&#160;1000 universe. Ignores the date range / Latest-only / Fresh-breakout controls.">First time only, full universe</span>
+      </label>
+      <label class="ctrl-label" id="sig-touch-ma-wrap" style="display:none">
+        <input type="checkbox" id="sig-touch-ma" onchange="loadSignals()">
+        <span title="Instead of Price > MA200 or Price < MA200, flags any day the MA200 line sat somewhere inside that day's Low–High range — i.e. price crossed or tested MA200 that day, regardless of which side it closed on.">MA200 within Day Low–High</span>
+      </label>
+      <label class="ctrl-label" id="sig-rsi-zone-wrap" style="display:none">Zone:
+        <select id="sig-rsi-zone" onchange="loadSignals()"
+                style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;
+                       font-size:12px;background:var(--surface);color:var(--text)">
+          <option value="">All</option>
+          <option value="oversold">Oversold (&lt;30)</option>
+          <option value="overbought">Overbought (&gt;70)</option>
+          <option value="neutral">Neutral (30–70)</option>
+        </select>
+      </label>
+      <label class="ctrl-label" id="sig-lookback-wrap" style="margin-left:4px">
         Fresh breakout — not triggered in prev
         <input id="sig-lookback" type="number" min="0" max="365" value="0"
                style="width:52px;padding:4px 6px;border:1px solid var(--border);
@@ -413,76 +495,89 @@
                     background:var(--surface);color:var(--text)">
       <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px"
               onclick="document.getElementById('sig-ticker-filter').value='';applySignalTickerFilter()">Clear</button>
+      <label class="ctrl-label" style="white-space:nowrap;margin-left:6px">Monitor list:</label>
+      <select id="sig-monitor-filter" onchange="onSigMonitorListChange()"
+              style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;
+                     font-size:12px;background:var(--surface);color:var(--text);max-width:180px">
+        <option value="">— All stocks —</option>
+        <option value="any">— Any Monitor list —</option>
+      </select>
       <span id="sig-filter-count" style="font-size:11px;color:var(--muted)"></span>
+      <span id="sig-truncate-warn" style="display:none;font-size:11px;color:var(--red);font-weight:600"></span>
     </div>
+    <!-- RS range + vs 52wk High % range filters -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+      <label class="ctrl-label" style="white-space:nowrap">RS Rank:
+        <input id="sig-rs-min" type="number" min="1" max="99" placeholder="min"
+               oninput="applySignalTickerFilter()"
+               style="width:52px;padding:4px 6px;border:1px solid var(--border);
+                      border-radius:6px;font-size:12px;text-align:center;margin-left:4px">
+        <span style="color:var(--muted)">–</span>
+        <input id="sig-rs-max" type="number" min="1" max="99" placeholder="max"
+               oninput="applySignalTickerFilter()"
+               style="width:52px;padding:4px 6px;border:1px solid var(--border);
+                      border-radius:6px;font-size:12px;text-align:center">
+      </label>
+      <label class="ctrl-label" style="white-space:nowrap;margin-left:6px">vs 52wk High %:
+        <input id="sig-pcthigh-min" type="number" step="0.1" placeholder="min"
+               oninput="applySignalTickerFilter()"
+               style="width:58px;padding:4px 6px;border:1px solid var(--border);
+                      border-radius:6px;font-size:12px;text-align:center;margin-left:4px">
+        <span style="color:var(--muted)">–</span>
+        <input id="sig-pcthigh-max" type="number" step="0.1" placeholder="max"
+               oninput="applySignalTickerFilter()"
+               style="width:58px;padding:4px 6px;border:1px solid var(--border);
+                      border-radius:6px;font-size:12px;text-align:center">
+      </label>
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px"
+              onclick="document.getElementById('sig-rs-min').value='';document.getElementById('sig-rs-max').value='';
+                       document.getElementById('sig-pcthigh-min').value='';document.getElementById('sig-pcthigh-max').value='';
+                       applySignalTickerFilter()">Clear</button>
+    </div>
+
+    <!-- Trend Template filter panel -->
+    <div class="tt-panel" id="sig-tt-panel">
+      <div class="tt-panel-head">
+        <span class="tt-panel-title">&#9672; Minervini Trend Template filter</span>
+        <button class="btn btn-ghost" style="padding:2px 10px;font-size:11px" onclick="_ttSelectAll('sig')">All 8</button>
+        <button class="btn btn-ghost" style="padding:2px 10px;font-size:11px" onclick="_ttClearAll('sig')">Clear</button>
+        <span id="sig-tt-count" style="font-size:11px;color:var(--muted)"></span>
+      </div>
+      <div class="tt-checks">
+        <label><input type="checkbox" id="sig-tt-c1" onchange="_ttChanged('sig')"> C1 · Price &gt; MA150 &amp; MA200</label>
+        <label><input type="checkbox" id="sig-tt-c2" onchange="_ttChanged('sig')"> C2 · MA150 &gt; MA200</label>
+        <label><input type="checkbox" id="sig-tt-c3" onchange="_ttChanged('sig')"> C3 · MA200 trending up (1mo+)</label>
+        <label><input type="checkbox" id="sig-tt-c4" onchange="_ttChanged('sig')"> C4 · MA50 &gt; MA150 &amp; MA200</label>
+        <label><input type="checkbox" id="sig-tt-c5" onchange="_ttChanged('sig')"> C5 · ≥25% above 52wk Low</label>
+        <label><input type="checkbox" id="sig-tt-c6" onchange="_ttChanged('sig')"> C6 · Within 25% of 52wk High</label>
+        <label><input type="checkbox" id="sig-tt-c7" onchange="_ttChanged('sig')"> C7 · RS Rank ≥ 70</label>
+        <label><input type="checkbox" id="sig-tt-c8" onchange="_ttChanged('sig')"> C8 · Price &gt; MA50</label>
+      </div>
+    </div>
+
     <div class="table-wrap">
       <table>
         <thead><tr>
           <th class="left">Ticker</th><th class="sig-type-col" style="display:none">Signal</th>
+          <th class="sig-tracked-col" style="display:none" title="Whether this ticker is on your tracked Ticker List, or found only in the full S&P500+Russell1000 universe">Tracked</th>
           <th>Signal Date</th><th>Signal Close</th>
+          <th title="The day's actual intraday low price (not a rolling/all-time low), as of Signal Date">Day Low</th>
+          <th title="The day's actual intraday high price, as of Signal Date">Day High</th>
+          <th title="14-day RSI, as of Signal Date">RSI</th>
           <th>Current Price</th><th>vs Signal %</th><th>MA10</th><th>MA30</th>
-          <th>MA50</th><th>MA200</th><th>High 30D</th><th>Low 30D</th><th>Monitor</th><th>Backtest</th>
+          <th>MA50</th><th>MA100</th><th>MA200</th><th>High 30D</th><th>Low 30D</th>
+          <th title="As of Signal Date">MA150</th><th title="52-week Low, as of Signal Date">52wk Low</th><th title="52-week High, as of Signal Date">52wk High</th>
+          <th title="% difference between Current Price and 52-week High">vs 52wk High %</th>
+          <th title="Lowest daily Low ever recorded in the DB for this ticker, as of Signal Date">Low (DB)</th>
+          <th title="The date that Low (DB) price was actually hit">Low Date</th>
+          <th title="Signal Close ÷ Low (DB) — how many times the all-time low the price was on Signal Date">x Low</th>
+          <th title="RS Rank (1–99), as of Signal Date">RS</th>
+          <th title="Minervini Trend Template score, as of Signal Date (not today)">Trend</th>
+          <th title="Today's price direction">Direction</th>
+          <th>Monitor</th><th>Backtest</th>
         </tr></thead>
         <tbody id="signals-body">
-          <tr><td colspan="14" class="state-msg">Choose a signal type above.</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- ── RSI SIGNALS ── -->
-  <div id="tab-rsi" class="tab-pane">
-    <div class="controls">
-      <label class="ctrl-label">Zone:
-        <select id="rsi-zone" onchange="loadRsiSignals()"
-                style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;
-                       font-size:12px;background:var(--surface);color:var(--text)">
-          <option value="">All</option>
-          <option value="oversold">Oversold (&lt;30)</option>
-          <option value="overbought">Overbought (&gt;70)</option>
-          <option value="neutral">Neutral (30–70)</option>
-        </select>
-      </label>
-      <label class="ctrl-label">From:
-        <input type="text" id="rsi-from" placeholder="YYYY-MM-DD" maxlength="10"
-               onchange="loadRsiSignals()"
-               style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;
-                      font-size:12px;background:var(--surface);color:var(--text);width:110px;
-                      font-family:monospace">
-      </label>
-      <label class="ctrl-label">To:
-        <input type="text" id="rsi-to" placeholder="YYYY-MM-DD" maxlength="10"
-               onchange="loadRsiSignals()"
-               style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;
-                      font-size:12px;background:var(--surface);color:var(--text);width:110px;
-                      font-family:monospace">
-      </label>
-      <label class="ctrl-label">
-        <input type="checkbox" id="rsi-latest" onchange="loadRsiSignals()"> Latest per ticker only
-      </label>
-    </div>
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
-      <label class="ctrl-label" style="white-space:nowrap">Filter tickers:</label>
-      <input id="rsi-ticker-filter" type="text" placeholder="e.g. AAPL MSFT  (space or comma separated)"
-             oninput="applyRsiTickerFilter()"
-             style="flex:1;min-width:200px;max-width:500px;padding:5px 10px;
-                    border:1px solid var(--border);border-radius:6px;font-size:12px;
-                    background:var(--surface);color:var(--text)">
-      <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px"
-              onclick="document.getElementById('rsi-ticker-filter').value='';applyRsiTickerFilter()">Clear</button>
-      <span id="rsi-filter-count" style="font-size:11px;color:var(--muted)"></span>
-    </div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr>
-          <th class="left">Ticker</th>
-          <th>Date</th><th>RSI</th><th>Close</th>
-          <th>Current Price</th><th>vs Signal %</th>
-          <th>MA10</th><th>MA30</th><th>MA200</th>
-          <th>Direction</th><th>Monitor</th><th>Backtest</th>
-        </tr></thead>
-        <tbody id="rsi-signals-body">
-          <tr><td colspan="12" class="state-msg">Select a date range above to load RSI data.</td></tr>
+          <tr><td colspan="29" class="state-msg">Choose a signal type above.</td></tr>
         </tbody>
       </table>
     </div>
@@ -547,10 +642,10 @@
           <th>Signal Date</th><th>Signal Price</th><th>Since Signal</th>
           <th>Current Price</th><th>Day %</th>
           <th>MA10</th><th>MA30</th><th>MA50</th><th>MA200</th><th>RSI</th>
-          <th>High 30D</th><th>Low 30D</th><th>Added Date</th><th>Backtest</th><th>Action</th>
+          <th>High 30D</th><th>Low 30D</th><th>52wk High</th><th>52wk Low</th><th>Added Date</th><th>Backtest</th><th>Action</th>
         </tr></thead>
         <tbody id="monitor-body">
-          <tr><td colspan="19" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
+          <tr><td colspan="21" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
         </tbody>
       </table>
     </div>
@@ -567,6 +662,19 @@
     <div style="margin-top:10px;display:flex;justify-content:flex-end">
       <button class="btn btn-ghost" style="font-size:12px" onclick="closeWlPicker()">Cancel</button>
     </div>
+  </div>
+
+  <!-- Pattern detection detail popup (Quick Multi-Pattern Filter badges) -->
+  <div id="pat-hits-overlay" style="display:none;position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.35)"
+       onclick="closePatHits()"></div>
+  <div id="pat-hits-panel" style="display:none;position:fixed;z-index:3001;background:var(--surface);
+       border:1px solid var(--border);border-radius:10px;padding:14px 16px;width:320px;max-height:320px;
+       overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.18)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <span id="pat-hits-title" style="font-weight:600;font-size:13px"></span>
+      <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px" onclick="closePatHits()">&#10005;</button>
+    </div>
+    <div id="pat-hits-list"></div>
   </div>
 
   <!-- ── PATTERN SCANNER ── -->
@@ -604,6 +712,24 @@
                         width:120px;font-family:monospace"
                  onblur="normaliseDateInput(this)">
         </span>
+        <span style="width:1px;height:20px;background:var(--border);margin:0 6px"></span>
+        <label class="ctrl-label" style="font-size:11px" title="Volume Surge: today's volume must be at least this many times the 10-day average volume">Vol Surge &times;:</label>
+        <input type="number" id="vol-surge-mult" value="2.0" step="0.1" min="0"
+               style="padding:5px 6px;border:1px solid var(--border);border-radius:6px;
+                      font-size:12px;background:var(--surface);color:var(--text);width:56px">
+        <span style="width:1px;height:20px;background:var(--border);margin:0 6px"></span>
+        <label class="ctrl-label" style="font-size:11px" title="MA Squeeze: max % spread between MA9/21/50/100">Squeeze %:</label>
+        <input type="number" id="squeeze-threshold" value="3.0" step="0.1" min="0"
+               style="padding:5px 6px;border:1px solid var(--border);border-radius:6px;
+                      font-size:12px;background:var(--surface);color:var(--text);width:56px">
+        <label class="ctrl-label" style="font-size:11px;margin-left:4px" title="MA Squeeze: max % distance of close from the MA cluster midpoint">Price %:</label>
+        <input type="number" id="price-threshold" value="2.0" step="0.1" min="0"
+               style="padding:5px 6px;border:1px solid var(--border);border-radius:6px;
+                      font-size:12px;background:var(--surface);color:var(--text);width:56px">
+        <label class="ctrl-label" style="font-size:11px;margin-left:4px" title="MA Squeeze: squeeze must have formed within this many trading days to count as fresh">Max Age (d):</label>
+        <input type="number" id="squeeze-max-age" value="10" step="1" min="1"
+               style="padding:5px 6px;border:1px solid var(--border);border-radius:6px;
+                      font-size:12px;background:var(--surface);color:var(--text);width:50px">
         <button id="scan-btn" class="btn btn-fetch" onclick="startPatternScan()">&#9654; Scan Now</button>
         <span id="scan-spinner" class="spinner" style="display:none"></span>
       </div>
@@ -653,10 +779,25 @@
         <button class="seg-btn"        id="psub-pullback-bounce"      onclick="setPatternsub('pullback-bounce')">Pullback Bounce</button>
         <button class="seg-btn"        id="psub-momentum-expansion"   onclick="setPatternsub('momentum-expansion')">Momentum Expansion</button>
         <button class="seg-btn"        id="psub-momentum-108"         onclick="setPatternsub('momentum-108')">Momentum 10/8</button>
+        <button class="seg-btn"        id="psub-ma-squeeze"           onclick="setPatternsub('ma-squeeze')">MA Squeeze</button>
+        <label style="font-size:11px;margin-left:4px;margin-right:8px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;color:var(--text)"
+               title="Only show squeezes that formed within the last Max Age days and are still tightening (mean spread of last 5d < mean of days 6-20d back)">
+          <input type="checkbox" id="pattern-squeeze-fresh-only" checked onchange="_applyPatternsub()"> Fresh only
+        </label>
+        <button class="seg-btn"        id="psub-vcp"                  onclick="setPatternsub('vcp')">VCP</button>
       </div>
       <input id="pattern-ticker-filter" type="text" placeholder="Filter ticker…"
         oninput="_applyPatternsub()"
         style="margin-left:12px;padding:3px 8px;font-size:12px;width:130px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px">
+      <label style="font-size:11px;margin-left:10px;white-space:nowrap">Monitor list:</label>
+      <select id="pattern-monitor-filter" onchange="onPatMonitorListChange()"
+              style="margin-left:4px;padding:3px 8px;font-size:12px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px;max-width:170px">
+        <option value="">— All stocks —</option>
+        <option value="any">— Any Monitor list —</option>
+      </select>
+      <label style="font-size:11px;margin-left:10px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;color:var(--text)">
+        <input type="checkbox" id="pattern-vcp-only" onchange="_applyPatternsub()"> VCP only
+      </label>
       <span id="pattern-count" style="font-size:11px;color:var(--muted);margin-left:10px"></span>
     </div>
 
@@ -680,23 +821,63 @@
       </div>
     </div>
 
+    <!-- Quick Multi-Pattern Filter: find tickers that fired ALL checked patterns
+         (optionally + a price rise) at any point within the "View range" dates above -->
+    <div class="tt-panel" id="pat-multi-panel">
+      <div class="tt-panel-head">
+        <span class="tt-panel-title">&#9889; Quick Multi-Pattern Filter</span>
+        <button class="btn btn-fetch" style="padding:2px 12px;font-size:11px" onclick="runQuickPatternFilter()">&#9654; Quick Filter</button>
+        <button class="btn btn-ghost" style="padding:2px 10px;font-size:11px" onclick="_clearMultiPatternFilter()">Clear</button>
+        <span id="pat-multi-count" style="font-size:11px;color:var(--muted)"></span>
+      </div>
+      <div class="tt-checks" style="align-items:center;flex-wrap:wrap">
+        <label><input type="checkbox" id="pmf-cup-handle"        onchange="_applyPatternsub()"> Cup &amp; Handle</label>
+        <label><input type="checkbox" id="pmf-golden-cross"      onchange="_applyPatternsub()"> Golden Cross</label>
+        <label><input type="checkbox" id="pmf-ma200-breakout"    onchange="_applyPatternsub()"> MA200 Breakout</label>
+        <label><input type="checkbox" id="pmf-volume-surge"      onchange="_applyPatternsub()"> Volume Surge</label>
+        <label><input type="checkbox" id="pmf-pullback-bounce"   onchange="_applyPatternsub()"> Pullback Bounce</label>
+        <label><input type="checkbox" id="pmf-momentum-expansion" onchange="_applyPatternsub()"> Momentum Expansion</label>
+        <label><input type="checkbox" id="pmf-momentum-108"      onchange="_applyPatternsub()"> Momentum 10/8</label>
+        <label><input type="checkbox" id="pmf-ma-squeeze"        onchange="_applyPatternsub()"> MA Squeeze</label>
+        <label><input type="checkbox" id="pmf-vcp"               onchange="_applyPatternsub()"> VCP</label>
+        <label style="display:inline-flex;align-items:center;gap:4px">
+          <input type="checkbox" id="pmf-price-rise" onchange="_applyPatternsub()"> Price Rise &ge;
+          <input type="number" id="pmf-price-rise-pct" value="0" step="0.5"
+                 style="width:52px;padding:2px 4px;border:1px solid var(--border);border-radius:4px;
+                        background:var(--surface);color:var(--text)" onchange="_applyPatternsub()">%
+        </label>
+        <span style="font-size:11px;color:var(--muted);flex-basis:100%;margin-top:2px">
+          Checked boxes must ALL be true for a ticker, using whichever dates are checked in
+          "View range" (From/To) above. "Quick Filter" loads that range and applies it in one
+          click; toggling boxes afterward re-filters instantly without re-fetching. Price Rise
+          compares the ticker's close on its earliest vs. latest matched signal in the range.
+        </span>
+      </div>
+    </div>
+
     <!-- Results table -->
     <div class="table-wrap" id="patterns-table-wrap">
       <table>
-        <thead><tr>
+        <thead><tr id="patterns-head">
           <th class="left">Ticker</th>
           <th class="scan-date-col">Scan Date</th>
           <th class="left">Pattern</th>
           <th class="left">Signal Detail</th>
           <th>Date</th>
           <th>Close</th><th>Win. Start</th><th>Win. Gain%</th><th>Day&nbsp;%</th>
-          <th>MA10</th><th>MA30</th><th>MA50</th><th>MA200</th>
-          <th>MA150</th><th title="52-week Low">52wk Low</th><th title="52-week High">52wk High</th><th title="RS Rank (1–99)">RS</th>
-          <th>Trend</th>
+          <th title="Simple MA, 9-day">MA9</th><th title="Simple MA, 21-day">MA21</th><th>MA30</th><th>MA50</th><th title="Simple MA, 100-day">MA100</th><th>MA200</th>
+          <th title="As of Scan Date">MA150</th><th title="52-week Low, as of Scan Date">52wk Low</th><th title="52-week High, as of Scan Date">52wk High</th><th title="RS Rank (1–99), as of Scan Date">RS</th>
+          <th title="Minervini Trend Template score, as of Scan Date (not today)">Trend</th>
+          <th class="sortable" data-col="vcp_detected" onclick="_patSort(this)"
+              title="Volatility Contraction Pattern — contracting pullbacks + volume dry-up near a pivot">VCP</th>
+          <th title="High of the final contraction/consolidation range">Pivot</th>
+          <th title="Suggested stop-loss = pivot − 7%">Stop</th>
+          <th class="sortable" data-col="current_price_vs_pivot" onclick="_patSort(this)"
+              title="% distance of Close from Pivot — closest to breakout sorts to the top">vs&nbsp;Pivot</th>
           <th>Monitor</th><th>Backtest</th>
         </tr></thead>
         <tbody id="patterns-body">
-          <tr><td colspan="20" class="state-msg">Select a date and click &#9654; Scan Now to find patterns.</td></tr>
+          <tr><td colspan="26" class="state-msg">Select a date and click &#9654; Scan Now to find patterns.</td></tr>
         </tbody>
       </table>
     </div>
@@ -998,6 +1179,126 @@
                 background:var(--bg2);border:1px solid var(--border)"></div>
   </div>
 
+  <!-- ── CONGRESS / POLITICAL TRADING ── -->
+  <div id="tab-congress" class="tab-pane">
+    <div class="toolbar">
+      <input id="congress-from" type="text" class="ticker-add-input" maxlength="10"
+             placeholder="YYYY-MM-DD" style="font-size:12px;font-family:monospace;width:110px"
+             onblur="normaliseDateInput(this)">
+      <input id="congress-to"   type="text" class="ticker-add-input" maxlength="10"
+             placeholder="YYYY-MM-DD" style="font-size:12px;font-family:monospace;width:110px"
+             onblur="normaliseDateInput(this)">
+      <input id="congress-ticker" class="ticker-add-input"
+             style="width:100px;font-size:12px;text-transform:uppercase"
+             placeholder="Ticker filter" oninput="this.value=this.value.toUpperCase()">
+      <input id="congress-politician" class="ticker-add-input"
+             style="width:140px;font-size:12px"
+             placeholder="Politician filter…" title="Type a name (e.g. Donald) and press Enter"
+             onkeydown="if(event.key==='Enter')fetchCongress()">
+      <select id="congress-chamber" class="ticker-add-input" style="width:100px;font-size:12px">
+        <option value="">All chambers</option>
+        <option value="House">House</option>
+        <option value="Senate">Senate</option>
+        <option value="Executive">Executive</option>
+      </select>
+      <select id="congress-party" class="ticker-add-input" style="width:90px;font-size:12px">
+        <option value="">All parties</option>
+        <option value="D">Democrat</option>
+        <option value="R">Republican</option>
+        <option value="I">Independent</option>
+      </select>
+      <select id="congress-type" class="ticker-add-input" style="width:100px;font-size:12px">
+        <option value="">All types</option>
+        <option value="BUY">Buy</option>
+        <option value="SELL">Sell</option>
+        <option value="EXCHANGE">Exchange</option>
+      </select>
+      <button class="btn btn-primary" onclick="fetchCongress()">Load</button>
+      <span style="width:1px;background:var(--border);height:22px;margin:0 4px"></span>
+      <button id="congress-fetch-btn" class="btn btn-fetch" onclick="runCongressFetch()">&#8635; Fetch Data</button>
+      <span id="congress-fetch-status" class="fetch-status-line" style="margin-left:8px"></span>
+    </div>
+
+    <!-- Monthly summary — top bought/sold tickers -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;
+                padding:14px 16px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <strong style="font-size:13px">Monthly Summary — Top Buys / Sells</strong>
+        <input id="congress-sum-month-from" type="month" class="ticker-add-input" style="width:130px;font-size:12px">
+        <span style="color:var(--muted);font-size:12px">to</span>
+        <input id="congress-sum-month-to" type="month" class="ticker-add-input" style="width:130px;font-size:12px"
+               title="Optional — leave blank for a single month">
+        <select id="congress-sum-chamber" class="ticker-add-input" style="width:100px;font-size:12px">
+          <option value="">All chambers</option>
+          <option value="House">House</option>
+          <option value="Senate">Senate</option>
+          <option value="Executive">Executive</option>
+        </select>
+        <select id="congress-sum-party" class="ticker-add-input" style="width:90px;font-size:12px">
+          <option value="">All parties</option>
+          <option value="D">Democrat</option>
+          <option value="R">Republican</option>
+          <option value="I">Independent</option>
+        </select>
+        <button class="btn btn-primary" onclick="loadCongressSummary()">Show Summary</button>
+        <span id="congress-sum-status" style="font-size:11px;color:var(--muted)"></span>
+      </div>
+      <div class="summary-row" id="congress-sum-cards"></div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px">
+        <div style="flex:1;min-width:260px">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px;color:var(--green)">Top Buys</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th class="left">Ticker</th><th>Trades</th><th>Politicians</th></tr></thead>
+              <tbody id="congress-sum-buys-body">
+                <tr><td colspan="3" class="state-msg">Pick a month and click Show Summary.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div style="flex:1;min-width:260px">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px;color:var(--red)">Top Sells</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th class="left">Ticker</th><th>Trades</th><th>Politicians</th></tr></thead>
+              <tbody id="congress-sum-sells-body">
+                <tr><td colspan="3" class="state-msg">Pick a month and click Show Summary.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Tx Date</th>
+          <th>Filed</th>
+          <th class="left">Ticker</th>
+          <th class="left">Company</th>
+          <th class="left">Politician</th>
+          <th>Chamber</th>
+          <th>Party</th>
+          <th class="left">State/District</th>
+          <th>Type</th>
+          <th class="left">Amount Range</th>
+          <th class="left">Source</th>
+          <th>Cluster</th>
+          <th class="left">Filing</th>
+          <th></th>
+        </tr></thead>
+        <tbody id="congress-body">
+          <tr><td colspan="14" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="congress-fetch-log"
+         style="display:none;margin-top:6px;padding:6px 10px;border-radius:4px;
+                font-size:11px;font-family:monospace;color:var(--muted);
+                background:var(--bg2);border:1px solid var(--border)"></div>
+  </div>
+
   <!-- ── MARKET HEALTH (Distribution Day / FTD) ── -->
   <div id="tab-market" class="tab-pane">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
@@ -1188,6 +1489,11 @@
         <option value="2y" selected>2 years (default)</option>
       </select>
 
+      <label class="ctrl-label" style="display:block;margin-bottom:18px">
+        <input type="checkbox" id="fetch-skip-universe">
+        Skip universe refresh (faster — Ticker List only, RS Ratings/Data tab universe rows stay at their last-fetched values)
+      </label>
+
       <div class="fetch-status-line" id="fetch-status-line"></div>
       <div class="progress-wrap" id="fetch-progress-wrap" style="display:none">
         <div class="progress-bar" id="fetch-progress-bar"></div>
@@ -1205,10 +1511,37 @@
 
   <!-- ── DATA BROWSER ── -->
   <div id="tab-dataview" class="tab-pane">
+    <div id="screener-admin-card" style="background:var(--surface);border:1px solid var(--border);
+                border-radius:8px;padding:12px 16px;margin-bottom:14px;
+                display:flex;align-items:center;gap:18px;flex-wrap:wrap;font-size:12px">
+      <span style="font-weight:600">Universe:</span>
+      <span id="scr-meta-active">—</span>
+      <span id="scr-meta-sources" style="color:var(--muted)"></span>
+      <span id="scr-meta-refresh" style="color:var(--muted)"></span>
+      <button class="btn btn-ghost" style="padding:3px 10px;font-size:11px" onclick="refreshUniverseNow(this)">
+        &#8635; Refresh Universe Now
+      </button>
+    </div>
+
     <div class="toolbar" style="flex-wrap:wrap;gap:8px">
+      <label class="ctrl-label">Date:</label>
+      <input type="text" id="dv-date" maxlength="10" placeholder="YYYY-MM-DD"
+             style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;
+                    font-size:12px;background:var(--surface);color:var(--text);
+                    width:120px;font-family:monospace"
+             onblur="normaliseDateInput(this); loadDataView(true)">
       <button class="btn btn-primary" onclick="loadDataView(true)">&#8635; Refresh</button>
       <input id="dv-filter" class="ticker-add-input" placeholder="Filter ticker…"
              style="width:160px" oninput="_dvFilter()">
+      <label class="ctrl-label" style="white-space:nowrap">RS Rating &ge;
+        <input id="dv-min-rs" type="number" min="1" max="99" placeholder="e.g. 70"
+               oninput="_dvFilter()"
+               style="width:60px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;
+                      font-size:12px;background:var(--surface);color:var(--text);margin-left:4px">
+      </label>
+      <label class="ctrl-label" style="white-space:nowrap">
+        <input type="checkbox" id="dv-tracked-only" onchange="_dvFilter()"> Tracked only
+      </label>
       <span id="dv-count" style="font-size:12px;color:var(--muted);align-self:center"></span>
     </div>
 
@@ -1246,17 +1579,22 @@
             <th class="sortable"      data-col="ma50"        onclick="_dvSort(this)">MA50</th>
             <th class="sortable"      data-col="ma150"       onclick="_dvSort(this)">MA150</th>
             <th class="sortable"      data-col="ma200"       onclick="_dvSort(this)">MA200</th>
+            <th class="sortable"      data-col="rsi14"       onclick="_dvSort(this)" title="14-day RSI">RSI</th>
             <th class="sortable"      data-col="low_52wk"    onclick="_dvSort(this)" title="52-week Low">52wk Low</th>
             <th class="sortable"      data-col="high_52wk"   onclick="_dvSort(this)" title="52-week High">52wk High</th>
-            <th class="sortable"      data-col="rs_rank"     onclick="_dvSort(this)" title="RS Rank (1–99 percentile vs all fetched stocks)">RS Rank</th>
+            <th class="sortable"      data-col="rs_rank"     onclick="_dvSort(this)" title="RS Rating: percentile rank (1-99) vs. S&P 500 + Russell 1000 universe">RS Rating</th>
+            <th class="sortable"      data-col="rs_score"    onclick="_dvSort(this)" title="Weighted 3/6/9/12-month performance score">RS Score</th>
+            <th title="RS Line = Close / Benchmark Close, last 20 trading days">RS Line</th>
             <th title="MA10 > MA30">MA10&gt;30</th>
             <th title="Close > MA200">&gt;MA200</th>
             <th class="sortable"      data-col="trend_score" onclick="_dvSort(this)" title="Minervini Trend Template score (0-8). Hover badge for detail.">Trend</th>
+            <th>Monitor</th>
+            <th>Backtest</th>
             <th></th>
           </tr>
         </thead>
         <tbody id="dv-body">
-          <tr><td colspan="17" class="state-msg">Click Refresh to load data.</td></tr>
+          <tr><td colspan="22" class="state-msg">Click Refresh to load data.</td></tr>
         </tbody>
       </table>
     </div>
@@ -1307,6 +1645,146 @@
     </div>
   </div>
 
+  <!-- ════════════ SURGE STRATEGY TAB ════════════ -->
+  <div id="tab-surge" class="tab-pane">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="runSurgeScan()">&#8635; Scan Now</button>
+      <button class="btn btn-primary" onclick="runSurgeLive()" title="Fetch live prices for your positions and armed signals now">&#9889; Live Refresh</button>
+      <button class="btn btn-ghost" onclick="loadSurge()">Reload</button>
+      <button id="surge-notify-btn" class="btn btn-ghost" onclick="enableSurgeNotifications()">&#128276; Enable alerts</button>
+      <span id="surge-status" style="font-size:12px;font-weight:600"></span>
+      <span id="surge-meta" style="font-size:12px;color:var(--muted)"></span>
+    </div>
+    <div id="surge-monitor-line" style="font-size:11.5px;color:var(--muted);margin-bottom:8px"></div>
+    <div id="surge-alerts"></div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+      Volume-surge day &rarr; wait for a <b>red candle</b> (drop day) &rarr; limit-buy at the
+      <b>surge-day close</b> for 5 days &rarr; when the High reaches it you get a <b>Buy Signal</b>
+      (kept 3 trading days) &rarr; click <b>I bought</b> &rarr; watch it here: sell half at
+      <b>+15%</b>, sell the rest when a close is below <b>MA21</b> and the next open is still below it.
+    </div>
+
+    <div class="summary-row" id="surge-cards"></div>
+
+    <div class="surge-title" style="color:var(--green)">&#9679; Buy Signals — limit price was reached
+      <span class="surge-sub">place/confirm the buy, then click &ldquo;I bought&rdquo;</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th class="left">Ticker</th><th class="left">Surge day</th><th>Vol&times;</th>
+        <th>Limit price</th><th class="left">Drop day</th><th class="left">Triggered</th>
+        <th>Expires in</th><th class="left">Action</th>
+      </tr></thead>
+      <tbody id="surge-buy-body"></tbody>
+    </table></div>
+
+    <div class="surge-title" style="color:#d97706">&#9679; Armed — limit order is live
+      <span class="surge-sub">drop day found; waiting for the High to reach the limit price</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th class="left">Ticker</th><th class="left">Surge day</th><th>Vol&times;</th>
+        <th class="left">Drop day</th><th>Limit price</th><th>Window days left</th>
+        <th class="left">Action</th>
+      </tr></thead>
+      <tbody id="surge-armed-body"></tbody>
+    </table></div>
+
+    <div class="surge-title" style="color:var(--muted)">&#9679; Watching — waiting for a red candle
+      <span class="surge-sub">gives up after 10 trading days</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th class="left">Ticker</th><th class="left">Surge day</th><th>Vol&times;</th>
+        <th>Surge close</th><th>Days since surge</th><th class="left">Action</th>
+      </tr></thead>
+      <tbody id="surge-watch-body"></tbody>
+    </table></div>
+
+    <div class="surge-title" style="color:var(--text)">&#9679; My Positions — marked as bought
+      <span class="surge-sub">live price (Yahoo, ~15 min delayed) when the monitor has run, else the stored close</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th class="left">Ticker</th><th class="left">Bought</th><th>Buy price</th><th>Shares</th>
+        <th>+15% target</th><th class="left">Status</th><th>Price</th><th>MA21</th>
+        <th>vs MA21</th><th>P/L %</th><th class="left">Alert</th><th class="left">Action</th>
+      </tr></thead>
+      <tbody id="surge-pos-body"></tbody>
+    </table></div>
+
+    <div class="surge-title" style="color:var(--muted)">&#9679; Closed positions</div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th class="left">Ticker</th><th class="left">Bought</th><th>Buy price</th>
+        <th class="left">Half sold</th><th class="left">Exit</th><th class="left">Reason</th>
+        <th>P/L %</th><th class="left">Action</th>
+      </tr></thead>
+      <tbody id="surge-closed-body"></tbody>
+    </table></div>
+  </div>
+
+  <!-- Congress trading activity popup — opened via the badge next to a ticker
+       on the Signals / Pattern Scanner / Monitor tabs -->
+  <div id="congress-ticker-overlay" style="display:none;position:fixed;inset:0;z-index:2000;
+       background:rgba(0,0,0,.45)" onclick="if(event.target===this)closeCongressPopup()">
+    <div style="background:var(--surface);border-radius:12px;padding:24px;
+                max-width:900px;width:95%;max-height:85vh;overflow-y:auto;
+                margin:5vh auto;position:relative">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <span id="congress-pop-title" style="font-size:16px;font-weight:700"></span>
+        <button class="btn btn-ghost" onclick="closeCongressPopup()">&#x2715; Close</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>Tx Date</th><th>Filed</th><th class="left">Politician</th>
+            <th>Chamber</th><th>Party</th><th>Type</th>
+            <th class="left">Amount Range</th><th class="left">Source</th><th class="left">Filing</th>
+          </tr></thead>
+          <tbody id="congress-pop-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+<!-- ════════════ SURGE STRATEGY MODAL (bought / partial / sell) ════════════ -->
+<div id="surge-modal" class="modal-overlay" onclick="if(event.target===this)closeSurgeModal()">
+  <div class="modal" style="width:420px">
+    <div class="modal-header">
+      <span id="surge-modal-title" class="modal-title">Surge</span>
+      <button class="modal-close" onclick="closeSurgeModal()">&#10005;</button>
+    </div>
+    <div class="modal-body" style="display:grid;grid-template-columns:110px 1fr;gap:8px 12px;align-items:center">
+      <div id="surge-m-info" style="grid-column:1/-1;font-size:12px;color:var(--muted);line-height:1.5"></div>
+      <label style="font-size:12px;color:var(--muted);text-align:right" id="surge-m-date-lbl">Date</label>
+      <input id="surge-m-date" class="ticker-add-input" style="width:100%;font-size:13px;font-family:monospace"
+             placeholder="YYYY-MM-DD" maxlength="10" onblur="normaliseDateInput(this)">
+      <label style="font-size:12px;color:var(--muted);text-align:right" id="surge-m-price-lbl">Price *</label>
+      <input id="surge-m-price" class="ticker-add-input" type="number" step="0.0001" min="0"
+             style="width:100%;font-size:13px" placeholder="0.00">
+      <div id="surge-m-shares-row" style="display:contents">
+        <label style="font-size:12px;color:var(--muted);text-align:right">Shares</label>
+        <input id="surge-m-shares" class="ticker-add-input" type="number" step="any" min="0"
+               style="width:100%;font-size:13px" placeholder="Optional">
+      </div>
+      <div id="surge-m-reason-row" style="display:contents">
+        <label style="font-size:12px;color:var(--muted);text-align:right">Reason</label>
+        <select id="surge-m-reason" class="ticker-add-input" style="width:100%;font-size:13px">
+          <option value="cut_loss_ma21">Cut-loss (MA21 broken)</option>
+          <option value="manual">Manual</option>
+          <option value="target">Target</option>
+        </select>
+      </div>
+      <div id="surge-m-note-row" style="display:contents">
+        <label style="font-size:12px;color:var(--muted);text-align:right">Note</label>
+        <input id="surge-m-note" class="ticker-add-input" style="width:100%;font-size:13px" placeholder="Optional">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="surge-m-save" class="btn btn-fetch" onclick="submitSurgeModal()">Save</button>
+      <button class="btn btn-ghost" onclick="closeSurgeModal()">Cancel</button>
+      <span id="surge-m-error" style="font-size:12px;color:var(--red);flex:1"></span>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
 // ═══════════════════════════════════════
@@ -1352,7 +1830,7 @@ let _pollTimer        = null;
 let _lastLogLen       = 0;
 let _fetchRunning     = false;
 
-const TABS = ['holdings', 'signals', 'rsi', 'sold', 'monitor', 'patterns', 'tickers', 'backtester', 'insider', 'market', 'dataview'];
+const TABS = ['holdings', 'signals', 'sold', 'monitor', 'patterns', 'tickers', 'backtester', 'insider', 'congress', 'market', 'dataview', 'surge'];
 
 // ═══════════════════════════════════════
 //  Formatting
@@ -1368,6 +1846,16 @@ function dayPctCell(v) {
   if (v == null) return '<span class="dim">—</span>';
   const n = Number(v), cls = n >= 0 ? 'green' : 'red', arr = n >= 0 ? '▲' : '▼';
   return `<span class="${cls}">${arr} ${Math.abs(n).toFixed(2)}%</span>`;
+}
+// % difference between current price and 52-week high (typically <= 0; 0 = at the high)
+function _pctVs52wkHigh(r) {
+  if (r.current_price == null || r.high_52wk == null || !r.high_52wk) return null;
+  return (r.current_price - r.high_52wk) / r.high_52wk * 100;
+}
+function pctFrom52wkHighCell(v) {
+  if (v == null) return '<span class="dim">—</span>';
+  const n = Number(v), cls = n >= -5 ? 'green' : n <= -20 ? 'red' : '';
+  return `<span class="${cls}">${n.toFixed(1)}%</span>`;
 }
 function plCell(v) {
   if (v == null) return '<span class="dim">—</span>';
@@ -1388,6 +1876,306 @@ function rsiCell(v) {
 }
 
 // ═══════════════════════════════════════
+//  Surge Strategy (Volume Surge — Scenario A workflow)
+// ═══════════════════════════════════════
+let _surgeData  = null;
+let _surgeModal = null;   // {mode: 'bought'|'partial'|'sell', id}
+
+async function loadSurge() {
+  try {
+    _surgeData = await apiFetch('/api/surge/board');
+    renderSurge();
+  } catch (e) {
+    document.getElementById('surge-status').textContent = '⚠ ' + e.message;
+  }
+}
+
+async function runSurgeScan() {
+  const st = document.getElementById('surge-status');
+  st.style.color = 'var(--muted)';
+  st.textContent = 'Scanning…';
+  try {
+    const r = await apiFetch('/api/surge/scan', {method: 'POST'});
+    await loadSurge();
+    st.style.color = 'var(--green)';
+    st.textContent = `Scan done (data through ${r.as_of}): ${r.new.length} new, ${r.changed.length} changed.`;
+  } catch (e) {
+    st.style.color = 'var(--red)';
+    st.textContent = '⚠ ' + e.message;
+  }
+}
+
+async function runSurgeLive() {
+  const st = document.getElementById('surge-status');
+  st.style.color = 'var(--muted)';
+  st.textContent = 'Fetching live prices…';
+  try {
+    const r = await apiFetch('/api/surge/monitor/refresh', {method: 'POST'});
+    await loadSurge();
+    st.style.color = r.errors && r.errors.length ? '#d97706' : 'var(--green)';
+    st.textContent = `Live refresh: ${r.positions} position(s) + ${r.armed} armed signal(s) checked` +
+      (r.sell.length ? ` · SELL: ${r.sell.join(', ')}` : '') +
+      (r.triggered.length ? ` · new Buy Signal: ${r.triggered.join(', ')}` : '') +
+      (r.errors.length ? ` · ${r.errors.length} error(s): ${r.errors.slice(0, 2).join('; ')}` : '');
+  } catch (e) {
+    st.style.color = 'var(--red)';
+    st.textContent = '⚠ ' + e.message;
+  }
+}
+
+const _SURGE_LEVEL = {sell: ['🔴 SELL', 'var(--red)'], warn: ['⚠ MA21', '#d97706'],
+                      target: ['🎯 Target', 'var(--green)'], buy: ['🟢 BUY', 'var(--green)']};
+
+function _surgeRenderBanner(alerts) {
+  const order = {sell: 0, warn: 1, target: 2, buy: 3};
+  document.getElementById('surge-alerts').innerHTML = alerts.slice()
+    .sort((a, b) => order[a.level] - order[b.level])
+    .map(a => `<div class="surge-alert ${a.level}"><b>${a.ticker}</b><span>${_SURGE_LEVEL[a.level][0]} — ${a.message}</span></div>`)
+    .join('');
+}
+
+function _surgeRenderMonitor(m) {
+  const el = document.getElementById('surge-monitor-line');
+  if (!m) { el.textContent = ''; return; }
+  const parts = [];
+  parts.push(m.enabled ? `Live monitor <b style="color:var(--green)">on</b> (every 30 min, US market hours)`
+                       : `Live monitor <b style="color:var(--red)">off</b> (server started without it)`);
+  parts.push(m.market_open ? 'market open' : 'market closed');
+  parts.push(m.last_run ? `last pass ${m.last_run.slice(11, 16)} ET (${m.last_reason})` : 'no pass yet this session');
+  if (m.next_run) parts.push(`next ≈ ${m.next_run.slice(5, 16).replace('-', '/')} ET`);
+  if (m.last_error) parts.push(`<span style="color:var(--red)">last error: ${m.last_error}</span>`);
+  el.innerHTML = parts.join(' · ');
+}
+
+// ---- browser notifications + global alert poll (works from any tab) ----
+let _surgeSeen = new Set();
+try { _surgeSeen = new Set(JSON.parse(localStorage.getItem('surgeSeenAlerts') || '[]')); } catch (e) {}
+let _surgeLastRun = null;
+
+function _surgeNotifyBtn() {
+  const b = document.getElementById('surge-notify-btn');
+  if (!b) return;
+  if (!('Notification' in window)) { b.style.display = 'none'; return; }
+  const p = Notification.permission;
+  b.innerHTML = p === 'granted' ? '&#128276; Alerts on' : p === 'denied' ? '&#128277; Alerts blocked' : '&#128276; Enable alerts';
+}
+
+function enableSurgeNotifications() {
+  if (!('Notification' in window)) { alert('This browser does not support notifications.'); return; }
+  Notification.requestPermission().then(_surgeNotifyBtn);
+}
+
+function _surgeApplyAlerts(alerts, notify) {
+  const badge = document.getElementById('surge-badge');
+  badge.textContent = alerts.length ? `(${alerts.length})` : '';
+  badge.style.color = alerts.some(a => a.level === 'sell') ? 'var(--red)'
+                    : alerts.some(a => a.level === 'warn') ? '#d97706' : 'var(--green)';
+  if (!notify) return;
+  const fresh = alerts.filter(a => !_surgeSeen.has(a.key));
+  if (fresh.length && 'Notification' in window && Notification.permission === 'granted') {
+    fresh.forEach(a => { try { new Notification(`${a.ticker} — ${_SURGE_LEVEL[a.level][0]}`, {body: a.message, tag: a.key}); } catch (e) {} });
+  }
+  if (fresh.length) {
+    fresh.forEach(a => _surgeSeen.add(a.key));
+    try { localStorage.setItem('surgeSeenAlerts', JSON.stringify([..._surgeSeen].slice(-300))); } catch (e) {}
+  }
+}
+
+async function pollSurgeAlerts() {
+  try {
+    const r = await apiFetch('/api/surge/alerts');
+    _surgeApplyAlerts(r.alerts, true);
+    const lr = r.monitor && r.monitor.last_run;
+    if (currentTab === 'surge' && lr && lr !== _surgeLastRun) loadSurge();   // a new live pass finished
+    _surgeLastRun = lr || _surgeLastRun;
+  } catch (e) { /* server busy / restarting — try again next minute */ }
+}
+
+function _surgeRows(id, cols, rows, msg) {
+  document.getElementById(id).innerHTML = rows.length
+    ? rows.join('')
+    : `<tr><td colspan="${cols}" class="state-msg">${msg}</td></tr>`;
+}
+const _surgeBtn = (label, js, cls = 'btn-ghost') =>
+  `<button class="btn ${cls}" style="padding:2px 9px;font-size:11px;margin-right:4px" onclick="${js}">${label}</button>`;
+const _surgeVol = s => s.surge_vol_ratio != null ? s.surge_vol_ratio + '×' : '<span class="dim">—</span>';
+const _surgeMoney = v => v == null ? '<span class="dim">—</span>' : '$' + Number(v).toFixed(2);
+
+function renderSurge() {
+  const d = _surgeData, cfg = d.config;
+  const sigs  = d.signals;
+  const buyAll = sigs.filter(s => s.status === 'triggered');
+  // past the 3-day limit since the last scan — shown as stale until Scan Now expires it
+  const isStale = s => s.expires_in != null && s.expires_in < 0;
+  const buy   = buyAll.filter(s => !isStale(s));
+  const armed = sigs.filter(s => s.status === 'armed');
+  const watch = sigs.filter(s => s.status === 'watching');
+  const warn  = d.positions.filter(p => p.below_ma21).length;
+  const closedPl = d.closed.map(p => p.pnl_pct).filter(v => v != null);
+  const avgCl = closedPl.length ? closedPl.reduce((a, b) => a + b, 0) / closedPl.length : null;
+
+  _surgeApplyAlerts(d.alerts || [], true);
+  _surgeRenderBanner(d.alerts || []);
+  _surgeRenderMonitor(d.monitor);
+  document.getElementById('surge-meta').textContent =
+    `Data through ${d.data_through || '—'}` +
+    (d.last_scan && d.last_scan.at ? ` · last scan ${d.last_scan.at}` : ' · not scanned this session');
+
+  document.getElementById('surge-cards').innerHTML = `
+    <div class="card"><div class="card-label">Buy Signals</div><div class="card-value ${buy.length ? 'green' : ''}">${buy.length}</div></div>
+    <div class="card"><div class="card-label">Armed</div><div class="card-value">${armed.length}</div></div>
+    <div class="card"><div class="card-label">Watching</div><div class="card-value">${watch.length}</div></div>
+    <div class="card"><div class="card-label">Open Positions</div><div class="card-value">${d.positions.length}</div></div>
+    <div class="card"><div class="card-label">Below MA21</div><div class="card-value ${warn ? 'red' : ''}">${warn}</div></div>
+    <div class="card"><div class="card-label">Closed Avg P/L</div><div class="card-value ${avgCl == null ? '' : avgCl >= 0 ? 'green' : 'red'}">${avgCl == null ? '—' : (avgCl >= 0 ? '+' : '') + avgCl.toFixed(2) + '%'}</div></div>`;
+
+  _surgeRows('surge-buy-body', 8, buyAll.map(s => {
+    const stale = isStale(s);
+    const exp = s.expires_in == null ? '—' : stale ? '<span class="dim">stale — press Scan Now</span>'
+              : s.expires_in === 0 ? '<span class="red">last day</span>' : s.expires_in + ' day(s)';
+    return `<tr class="${stale ? '' : 'surge-buy'}" style="${stale ? 'opacity:.55' : ''}">
+      <td class="left ticker-cell">${s.ticker}</td><td class="left">${fmtDate(s.surge_date)}</td>
+      <td>${_surgeVol(s)}</td><td><b>${_surgeMoney(s.buy_level)}</b></td>
+      <td class="left">${fmtDate(s.drop_date)}</td><td class="left">${fmtDate(s.trigger_date)}</td>
+      <td>${exp}</td>
+      <td class="left">${_surgeBtn('I bought', `openSurgeModal('bought',${s.id})`, 'btn-fetch')}${_surgeBtn('Dismiss', `surgeDismiss(${s.id})`)}</td></tr>`;
+  }), 'No buy signals right now.');
+
+  _surgeRows('surge-armed-body', 7, armed.map(s => `<tr>
+      <td class="left ticker-cell">${s.ticker}</td><td class="left">${fmtDate(s.surge_date)}</td>
+      <td>${_surgeVol(s)}</td><td class="left">${fmtDate(s.drop_date)}</td>
+      <td><b>${_surgeMoney(s.buy_level)}</b></td><td>${s.window_days_left ?? '—'}</td>
+      <td class="left">${_surgeBtn('Dismiss', `surgeDismiss(${s.id})`)}</td></tr>`), 'Nothing armed.');
+
+  _surgeRows('surge-watch-body', 6, watch.map(s => `<tr>
+      <td class="left ticker-cell">${s.ticker}</td><td class="left">${fmtDate(s.surge_date)}</td>
+      <td>${_surgeVol(s)}</td><td>${_surgeMoney(s.surge_close)}</td>
+      <td>${s.days_since_surge} / ${cfg.MAX_DAYS_TO_DROP}</td>
+      <td class="left">${_surgeBtn('Dismiss', `surgeDismiss(${s.id})`)}</td></tr>`), 'Nothing being watched.');
+
+  _surgeRows('surge-pos-body', 12, d.positions.map(p => {
+    const half = p.status === 'partial_sold';
+    const reached = !half && p.last_close != null && p.last_close >= p.partial_target;
+    let alert = '';
+    if (p.alert_state === 'sell')
+      alert += `<span class="pill red">🔴 SELL</span><div class="surge-small">${p.alert_note || ''}</div>`;
+    else if (p.alert_state === 'below_ma21')
+      alert += `<span class="pill amber">⚠ Below MA21</span><div class="surge-small">${p.alert_note || ''}</div>`;
+    if (p.status === 'holding' && (p.target_hit_date || reached))
+      alert += `<div><span class="pill green">🎯 +15% reached</span></div>`;
+    if (!alert) alert = '<span class="dim">—</span>';
+    return `<tr class="${p.alert_state === 'sell' ? 'surge-sell' : (p.alert_state === 'below_ma21' || p.below_ma21) ? 'surge-hot' : ''}">
+      <td class="left ticker-cell">${p.ticker}</td><td class="left">${fmtDate(p.buy_date)}</td>
+      <td>${_surgeMoney(p.buy_price)}</td><td>${p.shares != null ? fmtInt(p.shares) : '<span class="dim">—</span>'}</td>
+      <td>${_surgeMoney(p.partial_target)}</td>
+      <td class="left">${half ? `Half sold @ ${_surgeMoney(p.partial_price)}` : 'Holding'}</td>
+      <td>${_surgeMoney(p.last_close)}<div class="dim" style="font-size:10px">${p.price_is_live ? '● live · ' : ''}${p.last_close_date || ''}${p.last_checked ? ' · chk ' + p.last_checked.slice(11, 16) + ' ET' : ''}</div></td>
+      <td>${_surgeMoney(p.ma21)}</td>
+      <td>${p.dist_ma21_pct == null ? '<span class="dim">—</span>' : `<span class="${p.dist_ma21_pct >= 0 ? 'green' : 'red'}">${p.dist_ma21_pct}%</span>`}</td>
+      <td>${pillCell(p.pnl_pct)}</td><td class="left">${alert}</td>
+      <td class="left">${half ? '' : _surgeBtn('Half sold', `openSurgeModal('partial',${p.id})`)}${_surgeBtn('Sold', `openSurgeModal('sell',${p.id})`, 'btn-fetch')}${_surgeBtn('Undo', `surgeUndo(${p.id})`)}</td></tr>`;
+  }), 'No open positions. Mark a Buy Signal as bought to track it here.');
+
+  _surgeRows('surge-closed-body', 8, d.closed.map(p => `<tr>
+      <td class="left ticker-cell">${p.ticker}</td><td class="left">${fmtDate(p.buy_date)}</td>
+      <td>${_surgeMoney(p.buy_price)}</td>
+      <td class="left">${p.partial_price ? `${fmtDate(p.partial_date)} @ ${_surgeMoney(p.partial_price)}` : '<span class="dim">—</span>'}</td>
+      <td class="left">${fmtDate(p.exit_date)} @ ${_surgeMoney(p.exit_price)}</td>
+      <td class="left">${p.exit_reason || '—'}</td><td>${pillCell(p.pnl_pct)}</td>
+      <td class="left">${_surgeBtn('Undo', `surgeUndo(${p.id})`)}</td></tr>`), 'No closed positions yet.');
+}
+
+function openSurgeModal(mode, id) {
+  const d = _surgeData;
+  const pad = n => String(n).padStart(2, '0'), t = new Date();
+  const today = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+  _surgeModal = {mode, id};
+  let title, info, price = '';
+  if (mode === 'bought') {
+    const s = d.signals.find(x => x.id === id);
+    title = `I bought ${s.ticker}`;
+    info  = `Limit price was <b>${_surgeMoney(s.buy_level)}</b>. Enter your actual fill.`;
+    price = s.buy_level;
+  } else {
+    const p = d.positions.find(x => x.id === id);
+    if (mode === 'partial') {
+      title = `${p.ticker} — sold half`;
+      info  = `+15% target is <b>${_surgeMoney(p.partial_target)}</b> (buy ${_surgeMoney(p.buy_price)}).`;
+      price = p.partial_target;
+    } else {
+      title = `${p.ticker} — sold the position`;
+      info  = `Closes whatever is left. Buy ${_surgeMoney(p.buy_price)}` +
+              (p.last_close != null ? `, last close ${_surgeMoney(p.last_close)}.` : '.');
+      price = p.last_close ?? '';
+    }
+  }
+  document.getElementById('surge-modal-title').textContent = title;
+  document.getElementById('surge-m-info').innerHTML = info;
+  document.getElementById('surge-m-date').value  = today;
+  document.getElementById('surge-m-price').value = price;
+  document.getElementById('surge-m-shares').value = '';
+  document.getElementById('surge-m-note').value   = '';
+  document.getElementById('surge-m-error').textContent = '';
+  document.getElementById('surge-m-shares-row').style.display = mode === 'bought' ? 'contents' : 'none';
+  document.getElementById('surge-m-note-row').style.display   = mode === 'bought' ? 'contents' : 'none';
+  document.getElementById('surge-m-reason-row').style.display = mode === 'sell'   ? 'contents' : 'none';
+  document.getElementById('surge-modal').classList.add('open');
+  document.getElementById('surge-m-price').focus();
+}
+
+function closeSurgeModal() {
+  document.getElementById('surge-modal').classList.remove('open');
+  _surgeModal = null;
+}
+
+async function submitSurgeModal() {
+  if (!_surgeModal) return;
+  const {mode, id} = _surgeModal;
+  const date  = document.getElementById('surge-m-date').value.trim();
+  const price = parseFloat(document.getElementById('surge-m-price').value);
+  const err   = document.getElementById('surge-m-error');
+  err.textContent = '';
+  if (!price || price <= 0) { err.textContent = 'Enter a price greater than 0.'; return; }
+
+  let url, body;
+  if (mode === 'bought') {
+    const shares = parseFloat(document.getElementById('surge-m-shares').value);
+    url  = `/api/surge/signals/${id}/bought`;
+    body = {buy_date: date, buy_price: price, shares: shares > 0 ? shares : null,
+            note: document.getElementById('surge-m-note').value.trim() || null};
+  } else if (mode === 'partial') {
+    url  = `/api/surge/positions/${id}/partial`;
+    body = {date, price};
+  } else {
+    url  = `/api/surge/positions/${id}/sell`;
+    body = {date, price, reason: document.getElementById('surge-m-reason').value};
+  }
+  const btn = document.getElementById('surge-m-save');
+  btn.disabled = true;
+  try {
+    await apiFetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    closeSurgeModal();
+    await loadSurge();
+  } catch (e) {
+    err.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function surgeDismiss(id) {
+  if (!confirm('Dismiss this signal?')) return;
+  try { await apiFetch(`/api/surge/signals/${id}/dismiss`, {method: 'POST'}); await loadSurge(); }
+  catch (e) { alert(e.message); }
+}
+
+async function surgeUndo(id) {
+  if (!confirm('Remove this position and send the signal back to the board?')) return;
+  try { await apiFetch(`/api/surge/positions/${id}`, {method: 'DELETE'}); await loadSurge(); }
+  catch (e) { alert(e.message); }
+}
+
+// ═══════════════════════════════════════
 //  Tab switching
 // ═══════════════════════════════════════
 function showTab(name) {
@@ -1396,10 +2184,10 @@ function showTab(name) {
     document.querySelectorAll('.tab-btn')[i].classList.toggle('active', t === name);
   });
   currentTab = name;
-  ({holdings: loadHoldings, signals: loadSignals, rsi: loadRsiSignals, sold: loadSold,
+  ({holdings: loadHoldings, signals: loadSignals, sold: loadSold,
     monitor: loadMonitor, patterns: loadPatterns, tickers: loadTickerList,
-    backtester: loadBacktester, insider: loadInsider, market: loadMarket,
-    dataview: loadDataView})[name]();
+    backtester: loadBacktester, insider: loadInsider, congress: loadCongress,
+    market: loadMarket, dataview: loadDataView, surge: loadSurge})[name]();
 }
 
 // ═══════════════════════════════════════
@@ -1491,38 +2279,231 @@ async function _refreshMonitorSet() {
   } catch { /* non-fatal */ }
 }
 
+// Congress trading-activity ticker set — same "load once, badge everywhere"
+// pattern as _monitorTickers. Backs the badge shown next to a ticker on the
+// Signals / Pattern Scanner / Monitor tabs; click opens the detail popup.
+let _congressTickers = new Set();
+
+async function _refreshCongressTickerSet() {
+  try {
+    const { tickers } = await apiFetch('/api/congress/tickers');
+    _congressTickers = new Set(tickers);
+  } catch { /* non-fatal */ }
+}
+
+function _congressBadge(ticker) {
+  if (!ticker || !_congressTickers.has(ticker)) return '';
+  return ` <span class="congress-badge" title="Congress trading activity — click for details"
+             onclick="event.stopPropagation();openCongressPopup('${ticker}')">&#127963;</span>`;
+}
+
+async function openCongressPopup(ticker) {
+  document.getElementById('congress-pop-title').textContent = `${ticker} — Congress Trading Activity`;
+  document.getElementById('congress-pop-body').innerHTML =
+    '<tr><td colspan="9" class="state-msg"><span class="spinner"></span>Loading…</td></tr>';
+  document.getElementById('congress-ticker-overlay').style.display = 'block';
+  try {
+    const resp = await apiFetch(`/api/congress?ticker=${encodeURIComponent(ticker)}`);
+    const rows = resp.data;
+    if (!rows.length) {
+      document.getElementById('congress-pop-body').innerHTML =
+        '<tr><td colspan="9" class="state-msg">No Congress trades found.</td></tr>';
+      return;
+    }
+    const typeColors = {BUY:['#dcfce7','#15803d'], SELL:['#fee2e2','#b91c1c'], EXCHANGE:['#e0e7ff','#3730a3']};
+    document.getElementById('congress-pop-body').innerHTML = rows.map(r => {
+      const [tbg, tfg] = typeColors[r.type] || ['#f1f5f9', '#475569'];
+      const typeBadge = r.type
+        ? `<span style="background:${tbg};color:${tfg};padding:1px 6px;border-radius:999px;font-size:10px;font-weight:600">${r.type}</span>`
+        : '<span class="dim">—</span>';
+      const filingLink = r.filing_url
+        ? `<a href="${r.filing_url}" target="_blank" style="font-size:11px;color:var(--accent)">View ↗</a>`
+        : '<span class="dim">—</span>';
+      return `<tr class="${r.cluster_buy ? 'ins-cluster' : ''}">
+        <td style="font-family:monospace">${fmtDate(r.tx_date)}</td>
+        <td style="font-family:monospace;color:var(--muted)">${fmtDate(r.filed_date)}</td>
+        <td class="left">${r.politician_name || '—'}</td>
+        <td style="color:var(--muted)">${r.chamber || '—'}</td>
+        <td>${r.party || '—'}</td>
+        <td style="text-align:center">${typeBadge}</td>
+        <td class="left">${r.amount_range || '—'}</td>
+        <td class="left" style="font-size:11px">${r.source || '—'}</td>
+        <td class="left">${filingLink}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('congress-pop-body').innerHTML =
+      `<tr><td colspan="9" class="state-msg">Error: ${e.message}</td></tr>`;
+  }
+}
+
+function closeCongressPopup() {
+  document.getElementById('congress-ticker-overlay').style.display = 'none';
+}
+
+// ── "Filter by Monitor list" — shared by the Signals and Pattern Scanner tabs ──
+// Per-watchlist ticker membership, fetched lazily and cached by watchlist id
+// (as a string). "any" isn't cached here — it reuses _monitorTickers directly,
+// which is already the union of every list's tickers.
+let _watchlistTickerCache = {};
+
+async function _getWatchlistTickerSet(id, force) {
+  const key = String(id);
+  if (!force && _watchlistTickerCache[key]) return _watchlistTickerCache[key];
+  try {
+    const { tickers } = await apiFetch(`/api/monitor/tickers?watchlist=${key}`);
+    const set = new Set((tickers || []).map(t => (t || '').toUpperCase()));
+    _watchlistTickerCache[key] = set;
+    return set;
+  } catch {
+    return _watchlistTickerCache[key] || new Set();
+  }
+}
+
+function _monitorFilterSet(val) {
+  if (!val) return null;
+  return val === 'any' ? _monitorTickers : (_watchlistTickerCache[val] || new Set());
+}
+
+function _monitorFilterLabel(val) {
+  if (!val) return null;
+  if (val === 'any') return 'Any list';
+  const wl = _watchlists.find(w => String(w.id) === val);
+  return wl ? wl.name : null;
+}
+
+// Repopulates a Monitor-list <select> from the current _watchlists, preserving
+// the user's selection unless that list no longer exists (renamed ids stay valid;
+// only a delete resets to "All stocks", per "no stale references on next load").
+function _populateMonitorListSelect(selectEl) {
+  if (!selectEl) return;
+  const prev = selectEl.value;
+  let html = `<option value="">— All stocks —</option><option value="any">— Any Monitor list —</option>`;
+  _watchlists.forEach(wl => {
+    html += `<option value="${wl.id}">${String(wl.name || '').replace(/</g, '&lt;')}</option>`;
+  });
+  selectEl.innerHTML = html;
+  const stillValid = prev === '' || prev === 'any' || _watchlists.some(wl => String(wl.id) === prev);
+  selectEl.value = stillValid ? prev : '';
+}
+
+// Called once per full tab load so a currently-selected specific list's ticker
+// set is fresh (force=true) before the synchronous filter functions read it.
+async function _warmMonitorListFilter(selectEl) {
+  const val = selectEl?.value;
+  if (val && val !== 'any') await _getWatchlistTickerSet(val, true);
+}
+
+async function onSigMonitorListChange() {
+  const val = document.getElementById('sig-monitor-filter').value;
+  if (val && val !== 'any') await _getWatchlistTickerSet(val);
+  applySignalTickerFilter();
+}
+
+async function onPatMonitorListChange() {
+  const val = document.getElementById('pattern-monitor-filter').value;
+  if (val && val !== 'any') await _getWatchlistTickerSet(val);
+  _applyPatternsub();
+}
+
 const _SIGNAL_EP = {
   ma200:      '/api/signals/ma200',
+  ma100:      '/api/signals/ma100',
+  '2xlow':    '/api/signals/2xlow',
   ma1030:     '/api/signals/ma1030',
   ma200bear:  '/api/signals/ma200bear',
   ma1030bear: '/api/signals/ma1030bear',
+  rsi:        '/api/signals/rsi',
   sigall:     '/api/signals/all',
 };
 
 const _SIGNAL_LABEL = {
   price_gt_ma200: { text: 'Price > MA200', cls: 'sig-gt-ma200' },
+  price_gt_ma100: { text: 'Price > MA100', cls: 'sig-gt-ma100' },
+  price_2x_low:   { text: 'Price ≥ 2x Low', cls: 'sig-gt-2xlow' },
   ma10_gt_ma30:   { text: 'MA10 > MA30',   cls: 'sig-gt-ma1030' },
   price_lt_ma200: { text: 'Price < MA200', cls: 'sig-lt-ma200' },
   ma10_lt_ma30:   { text: 'MA10 < MA30',   cls: 'sig-lt-ma1030' },
 };
 
-function setSignalType(type) {
-  currentSignalType = type;
-  ['ma200','ma1030','ma200bear','ma1030bear','sigall'].forEach(k =>
-    document.getElementById('btn-' + k).classList.toggle('active', k === type)
-  );
+// Split out from setSignalType() so page init can sync the conditional
+// control rows (multiplier, RSI zone, MA200-touch, ...) for the DEFAULT
+// signal type too — without this, they only sync on an actual button
+// click, so a control that applies to the default type (e.g. sig-touch-ma
+// applying to the default 'ma200') would stay hidden until the user
+// clicked away and back, even though its button already shows "active".
+function _updateSigControlVisibility(type) {
   // Show/hide the Signal column header for "All" view
   document.querySelectorAll('.sig-type-col').forEach(el =>
     el.style.display = (type === 'sigall') ? '' : 'none'
   );
+  // Multiplier input only matters for the 2x-Low signal (also included in "All")
+  document.getElementById('sig-mult-wrap').style.display =
+    (type === '2xlow' || type === 'sigall') ? '' : 'none';
+  document.getElementById('sig-2x-first-wrap').style.display = (type === '2xlow') ? '' : 'none';
+  // RSI zone dropdown only matters for RSI (excluded from "All" — see api_server.py _ALL_VIEW_TYPES)
+  document.getElementById('sig-rsi-zone-wrap').style.display = (type === 'rsi') ? '' : 'none';
+  // "MA200 within Day Low–High" only applies to the two MA200 buttons
+  document.getElementById('sig-touch-ma-wrap').style.display =
+    (type === 'ma200' || type === 'ma200bear') ? '' : 'none';
+}
+
+function setSignalType(type) {
+  currentSignalType = type;
+  ['ma200','ma100','2xlow','ma1030','ma200bear','ma1030bear','rsi','sigall'].forEach(k =>
+    document.getElementById('btn-' + k).classList.toggle('active', k === type)
+  );
+  _updateSigControlVisibility(type);
+  _updateSig2xFirstMode();
   loadSignals();
+}
+
+// "First time only, full universe" mode swaps to a dedicated one-row-per-ticker
+// endpoint that ignores date range / latest-only / fresh-breakout entirely.
+function _sig2xFirstActive() {
+  return currentSignalType === '2xlow' && document.getElementById('sig-2x-first').checked;
+}
+function _updateSig2xFirstMode() {
+  const active = _sig2xFirstActive();
+  ['sig-daterange-wrap', 'sig-dateto-wrap', 'sig-latest-wrap', 'sig-lookback-wrap'].forEach(id => {
+    document.getElementById(id).style.display = active ? 'none' : '';
+  });
+  document.querySelectorAll('.sig-tracked-col').forEach(el => el.style.display = active ? '' : 'none');
+}
+function _sigVisibleCols() {
+  let cols = 29;
+  if (currentSignalType !== 'sigall') cols -= 1;   // Signal column hidden outside "All"
+  if (!_sig2xFirstActive())           cols -= 1;   // Tracked column hidden outside first-time-only mode
+  return cols;
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 async function loadSignals() {
-  const from     = document.getElementById('sig-from').value.trim();
-  const to       = document.getElementById('sig-to').value.trim();
+  const multiplier = parseFloat(document.getElementById('sig-multiplier').value) || 2;
+  const cols       = _sigVisibleCols();
+
+  if (_sig2xFirstActive()) {
+    loading('signals-body', cols);
+    try {
+      const [resp] = await Promise.all([
+        apiFetch(`/api/signals/2xlow/first?multiplier=${multiplier}`),
+        _refreshMonitorSet(),
+        _loadWatchlists(),
+      ]);
+      _lastSignalRows      = resp.data;
+      _lastSignalTruncated = false;
+      _lastSignalTotal     = resp.count;
+      const monSel = document.getElementById('sig-monitor-filter');
+      _populateMonitorListSelect(monSel);
+      await _warmMonitorListFilter(monSel);
+      applySignalTickerFilter();
+    } catch(e) { empty('signals-body', cols, '⚠ ' + e.message); }
+    return;
+  }
+
+  const from = document.getElementById('sig-from').value.trim();
+  const to   = document.getElementById('sig-to').value.trim();
   if (!DATE_RE.test(from) || !DATE_RE.test(to)) return;
 
   const latest   = document.getElementById('sig-latest').checked ? '&latest=1' : '';
@@ -1535,53 +2516,130 @@ async function loadSignals() {
     lookback > 0 ? `prev ${lookback}d clean` : '';
 
   const lookbackParam = lookback > 0 ? `&lookback=${lookback}` : '';
-  const cols = currentSignalType === 'sigall' ? 13 : 12;
+  const multParam = `&multiplier=${multiplier}`;
+  const zone      = document.getElementById('sig-rsi-zone').value;
+  const zoneParam = zone ? `&zone=${zone}` : '';
+  const touchMa   = document.getElementById('sig-touch-ma').checked;
+  const touchMaParam = touchMa ? '&touch_ma=1' : '';
   loading('signals-body', cols);
   try {
-    await _refreshMonitorSet();
-    _lastSignalRows = (await apiFetch(`${ep}?from=${from}&to=${to}${latest}${lookbackParam}`)).data;
+    const [resp] = await Promise.all([
+      apiFetch(`${ep}?from=${from}&to=${to}${latest}${lookbackParam}${multParam}${zoneParam}${touchMaParam}`),
+      _refreshMonitorSet(),
+      _loadWatchlists(),
+    ]);
+    _lastSignalRows      = resp.data;
+    _lastSignalTruncated = !!resp.truncated;
+    _lastSignalTotal     = resp.total;
+    const monSel = document.getElementById('sig-monitor-filter');
+    _populateMonitorListSelect(monSel);
+    await _warmMonitorListFilter(monSel);
     applySignalTickerFilter();
   } catch(e) { empty('signals-body', cols, '⚠ ' + e.message); }
 }
+
+let _lastSignalTruncated = false;
+let _lastSignalTotal     = 0;
 
 function applySignalTickerFilter() {
   const raw = document.getElementById('sig-ticker-filter').value;
   const filterSet = new Set(
     raw.split(/[\s,]+/).map(t => t.trim().toUpperCase()).filter(Boolean)
   );
-  const rows = filterSet.size > 0
+  const ttKeys = _ttChecked('sig');
+  const monitorVal = document.getElementById('sig-monitor-filter')?.value || '';
+  const rsMin  = parseFloat(document.getElementById('sig-rs-min').value);
+  const rsMax  = parseFloat(document.getElementById('sig-rs-max').value);
+  const pctMin = parseFloat(document.getElementById('sig-pcthigh-min').value);
+  const pctMax = parseFloat(document.getElementById('sig-pcthigh-max').value);
+  let rows = filterSet.size > 0
     ? _lastSignalRows.filter(r => filterSet.has(r.ticker.toUpperCase()))
     : _lastSignalRows;
+  // Trend fields come from the signal row's own date (sig.* in the backend query),
+  // not a "today" snapshot — so the badge/filter matches the signal date shown.
+  if (ttKeys.length) rows = rows.filter(r => _ttPassRow(r, ttKeys));
+  const monSet = _monitorFilterSet(monitorVal);
+  if (monSet) rows = rows.filter(r => monSet.has((r.ticker || '').toUpperCase()));
+  if (!isNaN(rsMin)) rows = rows.filter(r => r.rs_rank != null && r.rs_rank >= rsMin);
+  if (!isNaN(rsMax)) rows = rows.filter(r => r.rs_rank != null && r.rs_rank <= rsMax);
+  if (!isNaN(pctMin)) rows = rows.filter(r => { const p = _pctVs52wkHigh(r); return p != null && p >= pctMin; });
+  if (!isNaN(pctMax)) rows = rows.filter(r => { const p = _pctVs52wkHigh(r); return p != null && p <= pctMax; });
+
+  const anyFilter = filterSet.size > 0 || ttKeys.length > 0 || !!monitorVal ||
+    !isNaN(rsMin) || !isNaN(rsMax) || !isNaN(pctMin) || !isNaN(pctMax);
+  const monitorSuffix = _monitorFilterLabel(monitorVal) ? ` (Monitor: ${_monitorFilterLabel(monitorVal)})` : '';
   const countEl = document.getElementById('sig-filter-count');
-  countEl.textContent = filterSet.size > 0
+  countEl.textContent = (anyFilter
     ? `${rows.length} of ${_lastSignalRows.length} shown`
-    : `${_lastSignalRows.length} results`;
+    : `${_lastSignalRows.length} results`) + monitorSuffix;
+
+  const ttCountEl = document.getElementById('sig-tt-count');
+  if (ttCountEl) ttCountEl.textContent = ttKeys.length
+    ? `${rows.length} match${rows.length !== 1 ? '' : 'es'} TT filter`
+    : '';
+
+  const warnEl = document.getElementById('sig-truncate-warn');
+  warnEl.style.display = _lastSignalTruncated ? 'inline' : 'none';
+  warnEl.textContent = _lastSignalTruncated
+    ? `⚠ Showing first ${_lastSignalRows.length.toLocaleString()} of ${_lastSignalTotal.toLocaleString()} matches — narrow the date range or check "Latest per ticker only"`
+    : '';
   renderSignals(rows);
 }
 
 function renderSignals(rows) {
-  const isAll = currentSignalType === 'sigall';
-  const cols  = isAll ? 14 : 13;
+  const isAll   = currentSignalType === 'sigall';
+  const isFirst = _sig2xFirstActive();
+  const cols    = _sigVisibleCols();
   if (!rows.length) { empty('signals-body', cols, 'No signals match the current filters.'); return; }
+  const fmtTt = v => v != null ? Number(v).toFixed(2) : '—';
   document.getElementById('signals-body').innerHTML = rows.map(r => {
     const inMonitor = _monitorTickers.has(r.ticker);
     const watchBtn  = inMonitor
       ? `<button class="del-btn watch-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Watching</button>`
       : `<button class="del-btn watch-btn" onclick="addToMonitor('${r.ticker}','${r.signal_date}',${r.signal_close},this)">+ Watch</button>`;
     const sigMeta   = _SIGNAL_LABEL[r.signal_type] || {};
-    const rowCls    = sigMeta.cls || '';
+    const rowCls    = sigMeta.cls || (isFirst ? 'sig-gt-2xlow' : currentSignalType === 'rsi' ? 'sig-rsi' : '');
     const sigCell   = isAll
       ? `<td class="sig-type-col" style="white-space:nowrap"><span class="pill" style="font-size:10px">${sigMeta.text || r.signal_type}</span></td>`
       : '';
+    const trackedCell = isFirst
+      ? `<td class="sig-tracked-col" style="text-align:center">${r.tracked
+          ? '<span class="pill green" title="On your tracked Ticker List">Tracked</span>'
+          : '<span class="pill" title="Full universe only — not on your tracked Ticker List">Universe</span>'}</td>`
+      : '';
+    const rsRank = r.rs_rank;
+    const rsCell = rsRank != null
+      ? `<span style="font-weight:600;color:${rsRank >= 70 ? 'var(--green)' : rsRank >= 50 ? 'var(--text)' : 'var(--muted)'}">${rsRank}</span>`
+      : '—';
+    const xLow = (r.low_alltime != null && r.low_alltime > 0 && r.signal_close != null)
+      ? r.signal_close / r.low_alltime
+      : null;
+    const xLowCell = xLow != null
+      ? `<span style="font-weight:600;color:${xLow >= 2 ? 'var(--green)' : 'var(--text)'}">${xLow.toFixed(2)}x</span>`
+      : '—';
     return `<tr class="${rowCls}">
-      <td class="left ticker-cell">${r.ticker}</td>
+      <td class="left ticker-cell">${r.ticker}${_congressBadge(r.ticker)}</td>
       ${sigCell}
+      ${trackedCell}
       <td>${fmtDate(r.signal_date)}</td><td>$${fmt(r.signal_close)}</td>
+      <td>${fmtVal(r.day_low, '$')}</td>
+      <td>${fmtVal(r.day_high, '$')}</td>
+      <td>${rsiCell(r.rsi14)}</td>
       <td><strong>${fmtVal(r.current_price, '$')}</strong></td>
       <td>${dayPctCell(r.day_pct_change)}</td>
       <td>${fmtVal(r.ma10)}</td><td>${fmtVal(r.ma30)}</td>
-      <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma200)}</td>
+      <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma100)}</td><td>${fmtVal(r.ma200)}</td>
       <td>${fmtVal(r.high_30d)}</td><td>${fmtVal(r.low_30d)}</td>
+      <td>${fmtTt(r.ma150)}</td>
+      <td>${fmtTt(r.low_52wk)}</td>
+      <td>${fmtTt(r.high_52wk)}</td>
+      <td>${pctFrom52wkHighCell(_pctVs52wkHigh(r))}</td>
+      <td>${fmtVal(r.low_alltime)}</td>
+      <td>${r.low_alltime_date ? fmtDate(r.low_alltime_date) : '—'}</td>
+      <td style="text-align:center">${xLowCell}</td>
+      <td style="text-align:center">${rsCell}</td>
+      <td style="text-align:center">${_ttBadge(r)}</td>
+      <td style="color:${r.direction === 'Up' ? 'var(--green)' : r.direction === 'Down' ? 'var(--red)' : 'var(--muted)'};font-weight:600">${r.direction || '—'}</td>
       <td>${watchBtn}</td>
       <td><button class="del-btn" onclick="signalAddToBacktest('${r.ticker}',${r.signal_close||0},'${r.signal_date||''}',this)">+ Backtest</button></td>
     </tr>`;
@@ -1640,85 +2698,6 @@ async function _doAddToMonitor(ticker, signalDate, signalPrice, watchlistId, btn
       alert(e.message);
     }
   }
-}
-
-// ═══════════════════════════════════════
-//  RSI Signals
-// ═══════════════════════════════════════
-let _lastRsiRows = [];
-
-async function loadRsiSignals() {
-  const from = document.getElementById('rsi-from').value.trim();
-  const to   = document.getElementById('rsi-to').value.trim();
-  if (!DATE_RE.test(from) || !DATE_RE.test(to)) return;
-
-  const zone    = document.getElementById('rsi-zone').value;
-  const latest  = document.getElementById('rsi-latest').checked ? '&latest=1' : '';
-  const zoneParam = zone ? `&zone=${zone}` : '';
-
-  loading('rsi-signals-body', 12);
-  try {
-    await _refreshMonitorSet();
-    _lastRsiRows = (await apiFetch(`/api/signals/rsi?from=${from}&to=${to}${zoneParam}${latest}`)).data;
-    applyRsiTickerFilter();
-  } catch(e) { empty('rsi-signals-body', 12, '⚠ ' + e.message); }
-}
-
-function applyRsiTickerFilter() {
-  const raw = document.getElementById('rsi-ticker-filter').value;
-  const filterSet = new Set(
-    raw.split(/[\s,]+/).map(t => t.trim().toUpperCase()).filter(Boolean)
-  );
-  const rows = filterSet.size > 0
-    ? _lastRsiRows.filter(r => filterSet.has(r.ticker.toUpperCase()))
-    : _lastRsiRows;
-  const countEl = document.getElementById('rsi-filter-count');
-  countEl.textContent = filterSet.size > 0
-    ? `${rows.length} of ${_lastRsiRows.length} shown`
-    : `${_lastRsiRows.length} results`;
-  renderRsiSignals(rows);
-}
-
-function renderRsiSignals(rows) {
-  if (!rows.length) { empty('rsi-signals-body', 12, 'No RSI signals match the current filters.'); return; }
-  document.getElementById('rsi-signals-body').innerHTML = rows.map(r => {
-    const inMonitor = _monitorTickers.has(r.ticker);
-    const watchBtn  = inMonitor
-      ? `<button class="del-btn watch-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Watching</button>`
-      : `<button class="del-btn watch-btn" onclick="rsiAddToMonitor('${r.ticker}','${r.date}',${r.close},this)">+ Watch</button>`;
-    return `<tr>
-      <td class="left ticker-cell">${r.ticker}</td>
-      <td>${fmtDate(r.date)}</td>
-      <td>${rsiCell(r.rsi14)}</td>
-      <td>$${fmt(r.close)}</td>
-      <td><strong>${fmtVal(r.current_price, '$')}</strong></td>
-      <td>${dayPctCell(r.day_pct_change)}</td>
-      <td>${fmtVal(r.ma10)}</td>
-      <td>${fmtVal(r.ma30)}</td>
-      <td>${fmtVal(r.ma200)}</td>
-      <td>${r.direction || '<span class="dim">—</span>'}</td>
-      <td>${watchBtn}</td>
-      <td><button class="del-btn" onclick="rsiAddToBacktest('${r.ticker}',${r.close||0},'${r.date||''}',this)">+ Backtest</button></td>
-    </tr>`;
-  }).join('');
-}
-
-function rsiAddToBacktest(ticker, p0, signalDate, btn) {
-  const added = addToBacktestQueue(ticker, p0, signalDate, 'RSI Signal');
-  if (added) { btn.textContent = '✓ Added'; btn.disabled = true; }
-  else        { btn.textContent = '✓ Already'; btn.disabled = true; }
-}
-
-function rsiAddToMonitor(ticker, signalDate, signalPrice, btn) {
-  if (!_watchlists.length) {
-    _doAddToMonitor(ticker, signalDate, signalPrice, 1, btn, '#rsi-signals-body');
-    return;
-  }
-  if (_watchlists.length === 1) {
-    _doAddToMonitor(ticker, signalDate, signalPrice, _watchlists[0].id, btn, '#rsi-signals-body');
-    return;
-  }
-  showWlPicker(btn, wlId => _doAddToMonitor(ticker, signalDate, signalPrice, wlId, btn, '#rsi-signals-body'));
 }
 
 // ═══════════════════════════════════════
@@ -1848,7 +2827,7 @@ async function loadMonitor() {
 
 function renderMonitor(rows) {
   const showListCol = _currentWlId === null && _watchlists.length > 1;
-  const cols = showListCol ? 20 : 19;
+  const cols = showListCol ? 22 : 21;
   if (!rows.length) { empty('monitor-body', cols, 'Monitor list is empty. Click + Add or upload a CSV.'); return; }
   document.getElementById('monitor-body').innerHTML = rows.map(r => {
     const inQueue = !!_btQueue.find(x => x.ticker === r.ticker);
@@ -1859,7 +2838,7 @@ function renderMonitor(rows) {
       ? `<td style="font-size:11px;color:var(--muted);white-space:nowrap">${r.watchlist_name || '—'}</td>`
       : '';
     return `<tr>
-      <td class="left ticker-cell">${r.ticker}</td>
+      <td class="left ticker-cell">${r.ticker}${_congressBadge(r.ticker)}</td>
       <td class="left name-cell">${r.stock_name || '—'}</td>
       <td class="left" style="color:var(--muted);max-width:160px">${r.reason || '—'}</td>
       <td class="left" style="color:var(--muted);max-width:200px;white-space:pre-wrap;word-break:break-word">${r.comment ? r.comment.replace(/</g,'&lt;') : '—'}</td>
@@ -1871,6 +2850,7 @@ function renderMonitor(rows) {
       <td>${fmtVal(r.ma10)}</td><td>${fmtVal(r.ma30)}</td>
       <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma200)}</td><td>${rsiCell(r.rsi14)}</td>
       <td>${fmtVal(r.high_30d)}</td><td>${fmtVal(r.low_30d)}</td>
+      <td>${fmtVal(r.high_52wk)}</td><td>${fmtVal(r.low_52wk)}</td>
       <td style="font-size:11px;color:var(--muted)">${fmtDate(r.added_at)}</td>
       ${listCell}
       <td>${btBtn}</td>
@@ -2049,6 +3029,7 @@ function handleOverlayClick(e) {
 
 async function startFetch() {
   const period = document.getElementById('fetch-period').value;
+  const skipUniverse = document.getElementById('fetch-skip-universe').checked;
   _lastLogLen = 0;
   document.getElementById('fetch-log-area').innerHTML = '';
   document.getElementById('fetch-log-area').style.display = 'block';
@@ -2060,7 +3041,7 @@ async function startFetch() {
   try {
     const r = await fetch('/api/fetch', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({period}),
+      body: JSON.stringify({period, skip_universe: skipUniverse}),
     });
     if (r.status === 409) { setFetchMsg('Attaching to running fetch…'); }
     else if (!r.ok) {
@@ -2283,9 +3264,10 @@ async function deleteRecord(mode, id) {
   if (!confirm(`Delete this ${label}?`)) return;
   try {
     await apiFetch(`/api/${mode}/${id}`, { method: 'DELETE' });
-    if (mode === 'holdings')     loadHoldings();
-    else if (mode === 'sold')    loadSold();
-    else if (mode === 'monitor') loadMonitor();
+    if (mode === 'holdings')       loadHoldings();
+    else if (mode === 'sold')      loadSold();
+    else if (mode === 'monitor')   loadMonitor();
+    else if (mode === 'congress')  fetchCongress();
   } catch(e) {
     alert('Delete failed: ' + e.message);
   }
@@ -2413,16 +3395,29 @@ const TT_LABELS = [
   'C8 · Price > MA50',
 ];
 
+// Compact widget: "X/8" pill + 2x4 grid of C1-C8 pass/fail mini-badges.
+// Reads only the already-computed c1..c8 / trend_score fields — no recomputation.
 function _ttBadge(ttData) {
-  if (!ttData) return '<span class="tt-badge tt-grey" title="No trend data — run Fetch Data">N/A</span>';
+  const leaderTag = ttData && ttData.rs_leader === 1
+    ? '<span class="tt-pill tt-full" title="RS Rating ≥70 and RS Line trending up (20d)" style="margin-top:2px">RS Leader</span>'
+    : '';
+  if (!ttData || ttData.trend_score == null) {
+    return `<div class="tt-widget"><span class="tt-pill">—/8</span>${leaderTag}</div>`;
+  }
   const score = ttData.trend_score;
-  if (score == null) return '<span class="tt-badge tt-grey" title="Run Fetch Data to compute">—/8</span>';
-  const cls = score >= 7 ? 'tt-green' : score >= 5 ? 'tt-amber' : 'tt-grey';
-  const tip = TT_LABELS.map((lbl, i) => {
-    const v = ttData[`c${i + 1}`];
-    return (v == null ? '— ' : v ? '✅ ' : '❌ ') + lbl;
-  }).join('\n');
-  return `<span class="tt-badge ${cls}" title="${tip}">${score}/8</span>`;
+  const pillCls = score >= 8 ? 'tt-pill tt-full' : 'tt-pill';
+  const cells = TT_LABELS.map((lbl, i) => {
+    const n = i + 1;
+    const v = ttData[`c${n}`];
+    const stateCls = v == null ? 'na' : v ? 'pass' : 'fail';
+    const desc = lbl.replace(/^C\d+ · /, '');
+    return `<span class="tt-c ${stateCls}" title="C${n} → ${desc}">C${n}</span>`;
+  }).join('');
+  return `<div class="tt-widget">
+    <span class="${pillCls}">${score}/8</span>
+    <div class="tt-grid">${cells}</div>
+    ${leaderTag}
+  </div>`;
 }
 
 function _ttChecked(prefix) {
@@ -2456,20 +3451,7 @@ function _ttClearAll(prefix) {
 function _ttChanged(prefix) {
   if (prefix === 'dv')  _dvRender();
   if (prefix === 'pat') _applyPatternsub();
-}
-
-// Ticker-keyed TT lookup for Pattern Scanner (loaded from /api/data/summary)
-let _ttMap = null;
-
-async function _ensureTtMap() {
-  if (_ttMap) return;
-  try {
-    const rows = await apiFetch('/api/data/summary');
-    _ttMap = {};
-    rows.forEach(r => { _ttMap[r.ticker] = r; });
-  } catch(_) {
-    _ttMap = {};
-  }
+  if (prefix === 'sig') applySignalTickerFilter();
 }
 
 // ═══════════════════════════════════════
@@ -2497,6 +3479,8 @@ const PATTERN_ROW_CLASS = {
   'Pullback Bounce':     'pat-pull',
   'Momentum Expansion':  'pat-mom',
   'Momentum 10/8':       'pat-m108',
+  'MA Squeeze':          'pat-squeeze',
+  'VCP':                 'pat-vcp',
 };
 const PATTERN_PILL_CLASS = {
   'Cup & Handle':        'ppill-cup',
@@ -2506,6 +3490,8 @@ const PATTERN_PILL_CLASS = {
   'Pullback Bounce':     'ppill-pull',
   'Momentum Expansion':  'ppill-mom',
   'Momentum 10/8':       'ppill-m108',
+  'MA Squeeze':          'ppill-squeeze',
+  'VCP':                 'ppill-vcp',
 };
 const PATTERN_SUB_MAP = {
   'all':                  null,
@@ -2516,9 +3502,13 @@ const PATTERN_SUB_MAP = {
   'pullback-bounce':      'Pullback Bounce',
   'momentum-expansion':   'Momentum Expansion',
   'momentum-108':         'Momentum 10/8',
+  'ma-squeeze':           'MA Squeeze',
+  'vcp':                  'VCP',
 };
 
 let _patternsInitialised = false;
+let _patSortCol = null;
+let _patSortAsc = true;
 
 async function loadPatterns() {
   const pad   = n => String(n).padStart(2, '0');
@@ -2528,7 +3518,10 @@ async function loadPatterns() {
     const el = document.getElementById(id);
     if (el && !el.value) el.value = today;
   });
-  await Promise.all([_refreshMonitorSet(), _ensureTtMap()]);
+  await Promise.all([_refreshMonitorSet(), _loadWatchlists()]);
+  const monSel = document.getElementById('pattern-monitor-filter');
+  _populateMonitorListSelect(monSel);
+  await _warmMonitorListFilter(monSel);
   if (!_patternsInitialised) {
     _patternsInitialised = true;
     await _loadPatternResults(document.getElementById('scan-date').value);
@@ -2557,7 +3550,7 @@ async function loadPatternRange() {
   _setPatternRangeView(true);
   document.getElementById('scan-hist-select').value = '';
   document.getElementById('patterns-body').innerHTML =
-    `<tr><td colspan="20" class="state-msg"><span class="spinner"></span>Loading…</td></tr>`;
+    `<tr><td colspan="26" class="state-msg"><span class="spinner"></span>Loading…</td></tr>`;
   document.getElementById('pattern-count').textContent = '';
   document.getElementById('pattern-ticker-filter').value = '';
 
@@ -2567,13 +3560,13 @@ async function loadPatternRange() {
     _lastPatternRows = data.data || [];
     if (!_lastPatternRows.length) {
       document.getElementById('patterns-body').innerHTML =
-        `<tr><td colspan="20" class="state-msg">No scan results for ${from} → ${to}. Run a range scan first.</td></tr>`;
+        `<tr><td colspan="26" class="state-msg">No scan results for ${from} → ${to}. Run a range scan first.</td></tr>`;
     } else {
       _applyPatternsub();
     }
   } catch(e) {
     document.getElementById('patterns-body').innerHTML =
-      `<tr><td colspan="20" class="state-msg">⚠ ${e.message}</td></tr>`;
+      `<tr><td colspan="26" class="state-msg">⚠ ${e.message}</td></tr>`;
   }
 }
 
@@ -2582,7 +3575,7 @@ function clearPatternRange() {
   document.getElementById('view-from').value = '';
   document.getElementById('view-to').value   = '';
   document.getElementById('patterns-body').innerHTML =
-    `<tr><td colspan="20" class="state-msg">Select a date above or pick a range to view results.</td></tr>`;
+    `<tr><td colspan="26" class="state-msg">Select a date above or pick a range to view results.</td></tr>`;
   document.getElementById('pattern-count').textContent = '';
   document.getElementById('pattern-ticker-filter').value = '';
   _lastPatternRows = [];
@@ -2591,7 +3584,7 @@ function clearPatternRange() {
 async function _loadPatternResults(date) {
   _setPatternRangeView(false);
   document.getElementById('patterns-body').innerHTML =
-    `<tr><td colspan="20" class="state-msg"><span class="spinner"></span>Loading…</td></tr>`;
+    `<tr><td colspan="26" class="state-msg"><span class="spinner"></span>Loading…</td></tr>`;
   document.getElementById('pattern-count').textContent = '';
   document.getElementById('pattern-ticker-filter').value = '';
   try {
@@ -2599,13 +3592,13 @@ async function _loadPatternResults(date) {
     _lastPatternRows = data.data || [];
     if (!_lastPatternRows.length) {
       document.getElementById('patterns-body').innerHTML =
-        `<tr><td colspan="20" class="state-msg">No scan results for ${date}. Click &#9654; Scan Now to generate.</td></tr>`;
+        `<tr><td colspan="26" class="state-msg">No scan results for ${date}. Click &#9654; Scan Now to generate.</td></tr>`;
     } else {
       _applyPatternsub();
     }
   } catch(e) {
     document.getElementById('patterns-body').innerHTML =
-      `<tr><td colspan="20" class="state-msg">&#9888; ${e.message}</td></tr>`;
+      `<tr><td colspan="26" class="state-msg">&#9888; ${e.message}</td></tr>`;
   }
 }
 
@@ -2632,6 +3625,10 @@ function onScanHistSelect() {
 
 async function startPatternScan() {
   let body, pollDate;
+  const squeezeThreshold = parseFloat(document.getElementById('squeeze-threshold').value);
+  const priceThreshold   = parseFloat(document.getElementById('price-threshold').value);
+  const squeezeMaxAge    = parseFloat(document.getElementById('squeeze-max-age').value);
+  const volSurgeMult     = parseFloat(document.getElementById('vol-surge-mult').value);
   if (_scanMode === 'range') {
     const from = document.getElementById('scan-from').value.trim();
     const to   = document.getElementById('scan-to').value.trim();
@@ -2650,6 +3647,10 @@ async function startPatternScan() {
     body     = {date};
     pollDate = date;
   }
+  if (!isNaN(squeezeThreshold)) body.squeeze_threshold = squeezeThreshold;
+  if (!isNaN(priceThreshold))   body.price_threshold   = priceThreshold;
+  if (!isNaN(squeezeMaxAge))    body.max_squeeze_age   = squeezeMaxAge;
+  if (!isNaN(volSurgeMult))     body.vol_surge_mult    = volSurgeMult;
 
   _setScanRunning(true);
   document.getElementById('scan-progress-wrap').style.display = 'block';
@@ -2725,18 +3726,314 @@ function setPatternsub(sub) {
   _applyPatternsub();
 }
 
+// ── Quick Multi-Pattern Filter (per-ticker, across whichever range is loaded) ──
+const PMF_PATTERN_MAP = {
+  'pmf-cup-handle':         'Cup & Handle',
+  'pmf-golden-cross':       'Golden Cross',
+  'pmf-ma200-breakout':     'MA200 Breakout',
+  'pmf-volume-surge':       'Volume Surge',
+  'pmf-pullback-bounce':    'Pullback Bounce',
+  'pmf-momentum-expansion': 'Momentum Expansion',
+  'pmf-momentum-108':       'Momentum 10/8',
+  'pmf-ma-squeeze':         'MA Squeeze',
+  'pmf-vcp':                'VCP',
+};
+let _origPatternsHeadHTML = null;
+let _patternsHeaderMode   = 'normal';
+
+const MULTI_PATTERN_HEAD_HTML = `
+  <th class="left">Ticker</th>
+  <th class="left">Patterns Matched</th>
+  <th>First Hit</th>
+  <th>Last Hit</th>
+  <th>Start Close</th>
+  <th>Latest Close</th>
+  <th>Price Chg %</th>
+  <th title="RS Rank as of the latest matched date">RS</th>
+  <th title="Minervini Trend Template score as of the latest matched date">Trend</th>
+  <th>Monitor</th>
+  <th>Backtest</th>
+`;
+
+function _setPatternsHeaderMode(mode) {
+  if (_patternsHeaderMode === mode) return;
+  const head = document.getElementById('patterns-head');
+  if (_origPatternsHeadHTML === null) _origPatternsHeadHTML = head.innerHTML;
+  head.innerHTML = mode === 'multi' ? MULTI_PATTERN_HEAD_HTML : _origPatternsHeadHTML;
+  _patternsHeaderMode = mode;
+}
+
+function _multiFilterActive() {
+  return Object.keys(PMF_PATTERN_MAP).some(id => document.getElementById(id)?.checked)
+      || !!document.getElementById('pmf-price-rise')?.checked;
+}
+
+function _clearMultiPatternFilter() {
+  Object.keys(PMF_PATTERN_MAP).forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
+  const pr = document.getElementById('pmf-price-rise'); if (pr) pr.checked = false;
+  _applyPatternsub();
+}
+
+async function runQuickPatternFilter() {
+  if (!_multiFilterActive()) { alert('Check at least one pattern (or Price Rise) to run the Quick Filter.'); return; }
+  const from = document.getElementById('view-from').value.trim();
+  const to   = document.getElementById('view-to').value.trim();
+  if (!from || !to) { alert('Pick a From/To date range above (View range), then Quick Filter.'); return; }
+  await loadPatternRange();   // fetches the range into _lastPatternRows and calls _applyPatternsub()
+}
+
+// Groups _lastPatternRows by ticker and keeps tickers where every checked
+// pattern box has a matching row (VCP also matches via the vcp_signals join
+// that lands on non-VCP rows — same rule the "VCP only" checkbox uses; MA
+// Squeeze respects the "Fresh only" toggle the same way the MA Squeeze
+// sub-tab does), plus an optional price-rise threshold computed from the
+// ticker's close on its earliest vs. latest matched row in the loaded range.
+function _computeMultiPatternMatches() {
+  const wantPatterns = Object.entries(PMF_PATTERN_MAP)
+    .filter(([id]) => document.getElementById(id)?.checked)
+    .map(([, name]) => name);
+  const wantPriceRise      = !!document.getElementById('pmf-price-rise')?.checked;
+  const minRisePctRaw      = parseFloat(document.getElementById('pmf-price-rise-pct')?.value);
+  const minRisePct         = isNaN(minRisePctRaw) ? 0 : minRisePctRaw;
+  const requireFreshSqueeze = !!document.getElementById('pattern-squeeze-fresh-only')?.checked;
+  const tickerFilter  = (document.getElementById('pattern-ticker-filter').value || '').trim().toUpperCase();
+  const ttKeys         = _ttChecked('pat');
+  const monitorVal     = document.getElementById('pattern-monitor-filter')?.value || '';
+  const monSet         = _monitorFilterSet(monitorVal);
+
+  const byTicker = new Map();
+  for (const r of _lastPatternRows) {
+    if (!byTicker.has(r.ticker)) byTicker.set(r.ticker, []);
+    byTicker.get(r.ticker).push(r);
+  }
+
+  const out = [];
+  for (const [ticker, rows] of byTicker) {
+    if (tickerFilter && !ticker.toUpperCase().includes(tickerFilter)) continue;
+    if (monSet && !monSet.has(ticker.toUpperCase())) continue;
+
+    const sorted = rows.slice().sort((a, b) =>
+      a.scan_date < b.scan_date ? -1 : a.scan_date > b.scan_date ? 1 : 0);
+    const hasVcp     = sorted.some(r => r.pattern_name === 'VCP' || r.vcp_detected);
+    const hasSqueeze = sorted.some(r => r.pattern_name === 'MA Squeeze' && (!requireFreshSqueeze || r.squeeze_fresh));
+
+    let ok = true;
+    for (const p of wantPatterns) {
+      if (p === 'VCP')            { if (!hasVcp)     { ok = false; break; } }
+      else if (p === 'MA Squeeze'){ if (!hasSqueeze) { ok = false; break; } }
+      else if (!sorted.some(r => r.pattern_name === p)) { ok = false; break; }
+    }
+    if (!ok) continue;
+
+    const first = sorted[0], last = sorted[sorted.length - 1];
+    const startClose = first.close, endClose = last.close;
+    let priceChgPct = null;
+    if (startClose != null && endClose != null && startClose !== 0) {
+      priceChgPct = (endClose - startClose) / startClose * 100;
+    }
+    if (wantPriceRise && (priceChgPct == null || priceChgPct < minRisePct)) continue;
+    if (ttKeys.length && !_ttPassRow(last, ttKeys)) continue;
+
+    const patternsPresent = new Set(sorted.map(r => r.pattern_name));
+    if (hasVcp) patternsPresent.add('VCP');
+
+    // Per-pattern hit detail (a pattern can fire more than once in the range)
+    // — surfaced by clicking that pattern's badge in the results row. Each hit
+    // carries the date, close, day % and the same signal_detail text shown in
+    // the normal per-row Pattern Scanner table. VCP hits include the
+    // vcp_signals-join hits too (same rule as hasVcp above); since those rows'
+    // own pattern_name isn't "VCP", their detail is synthesized from the same
+    // joined contraction/pivot columns _vcpBadge() uses.
+    const patternHits = {};
+    const pushHit = (name, r, detail) => {
+      if (!r.scan_date) return;
+      (patternHits[name] || (patternHits[name] = [])).push({
+        date: r.scan_date, close: r.close, pctChange: r.pct_change,
+        detail: detail != null ? detail : (r.signal_detail || '—'),
+      });
+    };
+    sorted.forEach(r => {
+      pushHit(r.pattern_name, r);
+      if (r.vcp_detected && r.pattern_name !== 'VCP') pushHit('VCP', r, _vcpJoinDetail(r));
+    });
+    Object.values(patternHits).forEach(arr => arr.sort((a, b) =>
+      a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+    out.push({ ticker, first, last, startClose, endClose, priceChgPct,
+               patternsPresent: [...patternsPresent].sort(), patternHits });
+  }
+  out.sort((a, b) => (b.priceChgPct ?? -Infinity) - (a.priceChgPct ?? -Infinity));
+  return out;
+}
+
+// Synthesizes a VCP detail string for a row whose OWN pattern isn't "VCP" but
+// carries the vcp_signals join (num_contractions/contraction_depths/pivot_price
+// etc.) — same fields/format _vcpBadge()'s tooltip uses. A row where
+// pattern_name IS "VCP" already has its own signal_detail (built server-side
+// in scan_patterns.py::_run_vcp) and doesn't need this.
+function _vcpJoinDetail(r) {
+  if (r.num_contractions == null) return 'VCP confirmed (via badge join)';
+  const depths = Array.isArray(r.contraction_depths) && r.contraction_depths.length
+    ? r.contraction_depths.join('% → ') + '%' : '—';
+  const pivot = r.pivot_price != null ? `$${r.pivot_price.toFixed(2)}` : '—';
+  return `${r.num_contractions} contraction(s) (${depths}), pivot ${pivot}`;
+}
+
+// Registry of {label, hits} rebuilt on every render of the Quick Multi-Pattern
+// Filter table; badges reference their entry by index rather than embedding
+// detail text (which can contain quotes/&/etc.) into an onclick attribute.
+let _patHitsRegistry = [];
+
+function _showPatHits(evt, idx) {
+  const entry = _patHitsRegistry[idx];
+  if (!entry) return;
+  document.getElementById('pat-hits-title').textContent =
+    `${entry.label} — ${entry.hits.length} hit${entry.hits.length !== 1 ? 's' : ''}`;
+  document.getElementById('pat-hits-list').innerHTML = entry.hits.length
+    ? entry.hits.map(h => {
+        const chg = h.pctChange != null
+          ? `<span style="color:${h.pctChange >= 0 ? 'var(--green)' : 'var(--red)'}">${h.pctChange >= 0 ? '+' : ''}${h.pctChange.toFixed(2)}%</span>`
+          : '';
+        return `<div style="padding:7px 0;border-bottom:1px solid var(--border)">
+          <div style="font-family:monospace;font-size:12px;font-weight:600">
+            ${fmtDate(h.date)}
+            <span style="font-weight:400;color:var(--muted);font-family:inherit">
+              &middot; ${h.close != null ? fmtVal(h.close, '$') : '—'} ${chg}
+            </span>
+          </div>
+          <div style="font-size:12px;color:var(--text);margin-top:2px">${h.detail}</div>
+        </div>`;
+      }).join('')
+    : `<div style="font-size:12px;color:var(--muted)">No detail available.</div>`;
+  const rect  = evt.currentTarget.getBoundingClientRect();
+  const panel = document.getElementById('pat-hits-panel');
+  panel.style.display = 'block';
+  document.getElementById('pat-hits-overlay').style.display = 'block';
+  panel.style.top  = Math.min(rect.bottom + 4, window.innerHeight - 330) + 'px';
+  panel.style.left = Math.min(rect.left, window.innerWidth - 340) + 'px';
+}
+
+function closePatHits() {
+  document.getElementById('pat-hits-panel').style.display = 'none';
+  document.getElementById('pat-hits-overlay').style.display = 'none';
+}
+
+function _renderMultiPatternRows(matches) {
+  _patHitsRegistry = [];
+  if (!matches.length) {
+    document.getElementById('patterns-body').innerHTML =
+      `<tr><td colspan="11" class="state-msg">No tickers match all checked criteria in the loaded range.</td></tr>`;
+    return;
+  }
+  document.getElementById('patterns-body').innerHTML = matches.map(m => {
+    const inMon    = _monitorTickers.has(m.ticker);
+    const inQueue  = !!_btQueue.find(x => x.ticker === m.ticker);
+    const dateForActions = m.last.signal_date || m.last.scan_date || '';
+    const watchBtn = inMon
+      ? `<button class="del-btn watch-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Watching</button>`
+      : `<button class="del-btn watch-btn" onclick="addPatternToMonitor('${m.ticker}','Multi-filter: ${m.patternsPresent.join('+').replace(/'/g,"\\u0027")}','${dateForActions}',${m.endClose||0},this)">+ Watch</button>`;
+    const btBtn = inQueue
+      ? `<button class="del-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Queued</button>`
+      : `<button class="del-btn" onclick="patternAddToBacktest('${m.ticker}',${m.endClose||0},'${dateForActions}','Multi-filter',this)">+ Backtest</button>`;
+    const badges = m.patternsPresent.map(p => {
+      const idx = _patHitsRegistry.push({ label: p, hits: m.patternHits[p] || [] }) - 1;
+      return `<span class="ppill ${PATTERN_PILL_CLASS[p] || ''} pat-date-badge"
+                   onclick="_showPatHits(event, ${idx})"
+                   style="cursor:pointer;margin-right:3px" title="Click for date(s) + detail">${p}</span>`;
+    }).join('');
+    const chgCell = m.priceChgPct != null
+      ? `<span style="font-weight:600;color:${m.priceChgPct >= 0 ? 'var(--green)' : 'var(--red)'}">${m.priceChgPct >= 0 ? '+' : ''}${m.priceChgPct.toFixed(1)}%</span>`
+      : '—';
+    const rsRank = m.last.rs_rank;
+    const rsCell = rsRank != null
+      ? `<span style="font-weight:600;color:${rsRank >= 70 ? 'var(--green)' : rsRank >= 50 ? 'var(--text)' : 'var(--muted)'}">${rsRank}</span>`
+      : '—';
+    return `<tr>
+      <td class="left ticker-cell">${m.ticker}${_congressBadge(m.ticker)}</td>
+      <td class="left">${badges}</td>
+      <td>${fmtDate(m.first.scan_date)}</td>
+      <td>${fmtDate(m.last.scan_date)}</td>
+      <td>${fmtVal(m.startClose,'$')}</td>
+      <td>${fmtVal(m.endClose,'$')}</td>
+      <td>${chgCell}</td>
+      <td style="text-align:center">${rsCell}</td>
+      <td style="text-align:center">${_ttBadge(m.last)}</td>
+      <td>${watchBtn}</td>
+      <td>${btBtn}</td>
+    </tr>`;
+  }).join('');
+}
+
+function _applyMultiPatternFilter() {
+  const matches = _computeMultiPatternMatches();
+  const criteria = [];
+  Object.entries(PMF_PATTERN_MAP).forEach(([id, name]) => {
+    if (document.getElementById(id)?.checked) criteria.push(name);
+  });
+  if (document.getElementById('pmf-price-rise')?.checked) {
+    const pct = parseFloat(document.getElementById('pmf-price-rise-pct')?.value);
+    criteria.push(`Price Rise ≥ ${isNaN(pct) ? 0 : pct}%`);
+  }
+  document.getElementById('pattern-count').textContent =
+    `${matches.length} ticker${matches.length !== 1 ? 's' : ''} match ALL of: ${criteria.join(' + ')}  (from ${_lastPatternRows.length} loaded rows)`;
+  const multiCountEl = document.getElementById('pat-multi-count');
+  if (multiCountEl) multiCountEl.textContent = `${matches.length} match${matches.length !== 1 ? 'es' : ''}`;
+  _renderMultiPatternRows(matches);
+}
+// ────────────────────────────────────────────────────────────────────────────
+
 function _applyPatternsub() {
+  if (_multiFilterActive()) {
+    _setPatternsHeaderMode('multi');
+    _applyMultiPatternFilter();
+    return;
+  }
+  _setPatternsHeaderMode('normal');
   const patFilter    = PATTERN_SUB_MAP[_currentPatternsub];
   const tickerFilter = (document.getElementById('pattern-ticker-filter').value || '').trim().toUpperCase();
   const ttKeys       = _ttChecked('pat');
+  const vcpOnly      = !!document.getElementById('pattern-vcp-only')?.checked;
+  const squeezeFreshOnly = !!document.getElementById('pattern-squeeze-fresh-only')?.checked;
+  const monitorVal   = document.getElementById('pattern-monitor-filter')?.value || '';
   let rows = patFilter ? _lastPatternRows.filter(r => r.pattern_name === patFilter) : _lastPatternRows;
   if (tickerFilter) rows = rows.filter(r => (r.ticker || '').toUpperCase().includes(tickerFilter));
-  if (ttKeys.length) rows = rows.filter(r => _ttPassRow(_ttMap?.[r.ticker], ttKeys));
+  // Trend fields come from each row's own scan_date (backend joins stocks_daily on
+  // scan_date), not a "today" snapshot — so the badge/filter matches the row's own date.
+  if (ttKeys.length) rows = rows.filter(r => _ttPassRow(r, ttKeys));
+  if (vcpOnly) rows = rows.filter(r => !!r.vcp_detected);
+  if (squeezeFreshOnly) rows = rows.filter(r => r.pattern_name !== 'MA Squeeze' || !!r.squeeze_fresh);
+  const monSet = _monitorFilterSet(monitorVal);
+  if (monSet) rows = rows.filter(r => monSet.has((r.ticker || '').toUpperCase()));
 
-  const anyFilter = patFilter || tickerFilter || ttKeys.length;
-  document.getElementById('pattern-count').textContent = anyFilter
+  if (_patSortCol) {
+    rows = rows.slice().sort((a, b) => {
+      const va = a[_patSortCol], vb = b[_patSortCol];
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      const cmp = typeof va === 'number' ? va - vb : String(va).localeCompare(String(vb));
+      return _patSortAsc ? cmp : -cmp;
+    });
+  } else if (patFilter === 'MA Squeeze') {
+    // Default squeeze ordering: newest squeezes first, tightest as tiebreaker
+    rows = rows.slice().sort((a, b) => {
+      const da = a.squeeze_days, db = b.squeeze_days;
+      if (da != null && db != null && da !== db) return da - db;
+      if (da == null && db != null) return 1;
+      if (da != null && db == null) return -1;
+      const sa = a.squeeze_spread_pct, sb = b.squeeze_spread_pct;
+      if (sa == null && sb == null) return 0;
+      if (sa == null) return 1;
+      if (sb == null) return -1;
+      return sa - sb;
+    });
+  }
+
+  const anyFilter = patFilter || tickerFilter || ttKeys.length || vcpOnly || squeezeFreshOnly || !!monitorVal;
+  const monitorSuffix = _monitorFilterLabel(monitorVal) ? ` (Monitor: ${_monitorFilterLabel(monitorVal)})` : '';
+  document.getElementById('pattern-count').textContent = (anyFilter
     ? `${rows.length} of ${_lastPatternRows.length} shown`
-    : `${_lastPatternRows.length} result${_lastPatternRows.length !== 1 ? 's' : ''}`;
+    : `${_lastPatternRows.length} result${_lastPatternRows.length !== 1 ? 's' : ''}`) + monitorSuffix;
 
   const ttCountEl = document.getElementById('pat-tt-count');
   if (ttCountEl) ttCountEl.textContent = ttKeys.length
@@ -2746,10 +4043,36 @@ function _applyPatternsub() {
   _renderPatternRows(rows);
 }
 
+function _patSort(th) {
+  const col = th.dataset.col;
+  if (_patSortCol === col) {
+    _patSortAsc = !_patSortAsc;
+  } else {
+    _patSortCol = col;
+    _patSortAsc = col !== 'current_price_vs_pivot' && col !== 'vcp_detected';
+  }
+  document.querySelectorAll('#patterns-head th').forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
+  th.classList.add(_patSortAsc ? 'sort-asc' : 'sort-desc');
+  _applyPatternsub();
+}
+
+// Compact VCP badge: "VCP ✓ (n)" pill with contraction/tightness/dry-up detail on hover.
+// Reads only the already-computed vcp_signals fields joined onto each row — no recomputation.
+function _vcpBadge(r) {
+  if (r.vcp_detected == null) return '<span class="tt-pill">—</span>';
+  if (!r.vcp_detected) return '<span class="tt-pill">No VCP</span>';
+  const depths = Array.isArray(r.contraction_depths) && r.contraction_depths.length
+    ? r.contraction_depths.join('% → ') + '%' : '—';
+  const title = `${r.num_contractions} contraction(s): ${depths}`
+    + (r.volume_dryup ? ', volume dry-up ✓' : ', no volume dry-up')
+    + (r.tightness_pct != null ? `, tightness ${r.tightness_pct.toFixed(1)}%` : '');
+  return `<span class="tt-pill tt-full" title="${title}">VCP &#10003; (${r.num_contractions})</span>`;
+}
+
 function _renderPatternRows(rows) {
   if (!rows.length) {
     document.getElementById('patterns-body').innerHTML =
-      `<tr><td colspan="20" class="state-msg">No patterns match this filter.</td></tr>`;
+      `<tr><td colspan="26" class="state-msg">No patterns match this filter.</td></tr>`;
     return;
   }
   document.getElementById('patterns-body').innerHTML = rows.map(r => {
@@ -2767,14 +4090,17 @@ function _renderPatternRows(rows) {
     const momStart = isMom && r.mom_15d_start != null ? fmtVal(r.mom_15d_start, '$') : '—';
     const momGain  = isMom && r.mom_15d_gain_pct != null
       ? `<span style="color:var(--green);font-weight:600">+${r.mom_15d_gain_pct.toFixed(1)}%</span>` : '—';
-    const ttData  = _ttMap?.[r.ticker];
     const fmtTt   = v => v != null ? Number(v).toFixed(2) : '—';
-    const rsRank  = ttData?.rs_rank;
+    const rsRank  = r.rs_rank;
     const rsCell  = rsRank != null
       ? `<span style="font-weight:600;color:${rsRank >= 70 ? 'var(--green)' : rsRank >= 50 ? 'var(--text)' : 'var(--muted)'}">${rsRank}</span>`
       : '—';
+    const vsPivot = r.current_price_vs_pivot;
+    const vsPivotCell = vsPivot != null
+      ? `<span style="font-weight:600;color:${vsPivot >= 0 ? 'var(--green)' : 'var(--muted)'}">${vsPivot >= 0 ? '+' : ''}${vsPivot.toFixed(1)}%</span>`
+      : '—';
     return `<tr class="${rowCls}">
-      <td class="left ticker-cell">${r.ticker}</td>
+      <td class="left ticker-cell">${r.ticker}${_congressBadge(r.ticker)}</td>
       <td class="scan-date-col" style="font-size:11px;color:var(--muted);font-family:monospace">${fmtDate(r.scan_date)}</td>
       <td class="left"><span class="ppill ${pillCls}">${r.pattern_name}</span></td>
       <td class="left" style="color:var(--muted);font-size:11px;white-space:normal;max-width:240px">${r.signal_detail || '—'}</td>
@@ -2783,13 +4109,17 @@ function _renderPatternRows(rows) {
       <td>${momStart}</td>
       <td>${momGain}</td>
       <td>${dayPctCell(r.pct_change)}</td>
-      <td>${fmtVal(r.ma10)}</td><td>${fmtVal(r.ma30)}</td>
-      <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma200)}</td>
-      <td>${fmtTt(ttData?.ma150)}</td>
-      <td>${fmtTt(ttData?.low_52wk)}</td>
-      <td>${fmtTt(ttData?.high_52wk)}</td>
+      <td>${fmtVal(r.ma9)}</td><td>${fmtVal(r.ma21)}</td><td>${fmtVal(r.ma30)}</td>
+      <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma100)}</td><td>${fmtVal(r.ma200)}</td>
+      <td>${fmtTt(r.ma150)}</td>
+      <td>${fmtTt(r.low_52wk)}</td>
+      <td>${fmtTt(r.high_52wk)}</td>
       <td style="text-align:center">${rsCell}</td>
-      <td style="text-align:center">${_ttBadge(ttData)}</td>
+      <td style="text-align:center">${_ttBadge(r)}</td>
+      <td style="text-align:center">${_vcpBadge(r)}</td>
+      <td>${fmtVal(r.pivot_price,'$')}</td>
+      <td>${fmtVal(r.suggested_stop,'$')}</td>
+      <td>${vsPivotCell}</td>
       <td>${watchBtn}</td>
       <td>${btBtn}</td>
     </tr>`;
@@ -2811,6 +4141,26 @@ function addPatternToMonitor(ticker, patternName, signalDate, closePrice, btn) {
 
 function patternAddToBacktest(ticker, p0, signalDate, patternName, btn) {
   const added = addToBacktestQueue(ticker, p0, signalDate, 'Pattern: ' + patternName);
+  btn.textContent = '✓ Queued';
+  btn.style.color = 'var(--green)'; btn.style.borderColor = 'var(--green)';
+  btn.style.cursor = 'default'; btn.disabled = true; btn.onclick = null;
+}
+
+function dvAddToMonitor(ticker, date, closePrice, btn) {
+  const reason = `Data tab snapshot on ${date}`;
+  if (!_watchlists.length) {
+    _doAddToMonitor(ticker, date, closePrice, 1, btn, '#dv-body', reason);
+    return;
+  }
+  if (_watchlists.length === 1) {
+    _doAddToMonitor(ticker, date, closePrice, _watchlists[0].id, btn, '#dv-body', reason);
+    return;
+  }
+  showWlPicker(btn, wlId => _doAddToMonitor(ticker, date, closePrice, wlId, btn, '#dv-body', reason));
+}
+
+function dvAddToBacktest(ticker, p0, date, btn) {
+  addToBacktestQueue(ticker, p0, date, 'Data tab');
   btn.textContent = '✓ Queued';
   btn.style.color = 'var(--green)'; btn.style.borderColor = 'var(--green)';
   btn.style.cursor = 'default'; btn.disabled = true; btn.onclick = null;
@@ -3117,6 +4467,198 @@ async function runInsiderScan() {
       clearInterval(_insiderScanTimer);
     }
   }, 1500);
+}
+
+// ── Congress / political trading ────────────────────────────────────────
+let _congressInitialised = false;
+
+function loadCongress() {
+  if (!_congressInitialised) {
+    _congressInitialised = true;
+    // Pre-fill date range: last 180 days (same convention as Insider tab)
+    const pad = n => String(n).padStart(2,'0');
+    const today = new Date();
+    const from  = new Date(today); from.setDate(from.getDate() - 180);
+    const fmt   = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    const fromEl = document.getElementById('congress-from');
+    const toEl   = document.getElementById('congress-to');
+    if (fromEl && !fromEl.value) fromEl.value = fmt(from);
+    if (toEl   && !toEl.value)   toEl.value   = fmt(today);
+    fetchCongress();
+
+    // Default the summary panel to the current calendar month
+    const sumMonthEl = document.getElementById('congress-sum-month-from');
+    if (sumMonthEl && !sumMonthEl.value) sumMonthEl.value = `${today.getFullYear()}-${pad(today.getMonth()+1)}`;
+    loadCongressSummary();
+  }
+}
+
+async function fetchCongress() {
+  loading('congress-body', 14);
+  const from    = document.getElementById('congress-from').value;
+  const to      = document.getElementById('congress-to').value;
+  const tk      = (document.getElementById('congress-ticker').value || '').trim().toUpperCase();
+  const pol     = (document.getElementById('congress-politician').value || '').trim();
+  const chamber = document.getElementById('congress-chamber').value;
+  const party   = document.getElementById('congress-party').value;
+  const type    = document.getElementById('congress-type').value;
+  const qs = new URLSearchParams();
+  if (from)    qs.set('from', from);
+  if (to)      qs.set('to', to);
+  if (tk)      qs.set('ticker', tk);
+  if (pol)     qs.set('politician', pol);
+  if (chamber) qs.set('chamber', chamber);
+  if (party)   qs.set('party', party);
+  if (type)    qs.set('type', type);
+  try {
+    const data = (await apiFetch('/api/congress?' + qs)).data;
+    renderCongress(data);
+  } catch(e) { empty('congress-body', 14, '⚠ ' + e.message); }
+}
+
+function renderCongress(rows) {
+  if (!rows || !rows.length) {
+    empty('congress-body', 14, 'No Congress trades found for this filter — try "Fetch Data" first.');
+    return;
+  }
+  document.getElementById('congress-body').innerHTML = rows.map(r => {
+    const rowCls = r.cluster_buy ? 'ins-cluster' : (r.type === 'SELL' ? 'ins-sale' : '');
+    const clusterBadge = r.cluster_buy
+      ? '<span style="background:#fed7aa;color:#9a3412;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:600">CLUSTER</span>'
+      : '<span class="dim">—</span>';
+    const filingLink = r.filing_url
+      ? `<a href="${r.filing_url}" target="_blank" style="font-size:11px;color:var(--accent)">View ↗</a>`
+      : '<span class="dim">—</span>';
+    const typeColors = {BUY:['#dcfce7','#15803d'], SELL:['#fee2e2','#b91c1c'], EXCHANGE:['#e0e7ff','#3730a3']};
+    const [tbg, tfg] = typeColors[r.type] || ['#f1f5f9', '#475569'];
+    const typeBadge = r.type
+      ? `<span style="background:${tbg};color:${tfg};padding:1px 6px;border-radius:999px;font-size:10px;font-weight:600">${r.type}</span>`
+      : '<span class="dim">—</span>';
+    const partyColors = {D:['#dbeafe','#1d4ed8'], R:['#fee2e2','#b91c1c'], I:['#ede9fe','#6d28d9']};
+    const [pbg, pfg] = partyColors[r.party] || ['#f1f5f9', '#475569'];
+    const partyBadge = r.party
+      ? `<span style="background:${pbg};color:${pfg};padding:1px 6px;border-radius:999px;font-size:10px;font-weight:600">${r.party}</span>`
+      : '<span class="dim">—</span>';
+    return `<tr class="${rowCls}">
+      <td style="font-family:monospace">${fmtDate(r.tx_date)}</td>
+      <td style="font-family:monospace;color:var(--muted)">${fmtDate(r.filed_date)}</td>
+      <td class="left ticker-cell"><strong>${r.ticker || '—'}</strong></td>
+      <td class="left" style="max-width:180px;color:var(--muted)">${r.company || '—'}</td>
+      <td class="left" style="max-width:160px">${r.politician_name || '—'}</td>
+      <td style="color:var(--muted)">${r.chamber || '—'}</td>
+      <td style="text-align:center">${partyBadge}</td>
+      <td class="left" style="color:var(--muted)">${r.state_or_district || '—'}</td>
+      <td style="text-align:center">${typeBadge}</td>
+      <td class="left">${r.amount_range || '—'}</td>
+      <td class="left" style="font-size:11px">${r.source || '—'}</td>
+      <td style="text-align:center">${clusterBadge}</td>
+      <td>${filingLink}</td>
+      <td><button class="del-btn" onclick='deleteRecord("congress",${r.id})'>&#215;</button></td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Congress fetch trigger + log polling ────────────────────────────────
+let _congressFetchTimer = null;
+
+async function runCongressFetch() {
+  const statusBar = document.getElementById('congress-fetch-log');
+  const statEl    = document.getElementById('congress-fetch-status');
+  const btn       = document.getElementById('congress-fetch-btn');
+
+  statusBar.textContent = '';
+  statusBar.style.display = 'block';
+  statEl.textContent = 'Starting…';
+  btn.disabled = true;
+
+  try {
+    await apiFetch('/api/congress/fetch', { method: 'POST' });
+  } catch(e) {
+    statEl.textContent = '⚠ ' + e.message;
+    statusBar.textContent = e.message;
+    btn.disabled = false;
+    return;
+  }
+
+  clearInterval(_congressFetchTimer);
+  _congressFetchTimer = setInterval(async () => {
+    try {
+      const s = await apiFetch('/api/congress/fetch/status');
+      const lines = s.log || [];
+      statusBar.textContent = lines.slice(-6).join('\n') || 'Running…';
+
+      if (s.error) {
+        statEl.textContent = '⚠ Error';
+        btn.disabled = false;
+        clearInterval(_congressFetchTimer);
+      } else if (!s.running) {
+        const sum = s.summary || {};
+        statusBar.textContent = `Complete — ${sum.inserted ?? '?'} new records saved `
+          + `(${sum.normalised ?? '?'} Congress records seen, ${sum.total ?? '?'} total in DB)`;
+        statEl.textContent = 'Done ✓';
+        btn.disabled = false;
+        clearInterval(_congressFetchTimer);
+        await fetchCongress();
+        await loadCongressSummary();
+        await _refreshCongressTickerSet();
+      }
+    } catch(e) {
+      statEl.textContent = '⚠ ' + e.message;
+      statusBar.textContent = e.message;
+      btn.disabled = false;
+      clearInterval(_congressFetchTimer);
+    }
+  }, 1500);
+}
+
+// ── Congress monthly summary (top bought/sold tickers) ──────────────────
+async function loadCongressSummary() {
+  const monthFrom = document.getElementById('congress-sum-month-from').value;
+  const monthTo   = document.getElementById('congress-sum-month-to').value;
+  const chamber   = document.getElementById('congress-sum-chamber').value;
+  const party     = document.getElementById('congress-sum-party').value;
+  const statEl    = document.getElementById('congress-sum-status');
+  if (!monthFrom) { statEl.textContent = 'Pick a month first.'; return; }
+
+  statEl.textContent = 'Loading…';
+  const qs = new URLSearchParams({ month_from: monthFrom });
+  if (monthTo)  qs.set('month_to', monthTo);
+  if (chamber)  qs.set('chamber', chamber);
+  if (party)    qs.set('party', party);
+
+  try {
+    const s = await apiFetch('/api/congress/summary?' + qs);
+    const filterBits = [s.chamber, s.party].filter(Boolean).join(' · ');
+    statEl.textContent = (s.month_from === s.month_to
+      ? `Showing ${s.month_from}`
+      : `Showing ${s.month_from} → ${s.month_to}`) + (filterBits ? ` (${filterBits})` : '');
+
+    document.getElementById('congress-sum-cards').innerHTML = `
+      <div class="card"><div class="card-label">Buy Trades</div><div class="card-value green">${s.totals.total_buys ?? 0}</div></div>
+      <div class="card"><div class="card-label">Sell Trades</div><div class="card-value red">${s.totals.total_sells ?? 0}</div></div>
+      <div class="card"><div class="card-label">Distinct Tickers</div><div class="card-value">${s.totals.distinct_tickers ?? 0}</div></div>
+      <div class="card"><div class="card-label">Active Politicians</div><div class="card-value">${s.totals.distinct_politicians ?? 0}</div></div>`;
+
+    const rowsHtml = (list) => list.length
+      ? list.map(r => `<tr>
+          <td class="left ticker-cell" style="cursor:pointer" title="Click to filter the table below by this ticker"
+              onclick="_congressFilterByTicker('${r.ticker}')"><strong>${r.ticker}</strong></td>
+          <td>${r.trade_count}</td>
+          <td>${r.politician_count}</td>
+        </tr>`).join('')
+      : '<tr><td colspan="3" class="state-msg">No trades this period.</td></tr>';
+    document.getElementById('congress-sum-buys-body').innerHTML  = rowsHtml(s.top_buys);
+    document.getElementById('congress-sum-sells-body').innerHTML = rowsHtml(s.top_sells);
+  } catch(e) {
+    statEl.textContent = '⚠ ' + e.message;
+    document.getElementById('congress-sum-buys-body').innerHTML  = `<tr><td colspan="3" class="state-msg">⚠ ${e.message}</td></tr>`;
+    document.getElementById('congress-sum-sells-body').innerHTML = `<tr><td colspan="3" class="state-msg">⚠ ${e.message}</td></tr>`;
+  }
+}
+
+function _congressFilterByTicker(ticker) {
+  document.getElementById('congress-ticker').value = ticker;
+  fetchCongress();
 }
 
 function _btRules() {
@@ -3603,24 +5145,43 @@ let _dvSortAsc    = true;
 let _dvInitialised = false;
 
 async function loadDataView(force) {
-  if (_dvInitialised && !force) return;
-  loading('dv-body', 17);
+  const dateEl = document.getElementById('dv-date');
+  if (!dateEl.value) {
+    const t = new Date();
+    dateEl.value = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+  }
+  if (_dvInitialised && !force) {
+    await _refreshMonitorSet();
+    await _loadScreenerMeta();
+    _dvRender(); // re-render in case monitor set changed (e.g. added from another tab)
+    return;
+  }
+  loading('dv-body', 22);
   document.getElementById('dv-count').textContent = '';
   try {
-    _dvData = await apiFetch('/api/data/summary');
+    const qs = dateEl.value ? `?date=${encodeURIComponent(dateEl.value)}` : '';
+    const [data] = await Promise.all([
+      apiFetch('/api/data/summary' + qs), _refreshMonitorSet(), _loadScreenerMeta(),
+    ]);
+    _dvData = data;
     _dvInitialised = true;
     _dvRender();
   } catch(e) {
-    empty('dv-body', 17, 'Error: ' + e.message);
+    empty('dv-body', 22, 'Error: ' + e.message);
   }
 }
 
 function _dvRender() {
-  const filter  = (document.getElementById('dv-filter').value || '').toUpperCase();
-  const ttKeys  = _ttChecked('dv');
+  const filter    = (document.getElementById('dv-filter').value || '').toUpperCase();
+  const ttKeys    = _ttChecked('dv');
+  const minRsEl   = document.getElementById('dv-min-rs').value;
+  const minRs     = minRsEl !== '' ? Number(minRsEl) : null;
+  const trackedOnly = document.getElementById('dv-tracked-only').checked;
   const allRows = _dvData
     .filter(r => !filter || r.ticker.includes(filter))
     .filter(r => _ttPassRow(r, ttKeys))
+    .filter(r => minRs == null || (r.rs_rank != null && r.rs_rank >= minRs))
+    .filter(r => !trackedOnly || r.tracked === 1)
     .sort((a, b) => {
       const va = a[_dvSortCol] ?? '';
       const vb = b[_dvSortCol] ?? '';
@@ -3636,7 +5197,7 @@ function _dvRender() {
     ? `${allRows.length} match${allRows.length !== 1 ? '' : 'es'} TT filter`
     : '';
 
-  if (!allRows.length) { empty('dv-body', 17, 'No tickers match.'); return; }
+  if (!allRows.length) { empty('dv-body', 22, 'No tickers match.'); return; }
 
   document.getElementById('dv-body').innerHTML = allRows.map(r => {
     const pct     = r.pct_change;
@@ -3649,8 +5210,19 @@ function _dvRender() {
     const dot = ok => `<span style="color:${ok ? 'var(--green)' : 'var(--red)'};font-size:16px">●</span>`;
     const fmt = v  => v != null ? Number(v).toFixed(2) : '—';
     const vol = v  => v != null ? Number(v).toLocaleString() : '—';
+    const inMon   = _monitorTickers.has(r.ticker);
+    const inQueue = !!_btQueue.find(x => x.ticker === r.ticker);
+    const trackedDot = r.tracked === 1
+      ? '<span title="In your Ticker List" style="color:var(--green)">&#9679;</span> '
+      : '';
+    const watchBtn = inMon
+      ? `<button class="del-btn watch-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Watching</button>`
+      : `<button class="del-btn watch-btn" onclick="dvAddToMonitor('${r.ticker}','${r.date||''}',${r.close||0},this)">+ Watch</button>`;
+    const btBtn = inQueue
+      ? `<button class="del-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Queued</button>`
+      : `<button class="del-btn" onclick="dvAddToBacktest('${r.ticker}',${r.close||0},'${r.date||''}',this)">+ Backtest</button>`;
     return `<tr>
-      <td class="left ticker-cell"><strong>${r.ticker}</strong></td>
+      <td class="left ticker-cell">${trackedDot}<strong>${r.ticker}</strong></td>
       <td>${r.date || '—'}</td>
       <td><strong>${fmt(r.close)}</strong></td>
       <td>${pctCell}</td>
@@ -3660,12 +5232,17 @@ function _dvRender() {
       <td>${fmt(r.ma50)}</td>
       <td>${fmt(r.ma150)}</td>
       <td>${fmt(r.ma200)}</td>
+      <td>${rsiCell(r.rsi14)}</td>
       <td>${fmt(r.low_52wk)}</td>
       <td>${fmt(r.high_52wk)}</td>
       <td style="text-align:center;font-weight:600;color:${r.rs_rank != null ? (r.rs_rank >= 70 ? 'var(--green)' : r.rs_rank >= 50 ? 'var(--text)' : 'var(--muted)') : 'var(--muted)'}">${r.rs_rank != null ? r.rs_rank : '—'}</td>
+      <td>${r.rs_score != null ? Number(r.rs_score).toFixed(3) : '—'}</td>
+      <td>${_sparkline(r.rs_line_history)}</td>
       <td style="text-align:center">${dot(ma10gtMa30)}</td>
       <td style="text-align:center">${dot(aboveMa200)}</td>
       <td style="text-align:center">${_ttBadge(r)}</td>
+      <td>${watchBtn}</td>
+      <td>${btBtn}</td>
       <td><button class="del-btn" onclick="openDvHistory('${r.ticker}')">History</button></td>
     </tr>`;
   }).join('');
@@ -3797,24 +5374,80 @@ async function loadVolumeProfile() {
 }
 
 // ═══════════════════════════════════════
+//  RS Rating Screener (S&P 500 + Russell 1000 universe)
+// ═══════════════════════════════════════
+async function _loadScreenerMeta() {
+  try {
+    const meta = await apiFetch('/api/screener/meta');
+    document.getElementById('scr-meta-active').textContent =
+      `${meta.total_active || 0} active tickers`;
+    document.getElementById('scr-meta-sources').textContent =
+      `(S&P500: ${meta.sp500_count || 0} · Russell1000: ${meta.russell1000_count || 0} · overlap: ${meta.overlap_count || 0})`;
+    document.getElementById('scr-meta-refresh').textContent =
+      meta.last_refresh_date ? `last refreshed ${meta.last_refresh_date}` : 'never refreshed';
+  } catch(e) {
+    document.getElementById('scr-meta-active').textContent = 'Error loading universe info';
+  }
+}
+
+async function refreshUniverseNow(btn) {
+  const prevText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Refreshing…';
+  try {
+    await apiFetch('/api/universe/refresh', { method: 'POST' });
+    await _loadScreenerMeta();
+    await loadDataView(true);
+  } catch(e) {
+    alert('Universe refresh failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prevText;
+  }
+}
+
+function _sparkline(values) {
+  const vals = (values || []).filter(v => v != null);
+  if (vals.length < 2) return '<span style="color:var(--muted)">—</span>';
+  const w = 70, h = 22, pad = 2;
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const range = (max - min) || 1;
+  const step = (w - pad * 2) / (vals.length - 1);
+  const pts = vals.map((v, i) =>
+    `${(pad + i * step).toFixed(1)},${(h - pad - ((v - min) / range) * (h - pad * 2)).toFixed(1)}`
+  ).join(' ');
+  const trendColor = vals[vals.length - 1] >= vals[0] ? 'var(--green)' : 'var(--red)';
+  return `<svg width="${w}" height="${h}" style="display:block"><polyline points="${pts}" fill="none" stroke="${trendColor}" stroke-width="1.5"/></svg>`;
+}
+
+// ═══════════════════════════════════════
 //  Init
 // ═══════════════════════════════════════
-// Set default signal date range: From = 30 days ago, To = today
+// Default signal date range: last 3 calendar days through today. A single exact
+// day was tried and rejected — mixed exchange calendars (e.g. .HK tickers) and
+// fetch timing mean "today" alone often has data for only a handful of tickers,
+// making the tab look empty. 3 days reliably covers every ticker's latest signal
+// while staying far below the 5,000-row cap (see SIGNAL_ROW_CAP); widen manually
+// for more history.
 (function initSignalDates() {
   const pad  = n => String(n).padStart(2, '0');
   const fmt  = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
   const today = new Date();
-  const ago30 = new Date(today); ago30.setDate(today.getDate() - 30);
+  const ago3  = new Date(today); ago3.setDate(today.getDate() - 3);
   document.getElementById('sig-to').value   = fmt(today);
-  document.getElementById('sig-from').value = fmt(ago30);
-  document.getElementById('rsi-to').value   = fmt(today);
-  document.getElementById('rsi-from').value = fmt(ago30);
+  document.getElementById('sig-from').value = fmt(ago3);
 })();
 
 document.getElementById('last-updated').textContent =
   'Updated ' + new Date().toLocaleTimeString();
 loadHoldings();
 _loadWatchlists(); // pre-load so + Watch picker works from any tab
+_refreshCongressTickerSet(); // pre-load so the Congress badge works from any tab
+_surgeNotifyBtn();
+pollSurgeAlerts();                       // badge/notifications for the Surge Strategy tab from any tab
+setInterval(pollSurgeAlerts, 60000);
+_updateSigControlVisibility(currentSignalType); // sync Signals-tab controls for the default type
+                                                 // (setSignalType() never runs for it — see its own comment)
 </script>
 </body>
 </html>

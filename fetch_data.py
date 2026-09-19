@@ -11,10 +11,13 @@ import math
 import sys
 from datetime import datetime, timezone
 
+import numpy as np
 import pandas as pd
 import yfinance as yf
 
 from db_setup import get_connection, setup_database, DB_PATH
+import universe
+import rs_calculator
 
 
 def _nb(cond: pd.Series, *deps) -> pd.Series:
@@ -42,6 +45,7 @@ def _calculate_indicators(data: pd.DataFrame) -> pd.DataFrame:
     data["MA10"]        = data["Close"].rolling(window=10).mean()
     data["MA30"]        = data["Close"].rolling(window=30).mean()
     data["MA50"]        = data["Close"].rolling(window=50).mean()
+    data["MA100"]       = data["Close"].rolling(window=100).mean()
     data["MA150"]       = data["Close"].rolling(window=150).mean()
     data["MA200"]       = data["Close"].rolling(window=200).mean()
     data["Vol_MA10"]    = data["Volume"].rolling(window=10).mean()
@@ -61,6 +65,24 @@ def _calculate_indicators(data: pd.DataFrame) -> pd.DataFrame:
     # ── 52-week range ─────────────────────────────────────────────────
     data["High_52wk"] = data["Close"].rolling(window=252, min_periods=1).max()
     data["Low_52wk"]  = data["Close"].rolling(window=252, min_periods=1).min()
+
+    # ── All-time low (point-in-time, bounded by however much history is in
+    # the DB) — cumulative min of the daily Low from the earliest fetched
+    # row, used by the "Price >= Nx Low" signal to flag the exact day a
+    # stock's close first crosses N times whatever its low had been so far.
+    data["Low_AllTime"] = data["Low"].cummin()
+
+    # Date that running low was actually set on. Pandas has no built-in
+    # "cumulative argmin" over an expanding window, so this is done with
+    # numpy: find every row that set a new record low, then for each row
+    # look up the most recent such record via searchsorted.
+    low_vals = data["Low"].to_numpy()
+    running_min = np.minimum.accumulate(low_vals)
+    is_record = np.ones(len(low_vals), dtype=bool)
+    is_record[1:] = running_min[1:] < running_min[:-1]
+    record_pos = np.flatnonzero(is_record)
+    last_record_pos = record_pos[np.searchsorted(record_pos, np.arange(len(low_vals)), side="right") - 1]
+    data["Low_AllTime_Date"] = data.index[last_record_pos]
 
     # ── RS raw: weighted price performance (IBD-style approximation) ──
     p63  = data["Close"].pct_change(63)
@@ -107,10 +129,9 @@ def _calculate_indicators(data: pd.DataFrame) -> pd.DataFrame:
 
 def _detect_signals(ticker: str, data: pd.DataFrame) -> list[dict]:
     """Return one signal dict per (date, type) where the condition is met.
-
-    Scans ALL rows so the breakout_signals table is fully populated when the
-    fetcher runs, not just the single latest date.  The UNIQUE constraint on
-    (ticker, signal_type, signal_date) in the DB prevents duplicates.
+    Used only to summarise which signals are active on the latest row for the
+    fetch progress log — signals themselves are computed live from
+    stocks_daily by the /api/signals/* endpoints, not stored separately.
     """
     signals = []
     for date, row in data.iterrows():
@@ -170,9 +191,12 @@ def _upsert_daily_rows(conn, ticker: str, data: pd.DataFrame, fetched_at: str):
             _safe(row.get("Pct_Change")),
             row.get("Direction", ""),
             _safe(row.get("RSI14")),
+            _safe(row.get("MA100")),
             _safe(row.get("MA150")),
             _safe(row.get("High_52wk")),
             _safe(row.get("Low_52wk")),
+            _safe(row.get("Low_AllTime")),
+            _safe_date(row.get("Low_AllTime_Date")),
             _safe(row.get("RS_raw")),
             _safe_int(row.get("C1")),
             _safe_int(row.get("C2")),
@@ -190,10 +214,10 @@ def _upsert_daily_rows(conn, ticker: str, data: pd.DataFrame, fetched_at: str):
              ma6, ma10, ma30, ma50, ma200,
              high_30d, low_30d, vol_ma10,
              price_change, pct_change, direction, rsi14,
-             ma150, high_52wk, low_52wk, rs_raw,
+             ma100, ma150, high_52wk, low_52wk, low_alltime, low_alltime_date, rs_raw,
              c1, c2, c3, c4, c5, c6, c8,
              fetched_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(ticker, date) DO UPDATE SET
             open=excluded.open, high=excluded.high, low=excluded.low,
             close=excluded.close, volume=excluded.volume,
@@ -203,8 +227,9 @@ def _upsert_daily_rows(conn, ticker: str, data: pd.DataFrame, fetched_at: str):
             vol_ma10=excluded.vol_ma10,
             price_change=excluded.price_change, pct_change=excluded.pct_change,
             direction=excluded.direction, rsi14=excluded.rsi14,
-            ma150=excluded.ma150, high_52wk=excluded.high_52wk,
-            low_52wk=excluded.low_52wk, rs_raw=excluded.rs_raw,
+            ma100=excluded.ma100, ma150=excluded.ma150, high_52wk=excluded.high_52wk,
+            low_52wk=excluded.low_52wk, low_alltime=excluded.low_alltime,
+            low_alltime_date=excluded.low_alltime_date, rs_raw=excluded.rs_raw,
             c1=excluded.c1, c2=excluded.c2, c3=excluded.c3, c4=excluded.c4,
             c5=excluded.c5, c6=excluded.c6, c8=excluded.c8,
             rs_rank=NULL, c7=NULL, trend_score=NULL,
@@ -212,21 +237,16 @@ def _upsert_daily_rows(conn, ticker: str, data: pd.DataFrame, fetched_at: str):
     """, rows)
 
 
-def _upsert_signals(conn, signals: list[dict]):
-    for s in signals:
-        conn.execute("""
-            INSERT INTO breakout_signals
-                (ticker, signal_type, signal_date, close_price, indicator_value)
-            VALUES (:ticker, :signal_type, :signal_date, :close_price, :indicator_value)
-            ON CONFLICT(ticker, signal_type, signal_date) DO NOTHING
-        """, s)
-
-
 def _log_skipped(conn, ticker: str, reason: str):
-    conn.execute(
-        "INSERT INTO skipped_stocks (ticker, reason) VALUES (?, ?)",
-        (ticker, reason)
-    )
+    """One row per ticker: repeated skips/errors update the existing row
+    instead of accumulating a new one on every fetch attempt."""
+    conn.execute("""
+        INSERT INTO skipped_stocks (ticker, reason, skipped_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(ticker) DO UPDATE SET
+            reason = excluded.reason,
+            skipped_at = excluded.skipped_at
+    """, (ticker, reason))
 
 
 # ---------------------------------------------------------------------------
@@ -249,15 +269,24 @@ def _safe_int(val):
         return None
 
 
+def _safe_date(val):
+    if val is None or pd.isna(val):
+        return None
+    try:
+        return pd.Timestamp(val).strftime("%Y-%m-%d")
+    except (TypeError, ValueError):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Cross-ticker RS Rank + Trend Template post-pass
 # ---------------------------------------------------------------------------
 
-def _compute_rs_rank(conn, emit):
+def _compute_rs_rank(conn, emit, table="stocks_daily"):
     """Cross-sectional percentile rank (1-99) of RS_raw per trading date."""
-    emit("RS Rank: loading RS_raw data...")
+    emit(f"RS Rank ({table}): loading RS_raw data...")
     raw = conn.execute(
-        "SELECT ticker, date, rs_raw FROM stocks_daily WHERE rs_raw IS NOT NULL ORDER BY date"
+        f"SELECT ticker, date, rs_raw FROM {table} WHERE rs_raw IS NOT NULL ORDER BY date"
     ).fetchall()
 
     by_date = {}
@@ -277,36 +306,150 @@ def _compute_rs_rank(conn, emit):
 
     if updates:
         conn.executemany(
-            "UPDATE stocks_daily SET rs_rank = ? WHERE ticker = ? AND date = ?",
+            f"UPDATE {table} SET rs_rank = ? WHERE ticker = ? AND date = ?",
             updates,
         )
-    emit(f"RS Rank: updated {len(updates)} rows across {len(by_date)} dates.")
+    emit(f"RS Rank ({table}): updated {len(updates)} rows across {len(by_date)} dates.")
 
 
-def _compute_trend_template(conn, emit):
-    """Compute C7 (rs_rank >= 70) and trend_score for every row via SQL."""
-    conn.execute("""
-        UPDATE stocks_daily SET
+def _compute_trend_template(conn, emit, table="stocks_daily"):
+    """Compute C7 and trend_score for every row via SQL.
+
+    C7 baseline is the self-relative rs_rank (>=70) among currently-tracked
+    tickers, same as before. Wherever a real market-wide RS Rating exists in
+    rs_ratings (S&P 500 + Russell 1000 universe — see universe.py /
+    rs_calculator.py) for that exact ticker+date, it overrides the baseline
+    so C7 reflects the real universe percentile instead of the self-relative
+    approximation.
+
+    `table` is always an internal literal ("stocks_daily" or
+    "universe_prices"), never user input, so f-string interpolation is safe.
+    """
+    conn.execute(f"""
+        UPDATE {table} SET
             c7 = CASE
                     WHEN rs_rank IS NULL  THEN NULL
                     WHEN rs_rank >= 70    THEN 1
                     ELSE 0
-                 END,
+                 END
+    """)
+    conn.execute(f"""
+        UPDATE {table}
+        SET c7 = (
+            SELECT CASE WHEN r.rs_rating >= 70 THEN 1 ELSE 0 END
+            FROM rs_ratings r
+            WHERE r.ticker = {table}.ticker AND r.date = {table}.date
+        )
+        WHERE EXISTS (
+            SELECT 1 FROM rs_ratings r
+            WHERE r.ticker = {table}.ticker AND r.date = {table}.date
+        )
+    """)
+    conn.execute(f"""
+        UPDATE {table} SET
             trend_score = (
                 COALESCE(c1,0) + COALESCE(c2,0) + COALESCE(c3,0) +
                 COALESCE(c4,0) + COALESCE(c5,0) + COALESCE(c6,0) +
-                CASE WHEN rs_rank IS NOT NULL AND rs_rank >= 70 THEN 1 ELSE 0 END +
-                COALESCE(c8,0)
+                COALESCE(c7,0) + COALESCE(c8,0)
             )
     """)
-    emit("Trend Template: C7 and scores updated.")
+    emit(f"Trend Template ({table}): C7 and scores updated.")
+
+
+def _compute_universe_indicators(conn, tickers: list[str], emit):
+    """Compute MAs / 52wk hi-lo / Trend Template C1-C6,C8 for every universe
+    ticker's stored OHLCV history in universe_prices, mirroring what
+    _upsert_daily_rows does for stocks_daily. Reuses _calculate_indicators()
+    since it's already ticker-agnostic — only the read/write side (SQLite
+    table instead of a yfinance download) differs from the tracked-ticker
+    path."""
+    emit(f"Universe indicators: computing for {len(tickers)} tickers...")
+    updates = []
+    processed = 0
+    for ticker in tickers:
+        df = pd.read_sql_query(
+            "SELECT date, open, high, low, close, volume FROM universe_prices "
+            "WHERE ticker = ? ORDER BY date",
+            conn, params=(ticker,),
+        )
+        if df.empty:
+            continue
+        df = df.rename(columns={
+            "open": "Open", "high": "High", "low": "Low",
+            "close": "Close", "volume": "Volume",
+        })
+        df.index = pd.to_datetime(df.pop("date"))
+        calc = _calculate_indicators(df)
+        for date, row in calc.iterrows():
+            updates.append((
+                _safe(row.get("MA6")), _safe(row.get("MA10")), _safe(row.get("MA30")),
+                _safe(row.get("MA50")), _safe(row.get("MA150")), _safe(row.get("MA200")),
+                _safe(row.get("High_30D")), _safe(row.get("Low_30D")),
+                _safe(row.get("High_52wk")), _safe(row.get("Low_52wk")), _safe(row.get("Low_AllTime")),
+                _safe_date(row.get("Low_AllTime_Date")),
+                _safe(row.get("Vol_MA10")),
+                _safe(row.get("Price_Change")), _safe(row.get("Pct_Change")),
+                row.get("Direction", ""),
+                _safe(row.get("RSI14")), _safe(row.get("RS_raw")),
+                _safe_int(row.get("C1")), _safe_int(row.get("C2")), _safe_int(row.get("C3")),
+                _safe_int(row.get("C4")), _safe_int(row.get("C5")), _safe_int(row.get("C6")),
+                _safe_int(row.get("C8")),
+                ticker, date.strftime("%Y-%m-%d"),
+            ))
+        processed += 1
+
+    if updates:
+        conn.executemany("""
+            UPDATE universe_prices SET
+                ma6=?, ma10=?, ma30=?, ma50=?, ma150=?, ma200=?,
+                high_30d=?, low_30d=?, high_52wk=?, low_52wk=?, low_alltime=?, low_alltime_date=?, vol_ma10=?,
+                price_change=?, pct_change=?, direction=?, rsi14=?, rs_raw=?,
+                c1=?, c2=?, c3=?, c4=?, c5=?, c6=?, c8=?,
+                rs_rank=NULL, c7=NULL, trend_score=NULL
+            WHERE ticker=? AND date=?
+        """, updates)
+    emit(f"Universe indicators: updated {len(updates)} rows across {processed} tickers.")
+
+
+def _update_rs_universe(conn, emit):
+    """Part 5: weekly universe refresh (if due) + batched universe price
+    fetch + indicator/Trend-Template computation + RS Score/Rating/Line calc
+    for today, run after the tracked tickers' own price data has been
+    ingested."""
+    if universe.needs_refresh(conn):
+        universe.refresh_universe(conn, progress_cb=emit)
+        conn.commit()
+
+    active = universe.get_active_universe(conn)
+    if not active:
+        emit("RS Universe: no active universe — skipping RS calc")
+        return
+    if len(active) < universe.RS_UNIVERSE_SIZE_WARNING:
+        emit(
+            f"WARNING: universe has only {len(active)} tickers — RS Ratings will be "
+            f"relative to tracked universe only, not full market"
+        )
+    # fetch_universe_prices() below opens its own nested connections for the
+    # batched OHLCV download — commit first so they don't deadlock against
+    # any writes still pending on this connection.
+    conn.commit()
+
+    rs_calculator.fetch_universe_prices(active, progress_cb=emit)
+    _compute_universe_indicators(conn, active, emit)
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    summary = rs_calculator.compute_rs_ratings(conn, dates=[today], progress_cb=emit)
+    emit(f"RS Ratings: {summary}")
+
+    _compute_rs_rank(conn, emit, table="universe_prices")
+    _compute_trend_template(conn, emit, table="universe_prices")
 
 
 # ---------------------------------------------------------------------------
 # Core fetch loop
 # ---------------------------------------------------------------------------
 
-def fetch_all(tickers: list[str], period: str = "2y", progress_cb=None):
+def fetch_all(tickers: list[str], period: str = "2y", progress_cb=None, skip_universe: bool = False):
     def _emit(msg: str):
         if progress_cb:
             progress_cb(msg)
@@ -331,9 +474,6 @@ def fetch_all(tickers: list[str], period: str = "2y", progress_cb=None):
                 data = _calculate_indicators(data)
                 _upsert_daily_rows(conn, ticker, data, fetched_at)
 
-                signals = _detect_signals(ticker, data)
-                _upsert_signals(conn, signals)
-
                 # Summarise only the *unique* signal types active on the latest row
                 latest_signals = _detect_signals(ticker, data.iloc[[-1]])
                 signal_labels  = list({s["signal_type"] for s in latest_signals})
@@ -347,6 +487,15 @@ def fetch_all(tickers: list[str], period: str = "2y", progress_cb=None):
 
     with get_connection() as conn:
         _compute_rs_rank(conn, _emit)
+        conn.commit()
+        if skip_universe:
+            _emit("Universe refresh skipped for this fetch (per-run toggle).")
+        else:
+            # _update_rs_universe opens its own nested connections (batched
+            # universe price fetch) — the commit above prevents those from
+            # deadlocking against this connection's still-open transaction.
+            _update_rs_universe(conn, _emit)
+            conn.commit()
         _compute_trend_template(conn, _emit)
 
     _emit(f"All done. DB: {DB_PATH}")
@@ -374,6 +523,8 @@ if __name__ == "__main__":
                         help="Override ticker list (space-separated)")
     parser.add_argument("--period", default="2y",
                         help="yfinance history period (default: 2y)")
+    parser.add_argument("--skip-universe", action="store_true",
+                        help="Skip the S&P500+Russell1000 universe refresh for this run")
     args = parser.parse_args()
 
     if args.tickers:
@@ -386,4 +537,4 @@ if __name__ == "__main__":
             sys.exit(0)
 
     print(f"Tickers to fetch: {tickers}\n")
-    fetch_all(tickers, period=args.period)
+    fetch_all(tickers, period=args.period, skip_universe=args.skip_universe)

@@ -10,7 +10,10 @@ GET  /                              Dashboard UI
 
 -- Market data (read-only) --
 GET  /api/holdings                  Holdings + live P/L from latest price
-GET  /api/signals/ma200?days=30     price_gt_ma200 signals (last N days)
+GET  /api/signals/ma200?days=30     price_gt_ma200 signals (last N days); &touch_ma=1 switches to "MA200 within Day Low-High"
+GET  /api/signals/ma100?days=30     price_gt_ma100 signals (last N days)
+GET  /api/signals/2xlow?multiplier=2.0  price_2x_low signals (close >= multiplier x all-time low)
+GET  /api/signals/2xlow/first?multiplier=2.0  first-ever 2x-low hit per ticker, tracked + full universe
 GET  /api/signals/ma1030?days=30    ma10_gt_ma30 signals  (last N days)
 GET  /api/sold                      Sold positions
 GET  /api/monitor                   Monitor list + latest price
@@ -28,6 +31,14 @@ GET    /api/extraction/download     Download ticker list as CSV
 POST /api/fetch                     Start background fetch  {period?}
 GET  /api/fetch/status              Poll fetch progress
 
+-- Congress / political trading disclosures (House + Senate PTRs) --
+GET    /api/congress                List trades  ?ticker=&politician=&chamber=&party=&type=&from=&to=
+GET    /api/congress/tickers        Distinct ticker list (for "has Congress activity" badges elsewhere)
+GET    /api/congress/summary        Top BUY/SELL tickers for a month or month range  ?month=YYYY-MM or ?month_from=&month_to=&chamber=&party=
+DELETE /api/congress/<id>           Delete one record
+POST   /api/congress/fetch          Start background fetch (downloads latest snapshot, upserts)
+GET    /api/congress/fetch/status   Poll fetch progress
+
 Common query params:
   ?ticker=AAPL     Filter by ticker (market data endpoints)
   ?days=N          Signals: how many calendar days back
@@ -43,6 +54,7 @@ import base64
 import csv
 import io
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -54,7 +66,11 @@ from db_setup import get_connection, setup_database
 from fetch_data import fetch_all, get_tickers_from_db
 from scan_patterns import scan_all_patterns, scan_date_range, get_scan_results, get_scan_results_range, get_available_scan_dates
 from backtest_engine import run_trading_simulation, calculate_metrics
+import universe as universe_mod
+from rs_calculator import RS_LINE_TREND_LOOKBACK
+from congress_trades import fetch_congress_trades
 from volume_profile import analyze as analyze_volume_profile, VP_LOOKBACK_DAYS, VP_TOP_N, VP_PIVOT_LOOKBACK_DAYS, VP_PIVOT_WINDOW
+import surge_strategy
 
 # ---------------------------------------------------------------------------
 # Date normalisation
@@ -140,6 +156,9 @@ _scan_lock = threading.Lock()
 _insider_scan_state = {"running": False, "log": [], "error": None}
 _insider_scan_lock  = threading.Lock()
 
+_congress_fetch_state = {"running": False, "log": [], "error": None, "summary": None}
+_congress_fetch_lock  = threading.Lock()
+
 _market_cache      = {"data": None, "date": None}
 _market_cache_lock = threading.Lock()
 
@@ -170,6 +189,11 @@ _LATEST_PRICE_CTE = """
         GROUP BY ticker
     )
 """
+
+# Wide date ranges on Signals/RSI Signals can match 100k+ rows; rendering that many
+# <tr> elements client-side freezes the browser tab. Cap what's returned and report
+# the true match count so the frontend can tell the user to narrow their filter.
+SIGNAL_ROW_CAP = 5000
 
 
 def _rows(conn, sql, params=()):
@@ -232,6 +256,12 @@ _SIGNAL_CONDS = {
         "indicator":  "sig.ma200",
         "lookback":   "prev.close > prev.ma200 AND prev.ma200 IS NOT NULL",
     },
+    "price_gt_ma100": {
+        "sig_where": "sig.close > sig.ma100 AND sig.ma100 IS NOT NULL",
+        "sub_where": "sub.close > sub.ma100 AND sub.ma100 IS NOT NULL",
+        "indicator":  "sig.ma100",
+        "lookback":   "prev.close > prev.ma100 AND prev.ma100 IS NOT NULL",
+    },
     "ma10_gt_ma30": {
         "sig_where": "sig.ma10 > sig.ma30 AND sig.ma10 IS NOT NULL AND sig.ma30 IS NOT NULL",
         "sub_where": "sub.ma10 > sub.ma30 AND sub.ma10 IS NOT NULL AND sub.ma30 IS NOT NULL",
@@ -250,15 +280,74 @@ _SIGNAL_CONDS = {
         "indicator":  "sig.ma10",
         "lookback":   "prev.ma10 < prev.ma30 AND prev.ma10 IS NOT NULL",
     },
+    # "Doubled from its low" — {mult} is substituted with a server-validated
+    # float (see _get_signals), never raw user input, so this is safe.
+    # low_alltime is a *point-in-time* running min of daily Low (see
+    # fetch_data.py), so this fires on the exact day a ticker's close first
+    # crosses N times whatever its low had been up to that day.
+    "price_2x_low": {
+        "sig_where": "sig.close >= {mult} * sig.low_alltime AND sig.low_alltime IS NOT NULL AND sig.low_alltime > 0",
+        "sub_where": "sub.close >= {mult} * sub.low_alltime AND sub.low_alltime IS NOT NULL AND sub.low_alltime > 0",
+        "indicator":  "sig.low_alltime",
+        "lookback":   "prev.close >= {mult} * prev.low_alltime AND prev.low_alltime IS NOT NULL AND prev.low_alltime > 0",
+    },
 }
 
+# "All" only aggregates the crossover/breakout conditions above — captured
+# before rsi_signal is added below so RSI (a level, not a crossover event —
+# true on most days a stock sits in a zone) doesn't flood that merged view.
+_ALL_VIEW_TYPES = tuple(_SIGNAL_CONDS)
 
-def _fetch_signal_rows(signal_type, date_from, date_to, latest_only, lookback, ticker_sql, ticker_params):
+_VALID_RSI_ZONES = {"", "oversold", "overbought", "neutral"}
+
+
+def _rsi_zone_cond(alias: str, zone: str) -> str:
+    if zone == "oversold":
+        return f"{alias}.rsi14 < 30"
+    if zone == "overbought":
+        return f"{alias}.rsi14 > 70"
+    if zone == "neutral":
+        return f"{alias}.rsi14 >= 30 AND {alias}.rsi14 <= 70"
+    return "1=1"  # "" == All — no extra restriction beyond rsi14 being present
+
+
+# Real condition strings aren't used (see the signal_type == "rsi_signal"
+# branch below, which builds zone-aware conditions per alias instead) —
+# this entry exists so "rsi_signal" is a recognised key for direct lookups.
+_SIGNAL_CONDS["rsi_signal"] = {
+    "sig_where": "sig.rsi14 IS NOT NULL",
+    "sub_where": "sub.rsi14 IS NOT NULL",
+    "indicator":  "sig.rsi14",
+    "lookback":   "prev.rsi14 IS NOT NULL",
+}
+
+_DEFAULT_MULTIPLIER = 2.0
+
+
+def _fetch_signal_rows(signal_type, date_from, date_to, latest_only, lookback, ticker_sql, ticker_params,
+                        multiplier=_DEFAULT_MULTIPLIER, zone="", touch_ma=False):
     cond = _SIGNAL_CONDS[signal_type]
-    sig_where_sig = cond["sig_where"]
-    sig_where_sub = cond["sub_where"]
-    indicator_col = cond["indicator"]
-    lookback_cond = cond["lookback"]
+    if signal_type == "rsi_signal":
+        sig_where_sig = f"sig.rsi14 IS NOT NULL AND {_rsi_zone_cond('sig', zone)}"
+        sig_where_sub = f"sub.rsi14 IS NOT NULL AND {_rsi_zone_cond('sub', zone)}"
+        lookback_cond = f"prev.rsi14 IS NOT NULL AND {_rsi_zone_cond('prev', zone)}"
+        indicator_col = "sig.rsi14"
+    elif touch_ma and signal_type in ("price_gt_ma200", "price_lt_ma200"):
+        # "MA200 within Day Low–Day High" — the MA200 line sat somewhere inside
+        # the day's traded range, i.e. price crossed/tested it at some point
+        # that day, independent of where it closed. Same condition regardless
+        # of which of the two MA200 buttons is active (bull vs bear) — both
+        # describe "did today's range touch MA200", not a directional cross.
+        sig_where_sig = "sig.low <= sig.ma200 AND sig.ma200 <= sig.high AND sig.ma200 IS NOT NULL"
+        sig_where_sub = "sub.low <= sub.ma200 AND sub.ma200 <= sub.high AND sub.ma200 IS NOT NULL"
+        lookback_cond = "prev.low <= prev.ma200 AND prev.ma200 <= prev.high AND prev.ma200 IS NOT NULL"
+        indicator_col = "sig.ma200"
+    else:
+        # .format(mult=...) is a no-op for conditions with no "{mult}" placeholder.
+        sig_where_sig = cond["sig_where"].format(mult=multiplier)
+        sig_where_sub = cond["sub_where"].format(mult=multiplier)
+        indicator_col = cond["indicator"]
+        lookback_cond = cond["lookback"].format(mult=multiplier)
 
     if latest_only:
         dedup_cte = f"""
@@ -298,6 +387,17 @@ def _fetch_signal_rows(signal_type, date_from, date_to, latest_only, lookback, t
     else:
         lookback_clause, lookback_params = "", ()
 
+    count_sql = f"""
+        {_LATEST_PRICE_CTE}
+        {dedup_cte}
+        SELECT COUNT(*) AS cnt
+        FROM stocks_daily sig
+        {dedup_join}
+        WHERE {sig_where_sig}
+          AND sig.date >= ? AND sig.date <= ?
+          {lookback_clause}
+          {ticker_sql}
+    """
     sql = f"""
         {_LATEST_PRICE_CTE}
         {dedup_cte}
@@ -306,9 +406,14 @@ def _fetch_signal_rows(signal_type, date_from, date_to, latest_only, lookback, t
             sig.ticker,
             sig.date                 AS signal_date,
             sig.close                AS signal_close,
+            sig.low                  AS day_low,
+            sig.high                 AS day_high,
             {indicator_col}          AS indicator_value,
-            sig.ma6, sig.ma10, sig.ma30, sig.ma50, sig.ma200,
-            sig.high_30d, sig.low_30d,
+            sig.ma6, sig.ma10, sig.ma30, sig.ma50, sig.ma100, sig.ma150, sig.ma200, sig.rsi14,
+            sig.high_30d, sig.low_30d, sig.high_52wk, sig.low_52wk, sig.low_alltime, sig.low_alltime_date,
+            COALESCE(rr.rs_rating, sig.rs_rank) AS rs_rank,
+            rr.rs_leader              AS rs_leader,
+            sig.c1, sig.c2, sig.c3, sig.c4, sig.c5, sig.c6, sig.c7, sig.c8, sig.trend_score,
             cur.close                AS current_price,
             cur.date                 AS current_price_date,
             CASE
@@ -322,15 +427,20 @@ def _fetch_signal_rows(signal_type, date_from, date_to, latest_only, lookback, t
         LEFT JOIN lp ON sig.ticker = lp.ticker
         LEFT JOIN stocks_daily cur
                ON cur.ticker = lp.ticker AND cur.date = lp.max_date
+        LEFT JOIN rs_ratings rr
+               ON rr.ticker = sig.ticker AND rr.date = sig.date
         WHERE {sig_where_sig}
           AND sig.date >= ? AND sig.date <= ?
           {lookback_clause}
           {ticker_sql}
         ORDER BY sig.date DESC, sig.ticker
+        LIMIT ?
     """
     params = dedup_params + (date_from, date_to) + lookback_params + ticker_params
     with get_connection() as conn:
-        return _rows(conn, sql, params)
+        total = conn.execute(count_sql, params).fetchone()[0]
+        rows  = _rows(conn, sql, params + (SIGNAL_ROW_CAP,))
+    return rows, total
 
 
 def _get_signals(signal_type: str):
@@ -342,19 +452,145 @@ def _get_signals(signal_type: str):
     lookback    = request.args.get("lookback", 0, type=int)
     ticker_sql, ticker_params = _ticker_filter("sig")
 
-    if signal_type == "all":
-        rows = []
-        for st in _SIGNAL_CONDS:
-            rows += _fetch_signal_rows(st, date_from, date_to, latest_only, lookback, ticker_sql, ticker_params)
-        rows.sort(key=lambda r: (r.get("signal_date") or ""), reverse=True)
-        return _ok(rows)
+    # Only meaningful for price_2x_low, but harmless to parse unconditionally.
+    try:
+        multiplier = float(request.args.get("multiplier", _DEFAULT_MULTIPLIER))
+    except (TypeError, ValueError):
+        multiplier = _DEFAULT_MULTIPLIER
+    if not (1.001 <= multiplier <= 1000):
+        multiplier = _DEFAULT_MULTIPLIER
 
-    return _ok(_fetch_signal_rows(signal_type, date_from, date_to, latest_only, lookback, ticker_sql, ticker_params))
+    # Only meaningful for rsi_signal, but harmless to parse unconditionally.
+    zone = request.args.get("zone", "").strip().lower()
+    if zone not in _VALID_RSI_ZONES:
+        zone = ""
+
+    # Only meaningful for price_gt_ma200/price_lt_ma200, but harmless elsewhere.
+    touch_ma = request.args.get("touch_ma", "0") in ("1", "true", "yes")
+
+    if signal_type == "all":
+        rows, total = [], 0
+        for st in _ALL_VIEW_TYPES:
+            r, t = _fetch_signal_rows(st, date_from, date_to, latest_only, lookback, ticker_sql, ticker_params, multiplier, zone, touch_ma)
+            rows += r
+            total += t
+        rows.sort(key=lambda r: (r.get("signal_date") or ""), reverse=True)
+        rows = rows[:SIGNAL_ROW_CAP]
+    else:
+        rows, total = _fetch_signal_rows(signal_type, date_from, date_to, latest_only, lookback, ticker_sql, ticker_params, multiplier, zone, touch_ma)
+
+    return jsonify({"count": len(rows), "total": total, "truncated": total > len(rows), "data": rows})
 
 
 @app.get("/api/signals/ma200")
 def get_signals_ma200():
     return _get_signals("price_gt_ma200")
+
+
+@app.get("/api/signals/ma100")
+def get_signals_ma100():
+    return _get_signals("price_gt_ma100")
+
+
+@app.get("/api/signals/2xlow")
+def get_signals_2x_low():
+    return _get_signals("price_2x_low")
+
+
+@app.get("/api/signals/2xlow/first")
+def get_signals_2x_low_first():
+    """One row per ticker — the very FIRST date its close ever reached
+    >= multiplier x its all-time-low-so-far (low_alltime), across BOTH the
+    tracked Ticker List (stocks_daily) and the full S&P 500 + Russell 1000
+    universe (universe_prices; tracked tickers excluded there to avoid
+    double-counting — same "tracked wins" pattern as /api/data/summary).
+    Unlike /api/signals/2xlow this ignores date range / latest-only /
+    lookback — it always looks across each ticker's whole stored history
+    and returns exactly one (first) hit per ticker."""
+    try:
+        multiplier = float(request.args.get("multiplier", _DEFAULT_MULTIPLIER))
+    except (TypeError, ValueError):
+        multiplier = _DEFAULT_MULTIPLIER
+    if not (1.001 <= multiplier <= 1000):
+        multiplier = _DEFAULT_MULTIPLIER
+    ticker_sql, ticker_params = _ticker_filter("s")
+
+    sql = f"""
+        WITH src AS (
+            SELECT ticker, date, close, low AS day_low, high AS day_high, low_alltime, low_alltime_date,
+                   ma6, ma10, ma30, ma50, ma100, ma150, ma200, rsi14,
+                   high_30d, low_30d, high_52wk, low_52wk,
+                   c1, c2, c3, c4, c5, c6, c7, c8, trend_score,
+                   1 AS tracked
+            FROM stocks_daily
+            WHERE low_alltime IS NOT NULL AND low_alltime > 0
+            UNION ALL
+            SELECT ticker, date, close, low AS day_low, high AS day_high, low_alltime, low_alltime_date,
+                   ma6, ma10, ma30, ma50, NULL AS ma100, ma150, ma200, rsi14,
+                   high_30d, low_30d, high_52wk, low_52wk,
+                   c1, c2, c3, c4, c5, c6, c7, c8, trend_score,
+                   0 AS tracked
+            FROM universe_prices
+            WHERE low_alltime IS NOT NULL AND low_alltime > 0
+              AND ticker IN (SELECT ticker FROM ticker_universe WHERE is_active = 1)
+              AND ticker NOT IN (SELECT ticker FROM extraction_tickers)
+        ),
+        hits AS (
+            SELECT ticker, MIN(date) AS first_date
+            FROM src
+            WHERE close >= ? * low_alltime
+            GROUP BY ticker
+        ),
+        cur_tracked AS (
+            SELECT ticker, MAX(date) AS max_date FROM stocks_daily
+            WHERE close IS NOT NULL GROUP BY ticker
+        ),
+        cur_universe AS (
+            SELECT ticker, MAX(date) AS max_date FROM universe_prices
+            WHERE close IS NOT NULL
+              AND ticker IN (SELECT ticker FROM ticker_universe WHERE is_active = 1)
+              AND ticker NOT IN (SELECT ticker FROM extraction_tickers)
+            GROUP BY ticker
+        ),
+        cur AS (
+            SELECT ct.ticker, sd.close, sd.date FROM cur_tracked ct
+            JOIN stocks_daily sd ON sd.ticker = ct.ticker AND sd.date = ct.max_date
+            UNION ALL
+            SELECT cu.ticker, up.close, up.date FROM cur_universe cu
+            JOIN universe_prices up ON up.ticker = cu.ticker AND up.date = cu.max_date
+        )
+        SELECT
+            s.ticker,
+            h.first_date              AS signal_date,
+            s.close                   AS signal_close,
+            s.day_low, s.day_high,
+            s.low_alltime, s.low_alltime_date,
+            s.ma6, s.ma10, s.ma30, s.ma50, s.ma100, s.ma150, s.ma200, s.rsi14,
+            s.high_30d, s.low_30d, s.high_52wk, s.low_52wk,
+            s.c1, s.c2, s.c3, s.c4, s.c5, s.c6, s.c7, s.c8, s.trend_score,
+            s.tracked,
+            COALESCE(rr.rs_rating, NULL) AS rs_rank,
+            rr.rs_leader               AS rs_leader,
+            cur.close                 AS current_price,
+            cur.date                  AS current_price_date,
+            CASE
+                WHEN s.close > 0 AND cur.close IS NOT NULL
+                THEN ROUND((cur.close - s.close) / s.close * 100, 2)
+                ELSE NULL
+            END                       AS day_pct_change
+        FROM src s
+        JOIN hits h ON h.ticker = s.ticker AND h.first_date = s.date
+        LEFT JOIN rs_ratings rr ON rr.ticker = s.ticker AND rr.date = s.date
+        LEFT JOIN cur ON cur.ticker = s.ticker
+        WHERE 1=1
+        {ticker_sql}
+        ORDER BY h.first_date DESC, s.ticker
+        LIMIT 2000
+    """
+    params = (multiplier,) + ticker_params
+    with get_connection() as conn:
+        rows = _rows(conn, sql, params)
+    return jsonify({"count": len(rows), "data": rows})
 
 
 @app.get("/api/signals/ma1030")
@@ -378,73 +614,15 @@ def get_signals_all():
 
 
 # ---------------------------------------------------------------------------
-# GET /api/signals/rsi
+# GET /api/signals/rsi — merged into the general signal engine above
+# (rsi_signal in _SIGNAL_CONDS); ?zone=oversold|overbought|neutral (omit
+# for "All"). Kept as its own route/URL since the Signals tab UI calls it
+# directly, same as ma200/ma100/2xlow.
 # ---------------------------------------------------------------------------
 
 @app.get("/api/signals/rsi")
 def get_rsi_signals():
-    today = datetime.now().strftime("%Y-%m-%d")
-    ago30 = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
-    date_from   = request.args.get("from",   ago30)
-    date_to     = request.args.get("to",     today)
-    zone        = request.args.get("zone",   "").strip().lower()
-    latest_only = request.args.get("latest", "0") in ("1", "true", "yes")
-    ticker_sql, ticker_params = _ticker_filter("sig")
-
-    if zone == "oversold":
-        zone_sql = " AND sig.rsi14 < 30"
-    elif zone == "overbought":
-        zone_sql = " AND sig.rsi14 > 70"
-    elif zone == "neutral":
-        zone_sql = " AND sig.rsi14 >= 30 AND sig.rsi14 <= 70"
-    else:
-        zone_sql = ""
-
-    if latest_only:
-        dedup_cte = """
-            , dedup AS (
-                SELECT sub.ticker, MAX(sub.date) AS max_sig_date
-                FROM stocks_daily sub
-                WHERE sub.rsi14 IS NOT NULL
-                  AND sub.date >= ? AND sub.date <= ?
-                GROUP BY sub.ticker
-            )
-        """
-        dedup_join   = "JOIN dedup ON sig.ticker = dedup.ticker AND sig.date = dedup.max_sig_date"
-        dedup_params = (date_from, date_to)
-    else:
-        dedup_cte, dedup_join, dedup_params = "", "", ()
-
-    sql = f"""
-        {_LATEST_PRICE_CTE}
-        {dedup_cte}
-        SELECT
-            sig.ticker,
-            sig.date,
-            sig.close,
-            sig.rsi14,
-            sig.ma10, sig.ma30, sig.ma200,
-            cur.close      AS current_price,
-            cur.date       AS current_price_date,
-            CASE
-                WHEN sig.close > 0 AND cur.close IS NOT NULL
-                THEN ROUND((cur.close - sig.close) / sig.close * 100, 2)
-                ELSE NULL
-            END            AS day_pct_change,
-            cur.direction
-        FROM stocks_daily sig
-        {dedup_join}
-        LEFT JOIN lp ON sig.ticker = lp.ticker
-        LEFT JOIN stocks_daily cur ON cur.ticker = lp.ticker AND cur.date = lp.max_date
-        WHERE sig.rsi14 IS NOT NULL
-          AND sig.date >= ? AND sig.date <= ?
-          {zone_sql}
-          {ticker_sql}
-        ORDER BY sig.date DESC, sig.ticker
-    """
-    params = dedup_params + (date_from, date_to) + ticker_params
-    with get_connection() as conn:
-        return _ok(_rows(conn, sql, params))
+    return _get_signals("rsi_signal")
 
 
 # ---------------------------------------------------------------------------
@@ -901,7 +1079,7 @@ def get_monitor():
             sd.close         AS current_price,
             sd.date          AS price_date,
             sd.ma6, sd.ma10, sd.ma30, sd.ma50, sd.ma200, sd.rsi14,
-            sd.high_30d, sd.low_30d, sd.vol_ma10,
+            sd.high_30d, sd.low_30d, sd.high_52wk, sd.low_52wk, sd.vol_ma10,
             sd.pct_change    AS day_pct_change,
             sd.direction,
             CASE
@@ -1138,6 +1316,186 @@ def insider_scan_status():
 
 
 # ---------------------------------------------------------------------------
+# GET /api/congress   — Congress (House + Senate) trade disclosures
+# POST /api/congress/fetch   GET /api/congress/fetch/status
+# ---------------------------------------------------------------------------
+
+@app.get("/api/congress/tickers")
+def get_congress_tickers():
+    """Lightweight distinct-ticker list — powers the "this stock has Congress
+    trading activity" badge on the Signals/Pattern Scanner/Monitor tabs
+    without pulling full row data (mirrors /api/monitor/tickers)."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT ticker FROM congress_trades WHERE ticker IS NOT NULL ORDER BY ticker"
+        ).fetchall()
+    return jsonify({"tickers": [r["ticker"] for r in rows]})
+
+
+@app.get("/api/congress")
+def get_congress():
+    ticker_sql, ticker_params = _ticker_filter("c")
+    politician = (request.args.get("politician") or "").strip()
+    chamber = (request.args.get("chamber") or "").strip()
+    party   = (request.args.get("party")   or "").strip()
+    ttype   = (request.args.get("type")    or "").strip()
+    from_date = (request.args.get("from") or "").strip()
+    to_date   = (request.args.get("to")   or "").strip()
+
+    extra_sql, extra_params = "", ()
+    if politician:
+        # SQLite LIKE is case-insensitive for ASCII by default — "donald"
+        # matches "Donald J Trump" same as "Donald" or "DONALD" would.
+        extra_sql += " AND c.politician_name LIKE ?"
+        extra_params += (f"%{politician}%",)
+    if chamber:
+        extra_sql += " AND c.chamber = ?"
+        extra_params += (chamber,)
+    if party:
+        extra_sql += " AND c.party = ?"
+        extra_params += (party,)
+    if ttype:
+        extra_sql += " AND c.type = ?"
+        extra_params += (ttype,)
+    if from_date:
+        extra_sql += " AND c.tx_date >= ?"
+        extra_params += (from_date,)
+    if to_date:
+        extra_sql += " AND c.tx_date <= ?"
+        extra_params += (to_date,)
+
+    sql = f"""
+        SELECT
+            c.id, c.tx_date, c.filed_date, c.ticker, c.company,
+            c.politician_name, c.chamber, c.party, c.state_or_district,
+            c.role, c.type, c.amount_range, c.source, c.filing_url,
+            c.cluster_buy, c.fetched_at
+        FROM congress_trades c
+        WHERE 1=1 {ticker_sql} {extra_sql}
+        ORDER BY c.tx_date DESC, c.filed_date DESC
+    """
+    with get_connection() as conn:
+        return _ok(_rows(conn, sql, ticker_params + extra_params))
+
+
+_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
+
+
+@app.get("/api/congress/summary")
+def get_congress_summary():
+    """Top-traded tickers (by BUY count and by SELL count) for a single
+    month or an inclusive range of months — ?month=YYYY-MM or
+    ?month_from=YYYY-MM&month_to=YYYY-MM (month_to defaults to month_from,
+    i.e. a single month, when omitted). Optional ?chamber=&party= narrow
+    both the top-lists and the totals to that subset."""
+    month_from = (request.args.get("month_from") or request.args.get("month") or "").strip()
+    month_to   = (request.args.get("month_to")   or month_from).strip()
+    chamber    = (request.args.get("chamber") or "").strip()
+    party      = (request.args.get("party")   or "").strip()
+    limit      = request.args.get("limit", 10, type=int)
+    limit      = max(1, min(limit, 50))
+
+    if not _MONTH_RE.match(month_from) or not _MONTH_RE.match(month_to):
+        return jsonify({"error": "month_from/month (and month_to, if given) must be YYYY-MM"}), 400
+    if month_to < month_from:
+        month_from, month_to = month_to, month_from
+
+    start_date = f"{month_from}-01"
+    # First day of the month AFTER month_to, as an exclusive upper bound —
+    # avoids needing to know how many days are in month_to.
+    y, m = (int(x) for x in month_to.split("-"))
+    y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    end_date_exclusive = f"{y:04d}-{m:02d}-01"
+
+    extra_sql, extra_params = "", ()
+    if chamber:
+        extra_sql += " AND chamber = ?"
+        extra_params += (chamber,)
+    if party:
+        extra_sql += " AND party = ?"
+        extra_params += (party,)
+
+    def _top(ttype):
+        sql = f"""
+            SELECT ticker, COUNT(*) AS trade_count,
+                   COUNT(DISTINCT politician_name) AS politician_count
+            FROM congress_trades
+            WHERE type = ? AND ticker IS NOT NULL
+              AND tx_date >= ? AND tx_date < ?
+              {extra_sql}
+            GROUP BY ticker
+            ORDER BY trade_count DESC, politician_count DESC, ticker
+            LIMIT ?
+        """
+        return _rows(conn, sql, (ttype, start_date, end_date_exclusive) + extra_params + (limit,))
+
+    with get_connection() as conn:
+        top_buys  = _top("BUY")
+        top_sells = _top("SELL")
+        totals = dict(conn.execute(f"""
+            SELECT
+                SUM(CASE WHEN type = 'BUY'  THEN 1 ELSE 0 END) AS total_buys,
+                SUM(CASE WHEN type = 'SELL' THEN 1 ELSE 0 END) AS total_sells,
+                COUNT(DISTINCT politician_name) AS distinct_politicians,
+                COUNT(DISTINCT ticker) AS distinct_tickers
+            FROM congress_trades
+            WHERE tx_date >= ? AND tx_date < ? {extra_sql}
+        """, (start_date, end_date_exclusive) + extra_params).fetchone())
+
+    return jsonify({
+        "month_from": month_from,
+        "month_to":   month_to,
+        "chamber":    chamber,
+        "party":      party,
+        "totals":     totals,
+        "top_buys":   top_buys,
+        "top_sells":  top_sells,
+    })
+
+
+@app.delete("/api/congress/<int:rec_id>")
+def delete_congress(rec_id):
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM congress_trades WHERE id = ?", (rec_id,))
+    if cur.rowcount == 0:
+        return jsonify({"error": "record not found"}), 404
+    return jsonify({"deleted": rec_id})
+
+
+@app.post("/api/congress/fetch")
+def start_congress_fetch():
+    with _congress_fetch_lock:
+        if _congress_fetch_state["running"]:
+            return jsonify({"status": "already_running"}), 409
+        _congress_fetch_state.update({"running": True, "log": [], "error": None, "summary": None})
+
+    def _cb(msg: str):
+        _congress_fetch_state["log"].append(msg)
+
+    def _run():
+        try:
+            summary = fetch_congress_trades(progress_cb=_cb)
+            _congress_fetch_state["summary"] = summary
+        except Exception as exc:
+            _congress_fetch_state["error"] = str(exc)
+        finally:
+            _congress_fetch_state["running"] = False
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"status": "started"})
+
+
+@app.get("/api/congress/fetch/status")
+def congress_fetch_status():
+    return jsonify({
+        "running": _congress_fetch_state["running"],
+        "log":     list(_congress_fetch_state["log"]),
+        "error":   _congress_fetch_state["error"],
+        "summary": _congress_fetch_state["summary"],
+    })
+
+
+# ---------------------------------------------------------------------------
 # GET /api/market/status   — Distribution Day / Follow-Through Day health
 # ---------------------------------------------------------------------------
 
@@ -1346,8 +1704,9 @@ def start_fetch():
         if _fetch_state["running"]:
             return jsonify({"status": "already_running"}), 409
 
-        body   = request.get_json(silent=True) or {}
-        period = body.get("period", "2y")
+        body          = request.get_json(silent=True) or {}
+        period        = body.get("period", "2y")
+        skip_universe = bool(body.get("skip_universe", False))
         if period not in VALID_PERIODS:
             return jsonify({"error": f"Invalid period. Use one of: {sorted(VALID_PERIODS)}"}), 400
 
@@ -1370,7 +1729,7 @@ def start_fetch():
                 _fetch_state["done"] += 1
 
         try:
-            fetch_all(tickers, period=period, progress_cb=_cb)
+            fetch_all(tickers, period=period, progress_cb=_cb, skip_universe=skip_universe)
         except Exception as exc:
             _fetch_state["error"] = str(exc)
         finally:
@@ -1406,6 +1765,22 @@ def start_pattern_scan():
         to_date   = (body.get("to_date")   or "").strip() or None
         scan_date = (body.get("date")       or "").strip() or None
         is_range  = bool(from_date and to_date)
+        try:
+            squeeze_threshold = float(body["squeeze_threshold"]) if body.get("squeeze_threshold") not in (None, "") else None
+        except (TypeError, ValueError):
+            squeeze_threshold = None
+        try:
+            price_threshold = float(body["price_threshold"]) if body.get("price_threshold") not in (None, "") else None
+        except (TypeError, ValueError):
+            price_threshold = None
+        try:
+            max_squeeze_age = float(body["max_squeeze_age"]) if body.get("max_squeeze_age") not in (None, "") else None
+        except (TypeError, ValueError):
+            max_squeeze_age = None
+        try:
+            vol_surge_mult = float(body["vol_surge_mult"]) if body.get("vol_surge_mult") not in (None, "") else None
+        except (TypeError, ValueError):
+            vol_surge_mult = None
 
         if is_range:
             _scan_state.update({
@@ -1428,9 +1803,13 @@ def start_pattern_scan():
             _scan_state["ticker"] = ticker
         try:
             if is_range:
-                scan_date_range(from_date, to_date, progress_cb=_cb)
+                scan_date_range(from_date, to_date, progress_cb=_cb,
+                                 squeeze_threshold=squeeze_threshold, price_threshold=price_threshold,
+                                 max_squeeze_age=max_squeeze_age, vol_surge_mult=vol_surge_mult)
             else:
-                scan_all_patterns(scan_date, progress_cb=_cb)
+                scan_all_patterns(scan_date, progress_cb=_cb,
+                                   squeeze_threshold=squeeze_threshold, price_threshold=price_threshold,
+                                   max_squeeze_age=max_squeeze_age, vol_surge_mult=vol_surge_mult)
         except Exception as exc:
             _scan_state["error"] = str(exc)
         finally:
@@ -1710,24 +2089,104 @@ def backup_restore():
 
 @app.route("/api/data/summary")
 def data_summary():
+    """Per-ticker snapshot as of ?date= (defaults to today), combining the
+    user's tracked Ticker List (stocks_daily) with the full S&P 500 +
+    Russell 1000 universe (universe_prices — see universe.py). For each
+    ticker, returns its most recent row on or before that date. Tracked
+    tickers take precedence when a ticker is in both sets (`tracked` field
+    distinguishes the two); both tables carry the same OHLCV/indicator/Trend
+    Template columns, so this is a straight UNION ALL rather than a Python
+    merge."""
+    as_of = (request.args.get("date") or "").strip() or datetime.now().strftime("%Y-%m-%d")
     with get_connection() as conn:
         rows = conn.execute("""
-            SELECT s.ticker, s.date, s.open, s.high, s.low, s.close, s.volume,
-                   s.ma10, s.ma30, s.ma50, s.ma150, s.ma200,
-                   s.high_30d, s.low_30d, s.high_52wk, s.low_52wk, s.vol_ma10,
-                   s.pct_change, s.direction,
-                   s.rs_raw, s.rs_rank,
-                   s.c1, s.c2, s.c3, s.c4, s.c5, s.c6, s.c7, s.c8,
-                   s.trend_score
-            FROM stocks_daily s
-            INNER JOIN (
-                SELECT ticker, MAX(date) AS max_date
-                FROM stocks_daily
-                GROUP BY ticker
-            ) latest ON s.ticker = latest.ticker AND s.date = latest.max_date
-            ORDER BY s.ticker
-        """).fetchall()
-    return jsonify([dict(r) for r in rows])
+            WITH tracked AS (
+                SELECT s.ticker, s.date, s.open, s.high, s.low, s.close, s.volume,
+                       s.ma10, s.ma30, s.ma50, s.ma150, s.ma200, s.rsi14,
+                       s.high_30d, s.low_30d, s.high_52wk, s.low_52wk, s.vol_ma10,
+                       s.pct_change, s.direction,
+                       s.rs_raw, COALESCE(rr.rs_rating, s.rs_rank) AS rs_rank,
+                       rr.rs_score, rr.rs_line_value, rr.rs_line_trend, rr.rs_leader,
+                       s.c1, s.c2, s.c3, s.c4, s.c5, s.c6, s.c7, s.c8,
+                       s.trend_score,
+                       1 AS tracked
+                FROM stocks_daily s
+                INNER JOIN (
+                    SELECT ticker, MAX(date) AS max_date
+                    FROM stocks_daily
+                    WHERE date <= ?
+                    GROUP BY ticker
+                ) latest ON s.ticker = latest.ticker AND s.date = latest.max_date
+                LEFT JOIN rs_ratings rr ON rr.ticker = s.ticker AND rr.date = s.date
+            ),
+            universe AS (
+                SELECT u.ticker, u.date, u.open, u.high, u.low, u.close, u.volume,
+                       u.ma10, u.ma30, u.ma50, u.ma150, u.ma200, u.rsi14,
+                       u.high_30d, u.low_30d, u.high_52wk, u.low_52wk, u.vol_ma10,
+                       u.pct_change, u.direction,
+                       u.rs_raw, COALESCE(rr.rs_rating, u.rs_rank) AS rs_rank,
+                       rr.rs_score, rr.rs_line_value, rr.rs_line_trend, rr.rs_leader,
+                       u.c1, u.c2, u.c3, u.c4, u.c5, u.c6, u.c7, u.c8,
+                       u.trend_score,
+                       0 AS tracked
+                FROM universe_prices u
+                INNER JOIN (
+                    SELECT ticker, MAX(date) AS max_date
+                    FROM universe_prices
+                    WHERE date <= ?
+                      AND ticker IN (SELECT ticker FROM ticker_universe WHERE is_active = 1)
+                    GROUP BY ticker
+                ) latest ON u.ticker = latest.ticker AND u.date = latest.max_date
+                LEFT JOIN rs_ratings rr ON rr.ticker = u.ticker AND rr.date = u.date
+                WHERE u.ticker NOT IN (SELECT ticker FROM extraction_tickers)
+            )
+            SELECT * FROM tracked
+            UNION ALL
+            SELECT * FROM universe
+            ORDER BY ticker
+        """, (as_of, as_of)).fetchall()
+
+        spark_rows = conn.execute(f"""
+            WITH ranked AS (
+                SELECT ticker, date, rs_line_value,
+                       ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) AS rn
+                FROM rs_ratings
+                WHERE date <= ?
+            )
+            SELECT ticker, date, rs_line_value FROM ranked
+            WHERE rn <= {RS_LINE_TREND_LOOKBACK} ORDER BY ticker, date
+        """, (as_of,)).fetchall()
+
+    sparklines = {}
+    for r in spark_rows:
+        sparklines.setdefault(r["ticker"], []).append(r["rs_line_value"])
+
+    result = []
+    for r in rows:
+        row = dict(r)
+        row["rs_line_history"] = sparklines.get(row["ticker"], [])
+        result.append(row)
+    return jsonify(result)
+
+
+# ---------------------------------------------------------------------------
+# Universe admin (S&P 500 + Russell 1000 universe refresh/meta)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/screener/meta")
+def screener_meta():
+    """Universe admin info: active count, last refresh date, source breakdown."""
+    with get_connection() as conn:
+        return jsonify(universe_mod.get_universe_meta(conn))
+
+
+@app.post("/api/universe/refresh")
+def universe_refresh():
+    """Manual universe re-scrape — the automatic weekly check already
+    piggybacks on the Fetch button; this is a convenience trigger."""
+    with get_connection() as conn:
+        summary = universe_mod.refresh_universe(conn)
+    return jsonify(summary)
 
 
 @app.route("/api/debug/trend-template")
@@ -1765,6 +2224,10 @@ def debug_trend_template():
 
 @app.route("/api/data/history")
 def data_history():
+    """History for one ticker. Falls back to universe_prices (S&P500 +
+    Russell 1000 universe — see universe.py) when the ticker isn't in the
+    user's tracked stocks_daily set, since the merged Data tab now also
+    lists untracked universe tickers."""
     ticker = request.args.get("ticker", "").strip().upper()
     if not ticker:
         return jsonify({"error": "ticker required"}), 400
@@ -1778,6 +2241,15 @@ def data_history():
             ORDER BY date DESC
             LIMIT ?
         """, (ticker, limit)).fetchall()
+        if not rows:
+            rows = conn.execute("""
+                SELECT date, open, high, low, close, volume,
+                       ma10, ma30, ma50, ma200, pct_change, direction
+                FROM universe_prices
+                WHERE ticker = ?
+                ORDER BY date DESC
+                LIMIT ?
+            """, (ticker, limit)).fetchall()
     return jsonify([dict(r) for r in rows])
 
 
@@ -1816,6 +2288,333 @@ def volume_profile():
 
 
 # ---------------------------------------------------------------------------
+# Surge Strategy (Volume Surge, Scenario A) — signal board + marked positions.
+# Engine + rules live in surge_strategy.py; these routes are the workflow:
+#   scan -> (watching / armed / triggered) -> user marks "bought" -> position
+#   -> user marks partial / sold. The 30-min live monitor is a later phase.
+# ---------------------------------------------------------------------------
+
+_surge_scan_lock = threading.Lock()
+_surge_last_scan = {"at": None, "summary": None}
+
+
+def _surge_num(val, name, required=True):
+    """Parse a positive float from a JSON body; returns (value, error)."""
+    if val in (None, ""):
+        return (None, f"{name} is required") if required else (None, None)
+    try:
+        v = float(val)
+    except (TypeError, ValueError):
+        return None, f"{name} must be a number"
+    if v <= 0:
+        return None, f"{name} must be greater than 0"
+    return v, None
+
+
+def _surge_date(val):
+    """Normalised YYYY-MM-DD (today when blank), or None if unparseable."""
+    if not val:
+        return datetime.now().strftime("%Y-%m-%d")
+    return _normalise_date(val)
+
+
+def _surge_trading_dates(conn, n=80):
+    rows = conn.execute("SELECT DISTINCT date FROM stocks_daily ORDER BY date DESC LIMIT ?", (n,)).fetchall()
+    return sorted(r[0] for r in rows)
+
+
+def _surge_latest_daily(conn, tickers):
+    """{ticker: {date, close, ma21}} from stored daily bars (end-of-day; the
+    live 30-min refresh is a later phase). MA21 = simple mean of the last 21 closes."""
+    out = {}
+    for t in tickers:
+        rows = conn.execute(
+            "SELECT date, close FROM stocks_daily WHERE ticker=? AND close IS NOT NULL "
+            "ORDER BY date DESC LIMIT 21", (t,)).fetchall()
+        if not rows:
+            rows = conn.execute(
+                "SELECT date, close FROM universe_prices WHERE ticker=? AND close IS NOT NULL "
+                "ORDER BY date DESC LIMIT 21", (t,)).fetchall()
+        if not rows:
+            continue
+        ma21 = sum(r["close"] for r in rows) / 21 if len(rows) == 21 else None
+        out[t] = {"date": rows[0]["date"], "close": rows[0]["close"], "ma21": ma21}
+    return out
+
+
+def _surge_position_view(p, daily):
+    """Position row + last price / MA21 / P&L. Prefers the live monitor's values
+    (Yahoo, ~15 min delayed) when they are at least as recent as the stored daily
+    bar; otherwise falls back to the stored end-of-day close. P&L is blended across
+    the partial and remaining halves (same convention as the backtest); an open
+    position's remaining half is marked at the last price."""
+    d = dict(p)
+    bp = d["buy_price"]
+    last = daily.get(d["ticker"])
+    use_live = (d.get("last_price") is not None and d.get("price_asof")
+                and (not last or d["price_asof"] >= last["date"]))
+    if use_live:
+        price, price_date, ma21 = d["last_price"], d["price_asof"], d.get("last_ma21")
+    else:
+        price = last["close"] if last else None
+        price_date = last["date"] if last else None
+        ma21 = last["ma21"] if last else None
+    d["last_close"] = price
+    d["last_close_date"] = price_date
+    d["price_is_live"] = bool(use_live and d.get("price_is_live"))
+    d["ma21"] = round(ma21, 4) if ma21 is not None else None
+    d["dist_ma21_pct"] = round((price - ma21) / ma21 * 100, 2) if price is not None and ma21 else None
+    d["below_ma21"] = bool(price is not None and ma21 and price < ma21)
+    final = d["status"] == "closed"
+    rest = d["exit_price"] if final else price
+    pnl = None
+    if bp and rest:
+        if d["partial_price"]:
+            pnl = 0.5 * (d["partial_price"] / bp - 1) + 0.5 * (rest / bp - 1)
+        else:
+            pnl = rest / bp - 1
+    d["pnl_pct"] = round(pnl * 100, 2) if pnl is not None else None
+    d["pnl_final"] = final
+    return d
+
+
+def _surge_signals_with_age(conn):
+    """Active signals + trading-day ages (days since surge / since trigger, days
+    until a triggered signal goes stale)."""
+    cfg = surge_strategy.CONFIG
+    tdates = _surge_trading_dates(conn)
+    signals = [dict(r) for r in conn.execute(
+        "SELECT * FROM surge_signals WHERE status IN ('watching','armed','triggered') "
+        "ORDER BY surge_date DESC, ticker")]
+    for s in signals:
+        s["days_since_surge"] = sum(1 for d in tdates if d > s["surge_date"])
+        if s["trigger_date"]:
+            since = sum(1 for d in tdates if d > s["trigger_date"])
+            s["days_since_trigger"] = since
+            stale = cfg["STALE_AFTER_TRIGGER_DAYS"]
+            s["expires_in"] = (stale - since) if stale is not None else None
+    return signals
+
+
+def _surge_alerts(signals, positions):
+    """Things that need the user's attention now. `key` is stable per event so the
+    browser can notify once: sell / warn / target on positions, buy on signals."""
+    out = []
+    for p in positions:
+        if p["status"] == "closed":
+            continue
+        if p["alert_state"] == "sell":
+            out.append({"key": f"pos{p['id']}:sell:{p['ma21_break_date']}", "level": "sell",
+                        "ticker": p["ticker"], "message": p["alert_note"] or "MA21 cut-loss confirmed — sell"})
+        elif p["alert_state"] == "below_ma21":
+            out.append({"key": f"pos{p['id']}:warn:{p['ma21_break_date'] or p['price_asof']}", "level": "warn",
+                        "ticker": p["ticker"], "message": p["alert_note"] or "below MA21"})
+        if p["status"] == "holding" and p.get("target_hit_date"):
+            out.append({"key": f"pos{p['id']}:target", "level": "target", "ticker": p["ticker"],
+                        "message": f"+15% target ${p['partial_target']:.2f} reached ({p['target_hit_date']}) — sell half"})
+    for s in signals:
+        if s["status"] == "triggered" and (s.get("expires_in") is None or s["expires_in"] >= 0):
+            out.append({"key": f"sig{s['id']}:buy", "level": "buy", "ticker": s["ticker"],
+                        "message": f"Buy Signal — limit ${s['buy_level']:.2f} reached ({s['trigger_date']})"})
+    return out
+
+
+def _surge_monitor_status():
+    clock = surge_strategy.market_clock()
+    nxt = surge_strategy.next_run_estimate()
+    m = surge_strategy.MONITOR
+    return {"enabled": m["enabled"], "running": m["running"], "last_run": m["last_run"],
+            "last_reason": m["last_reason"], "last_error": m["last_error"],
+            "last_summary": m["last_summary"], "market_open": clock["is_open"],
+            "now_et": clock["now"].strftime("%Y-%m-%d %H:%M"),
+            "next_run": nxt.strftime("%Y-%m-%d %H:%M") if nxt else None}
+
+
+def _surge_positions_view(conn):
+    pos_rows = conn.execute(
+        "SELECT * FROM surge_positions ORDER BY (status='closed'), buy_date DESC, id DESC").fetchall()
+    daily = _surge_latest_daily(conn, {p["ticker"] for p in pos_rows})
+    return [_surge_position_view(p, daily) for p in pos_rows]
+
+
+@app.route("/api/surge/board")
+def surge_board():
+    """Everything the Surge Strategy tab renders in one call."""
+    with get_connection() as conn:
+        signals = _surge_signals_with_age(conn)
+        positions = _surge_positions_view(conn)
+        counts = {st: 0 for st in ("watching", "armed", "triggered")}
+        for s in signals:
+            counts[s["status"]] += 1
+        latest = conn.execute("SELECT MAX(date) FROM stocks_daily").fetchone()[0]
+    return jsonify({
+        "signals": signals,
+        "positions": [p for p in positions if p["status"] != "closed"],
+        "closed": [p for p in positions if p["status"] == "closed"],
+        "counts": counts,
+        "config": surge_strategy.CONFIG,
+        "data_through": latest,
+        "last_scan": _surge_last_scan,
+        "alerts": _surge_alerts(signals, positions),
+        "monitor": _surge_monitor_status(),
+    })
+
+
+@app.route("/api/surge/alerts")
+def surge_alerts():
+    """Lightweight poll target (the page hits it every minute from any tab)."""
+    with get_connection() as conn:
+        signals = _surge_signals_with_age(conn)
+        positions = _surge_positions_view(conn)
+    return jsonify({"alerts": _surge_alerts(signals, positions), "monitor": _surge_monitor_status()})
+
+
+@app.route("/api/surge/monitor/status")
+def surge_monitor_status():
+    return jsonify(_surge_monitor_status())
+
+
+@app.route("/api/surge/monitor/refresh", methods=["POST"])
+def surge_monitor_refresh():
+    """Run one live pass now (positions + armed signals). Needs internet (Yahoo)."""
+    try:
+        summary = surge_strategy.run_refresh("manual")
+    except Exception as exc:
+        return jsonify({"error": f"live refresh failed: {exc}"}), 502
+    if summary is None:
+        return jsonify({"error": "A live refresh is already running"}), 409
+    return jsonify(summary)
+
+
+@app.route("/api/surge/scan", methods=["POST"])
+def surge_scan():
+    """Scan stored daily data for new surge signals + refresh existing ones.
+    Synchronous (a few seconds); it only reads what the last Fetch stored."""
+    if not _surge_scan_lock.acquire(blocking=False):
+        return jsonify({"error": "A surge scan is already running"}), 409
+    try:
+        summary = surge_strategy.scan_signals()
+    finally:
+        _surge_scan_lock.release()
+    if "error" in summary:
+        return jsonify(summary), 400
+    _surge_last_scan["at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _surge_last_scan["summary"] = {
+        "as_of": summary["as_of"], "tickers_scanned": summary["tickers_scanned"],
+        "new": len(summary["new"]), "changed": len(summary["changed"]),
+    }
+    return jsonify({**summary, "at": _surge_last_scan["at"]})
+
+
+@app.route("/api/surge/signals/<int:sid>/bought", methods=["POST"])
+def surge_mark_bought(sid):
+    """User confirms they actually bought this signal -> creates a position."""
+    b = request.get_json(silent=True) or {}
+    price, err = _surge_num(b.get("buy_price"), "buy_price")
+    if err:
+        return jsonify({"error": err}), 400
+    shares, err = _surge_num(b.get("shares"), "shares", required=False)
+    if err:
+        return jsonify({"error": err}), 400
+    buy_date = _surge_date(b.get("buy_date"))
+    if not buy_date:
+        return jsonify({"error": "buy_date not recognised"}), 400
+    with get_connection() as conn:
+        sig = conn.execute("SELECT * FROM surge_signals WHERE id=?", (sid,)).fetchone()
+        if not sig:
+            return jsonify({"error": "signal not found"}), 404
+        if conn.execute("SELECT 1 FROM surge_positions WHERE signal_id=?", (sid,)).fetchone():
+            return jsonify({"error": "already marked as bought"}), 409
+        target = round(sig["surge_close"] * (1 + surge_strategy.CONFIG["PARTIAL_TARGET_PCT"]), 4)
+        cur = conn.execute(
+            """INSERT INTO surge_positions
+               (signal_id, ticker, surge_date, surge_close, buy_date, buy_price, shares,
+                partial_target, status, note)
+               VALUES (?,?,?,?,?,?,?,?,'holding',?)""",
+            (sid, sig["ticker"], sig["surge_date"], sig["surge_close"], buy_date, price,
+             shares, target, (b.get("note") or None)))
+        conn.execute("UPDATE surge_signals SET status='bought', updated_at=CURRENT_TIMESTAMP WHERE id=?", (sid,))
+        conn.commit()
+    return jsonify({"ok": True, "position_id": cur.lastrowid, "partial_target": target}), 201
+
+
+@app.route("/api/surge/signals/<int:sid>/dismiss", methods=["POST"])
+def surge_dismiss(sid):
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE surge_signals SET status='dismissed', updated_at=CURRENT_TIMESTAMP "
+            "WHERE id=? AND status IN ('watching','armed','triggered','expired')", (sid,))
+        conn.commit()
+    if cur.rowcount == 0:
+        return jsonify({"error": "signal not found or already bought"}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/api/surge/positions/<int:pid>/partial", methods=["POST"])
+def surge_mark_partial(pid):
+    """Half of the position sold at the +15% target."""
+    b = request.get_json(silent=True) or {}
+    price, err = _surge_num(b.get("price"), "price")
+    if err:
+        return jsonify({"error": err}), 400
+    date = _surge_date(b.get("date"))
+    if not date:
+        return jsonify({"error": "date not recognised"}), 400
+    with get_connection() as conn:
+        p = conn.execute("SELECT * FROM surge_positions WHERE id=?", (pid,)).fetchone()
+        if not p:
+            return jsonify({"error": "position not found"}), 404
+        if p["status"] != "holding":
+            return jsonify({"error": f"position is {p['status']}, expected holding"}), 409
+        conn.execute(
+            "UPDATE surge_positions SET status='partial_sold', partial_date=?, partial_price=?, "
+            "target_hit_date=NULL WHERE id=?",
+            (date, price, pid))
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/surge/positions/<int:pid>/sell", methods=["POST"])
+def surge_mark_sold(pid):
+    """Close the position (whatever is left) — cut-loss, manual, or otherwise."""
+    b = request.get_json(silent=True) or {}
+    price, err = _surge_num(b.get("price"), "price")
+    if err:
+        return jsonify({"error": err}), 400
+    date = _surge_date(b.get("date"))
+    if not date:
+        return jsonify({"error": "date not recognised"}), 400
+    reason = (b.get("reason") or "manual").strip()[:40]
+    with get_connection() as conn:
+        p = conn.execute("SELECT * FROM surge_positions WHERE id=?", (pid,)).fetchone()
+        if not p:
+            return jsonify({"error": "position not found"}), 404
+        if p["status"] == "closed":
+            return jsonify({"error": "position already closed"}), 409
+        conn.execute(
+            "UPDATE surge_positions SET status='closed', exit_date=?, exit_price=?, exit_reason=? WHERE id=?",
+            (date, price, reason, pid))
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/surge/positions/<int:pid>", methods=["DELETE"])
+def surge_delete_position(pid):
+    """Undo a mistaken 'I bought' — the signal returns to the board (the next
+    scan re-evaluates it, so it may show as expired if it has gone stale)."""
+    with get_connection() as conn:
+        p = conn.execute("SELECT signal_id FROM surge_positions WHERE id=?", (pid,)).fetchone()
+        if not p:
+            return jsonify({"error": "position not found"}), 404
+        conn.execute("DELETE FROM surge_positions WHERE id=?", (pid,))
+        if p["signal_id"]:
+            conn.execute("UPDATE surge_signals SET status='triggered', updated_at=CURRENT_TIMESTAMP "
+                         "WHERE id=? AND status='bought'", (p["signal_id"],))
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -1843,6 +2642,9 @@ if __name__ == "__main__":
     print("Endpoints:")
     print("  GET  /api/holdings")
     print("  GET  /api/signals/ma200?days=30")
+    print("  GET  /api/signals/ma100?days=30")
+    print("  GET  /api/signals/2xlow?multiplier=2.0")
+    print("  GET  /api/signals/2xlow/first?multiplier=2.0")
     print("  GET  /api/signals/ma1030?days=30")
     print("  GET  /api/sold  |  /api/monitor  |  /api/prices")
     print("  GET  /api/extraction/tickers  (list)")
@@ -1850,5 +2652,12 @@ if __name__ == "__main__":
     print("  POST /api/extraction/upload   (bulk CSV/XLSX/JSON)")
     print("  GET  /api/extraction/download (download CSV)")
     print("  POST /api/fetch               (start fetch)")
-    print("  GET  /api/fetch/status        (poll progress)\n")
+    print("  GET  /api/fetch/status        (poll progress)")
+    print("  GET  /api/congress            (Congress trade disclosures)")
+    print("  POST /api/congress/fetch      (fetch latest snapshot)\n")
+    # 30-min live monitor for Surge Strategy positions. With --debug the reloader runs this
+    # file twice (parent + child); only the child that actually serves requests starts it.
+    if not args.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        if surge_strategy.start_monitor_thread():
+            print("  Surge Strategy live monitor started (every 30 min, US market hours)")
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
