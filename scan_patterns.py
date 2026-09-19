@@ -2,8 +2,10 @@
 All 5 pattern scanners. Reads from stocks_daily; writes to pattern_scan_results.
 """
 
+import json
 from datetime import datetime
 from db_setup import get_connection
+from vcp_detector import detect_vcp
 
 # ── Tuneable config ────────────────────────────────────────────────────────────
 CUP_LOOKBACK        = 60     # trading days for cup window
@@ -17,7 +19,7 @@ CUP_HANDLE_DROP_MAX = 0.08   # handle pulls back at most 8%
 CUP_VOL_MULT        = 1.5    # breakout volume ≥ 1.5× Vol_MA10
 
 MA200_VOL_MULT      = 1.2    # MA200 breakout volume ≥ 1.2× Vol_MA10
-VOL_SURGE_MULT      = 1.5    # volume surge ≥ 1.5× Vol_MA10
+VOL_SURGE_MULT      = 2.0    # volume surge ≥ 2.0× Vol_MA10 (tuneable per-scan via the UI/API too)
 PULLBACK_PCT        = 0.05   # within 5% above Low_30D
 
 MOMENTUM_WINDOW     = 15     # rolling window in trading days
@@ -27,19 +29,41 @@ MOMENTUM_PRICE_GAIN = 0.20   # close at end of window ≥ 20% above close at sta
 
 MOMENTUM_SHORT_WINDOW   = 10  # rolling window for 10/8 pattern
 MOMENTUM_SHORT_UP_DAYS  = 8   # minimum up-days in the 10-day window
+
+SQUEEZE_MA_PERIODS         = (9, 21, 50, 100)  # MAs whose convergence is tested
+SQUEEZE_THRESHOLD          = 3.0  # max % spread between the tightest/widest MA
+PRICE_THRESHOLD            = 2.0  # max % distance of close from the MA cluster midpoint
+SQUEEZE_LOOKBACK_DAYS      = 60   # rolling window of spread_pct history used for days-in-squeeze / trend
+MAX_SQUEEZE_AGE            = 10   # "fresh" cutoff: squeeze must have formed within this many trading days
+SQUEEZE_TIGHTEN_RECENT_DAYS = 5   # "last N days" window in the tightening-trend check
+SQUEEZE_TIGHTEN_PRIOR_DAYS  = 20  # "days 6-N back" window in the tightening-trend check
 # ──────────────────────────────────────────────────────────────────────────────
 
 
 def _load_prices_up_to(scan_date: str) -> dict:
+    """Tracked tickers (stocks_daily) merged with the rest of the active S&P
+    500 + Russell 1000 universe (universe_prices) — same "tracked wins on
+    overlap" rule /api/data/summary uses, so the Pattern Scanner covers the
+    full ~1,100+ ticker universe instead of only the tracked Ticker List."""
     with get_connection() as conn:
         rows = conn.execute(
-            """SELECT ticker, date, close, volume,
+            """SELECT ticker, date, close, high, low, volume,
                       ma10, ma30, ma50, ma200,
-                      high_30d, low_30d, vol_ma10, pct_change, direction
+                      high_30d, low_30d, vol_ma10, pct_change, direction,
+                      trend_score
                FROM stocks_daily
                WHERE date <= ? AND close IS NOT NULL
+               UNION ALL
+               SELECT u.ticker, u.date, u.close, u.high, u.low, u.volume,
+                      u.ma10, u.ma30, u.ma50, u.ma200,
+                      u.high_30d, u.low_30d, u.vol_ma10, u.pct_change, u.direction,
+                      u.trend_score
+               FROM universe_prices u
+               WHERE u.date <= ? AND u.close IS NOT NULL
+                 AND u.ticker IN (SELECT ticker FROM ticker_universe WHERE is_active = 1)
+                 AND u.ticker NOT IN (SELECT ticker FROM extraction_tickers)
                ORDER BY ticker, date""",
-            (scan_date,)
+            (scan_date, scan_date)
         ).fetchall()
     data: dict = {}
     for r in rows:
@@ -47,12 +71,26 @@ def _load_prices_up_to(scan_date: str) -> dict:
     return data
 
 
-def _ef(row: dict) -> dict:
-    """Extract standard display fields from a price row."""
+def _extra_mas(rows: list) -> dict:
+    """MA9/MA21/MA100 for the latest row — not stored in stocks_daily, so computed
+    here on close price history (same simple-MA approach as the MA Squeeze detector)."""
+    closes = [r.get("close") for r in rows]
+    out = {}
+    for period, key in ((9, "ma9"), (21, "ma21"), (100, "ma100")):
+        if len(closes) < period or any(c is None for c in closes[-period:]):
+            out[key] = None
+        else:
+            out[key] = round(sum(closes[-period:]) / period, 4)
+    return out
+
+
+def _ef(rows: list) -> dict:
+    """Extract standard display fields from a price history, for its latest row."""
+    row = rows[-1]
     return {
         "signal_date": row.get("date"),
         "close":       row.get("close"),
-        "ma10":        row.get("ma10"),
+        **_extra_mas(rows),
         "ma30":        row.get("ma30"),
         "ma50":        row.get("ma50"),
         "ma200":       row.get("ma200"),
@@ -109,7 +147,7 @@ def _cup_handle(ticker: str, rows: list):
             f"Rim ${rim_high:.2f}, depth {depth*100:.1f}%, "
             f"handle {h_drop*100:.1f}% pullback"
         ),
-        **_ef(brk),
+        **_ef(rows),
     }
 
 
@@ -130,7 +168,7 @@ def _golden_cross(ticker: str, rows: list):
     return {
         "ticker": ticker, "pattern_name": "Golden Cross",
         "signal_detail": "; ".join(details),
-        **_ef(l),
+        **_ef(rows),
     }
 
 
@@ -152,12 +190,12 @@ def _ma200_breakout(ticker: str, rows: list):
     return {
         "ticker": ticker, "pattern_name": "MA200 Breakout",
         "signal_detail": f"Close ${l['close']:.2f} crossed above MA200 ${l['ma200']:.2f}",
-        **_ef(l),
+        **_ef(rows),
     }
 
 
 # ── Pattern 4: Volume Surge Breakout ──────────────────────────────────────────
-def _volume_surge(ticker: str, rows: list):
+def _volume_surge(ticker: str, rows: list, vol_surge_mult: float = VOL_SURGE_MULT):
     if len(rows) < 2:
         return None
     p, l = rows[-2], rows[-1]
@@ -165,7 +203,7 @@ def _volume_surge(ticker: str, rows: list):
         return None
     if l["close"] <= (p.get("close") or 0):
         return None
-    if l.get("vol_ma10") and l["volume"] < VOL_SURGE_MULT * l["vol_ma10"]:
+    if l.get("vol_ma10") and l["volume"] < vol_surge_mult * l["vol_ma10"]:
         return None
     if p.get("high_30d") and l["close"] <= p["high_30d"]:
         return None
@@ -176,7 +214,7 @@ def _volume_surge(ticker: str, rows: list):
     return {
         "ticker": ticker, "pattern_name": "Volume Surge",
         "signal_detail": f"Vol {ratio:.1f}× MA10, broke High30D ${prev_h:.2f}",
-        **_ef(l),
+        **_ef(rows),
     }
 
 
@@ -200,7 +238,7 @@ def _pullback_bounce(ticker: str, rows: list):
     return {
         "ticker": ticker, "pattern_name": "Pullback Bounce",
         "signal_detail": f"Close ${l['close']:.2f}, {pct:.1f}% above Low30D ${lo:.2f}",
-        **_ef(l),
+        **_ef(rows),
     }
 
 
@@ -246,7 +284,6 @@ def _momentum_expansion(ticker: str, rows: list):
         return None
 
     vol_ratio = avg_recent / avg_prior
-    last = rows[-1]
     return {
         "ticker": ticker, "pattern_name": "Momentum Expansion",
         "signal_detail": (
@@ -255,7 +292,7 @@ def _momentum_expansion(ticker: str, rows: list):
         ),
         "mom_15d_start":    round(close_start, 4),
         "mom_15d_gain_pct": round(price_gain * 100, 2),
-        **_ef(last),
+        **_ef(rows),
     }
 
 
@@ -299,7 +336,6 @@ def _momentum_10_8(ticker: str, rows: list):
                    if close_start and close_end and close_start != 0 else None)
 
     vol_ratio = avg_recent / avg_prior
-    last = rows[-1]
     return {
         "ticker": ticker, "pattern_name": "Momentum 10/8",
         "signal_detail": (
@@ -309,18 +345,164 @@ def _momentum_10_8(ticker: str, rows: list):
         ),
         "mom_15d_start":    round(close_start, 4) if close_start else None,
         "mom_15d_gain_pct": round(price_gain * 100, 2) if price_gain is not None else None,
-        **_ef(last),
+        **_ef(rows),
     }
 
 
-_SCANNERS = [_cup_handle, _golden_cross, _ma200_breakout, _volume_surge, _pullback_bounce,
+# ── Pattern 8: MA Squeeze ──────────────────────────────────────────────────────
+def _sma_series(closes: list, period: int) -> list:
+    """Simple moving average aligned with `closes`; None where history is short."""
+    out = []
+    s = 0.0
+    for i, c in enumerate(closes):
+        s += c
+        if i >= period:
+            s -= closes[i - period]
+        out.append(s / period if i >= period - 1 else None)
+    return out
+
+
+def _ma_squeeze(ticker: str, rows: list,
+                 squeeze_threshold: float = SQUEEZE_THRESHOLD,
+                 price_threshold: float = PRICE_THRESHOLD,
+                 max_squeeze_age: float = MAX_SQUEEZE_AGE):
+    needed = max(SQUEEZE_MA_PERIODS) + SQUEEZE_LOOKBACK_DAYS
+    if len(rows) < needed:
+        return None
+    closes = [r.get("close") for r in rows]
+    if any(c is None for c in closes[-needed:]):
+        return None
+
+    mas = {p: _sma_series(closes, p) for p in SQUEEZE_MA_PERIODS}
+    last_i = len(rows) - 1
+
+    def spread_pct_at(i):
+        vals = [mas[p][i] for p in SQUEEZE_MA_PERIODS]
+        if any(v is None for v in vals):
+            return None
+        hi, lo = max(vals), min(vals)
+        return (hi - lo) / lo * 100 if lo else None
+
+    spread_today = spread_pct_at(last_i)
+    if spread_today is None or spread_today > squeeze_threshold:
+        return None
+
+    vals_today  = [mas[p][last_i] for p in SQUEEZE_MA_PERIODS]
+    cluster_mid = (max(vals_today) + min(vals_today)) / 2
+    close_today = closes[last_i]
+    if not cluster_mid:
+        return None
+    price_dist_pct = abs(close_today - cluster_mid) / cluster_mid * 100
+    if price_dist_pct > price_threshold:
+        return None
+
+    # Rolling spread_pct history over the trailing lookback window, most-recent last.
+    window_start   = max(0, last_i - SQUEEZE_LOOKBACK_DAYS + 1)
+    spread_history = [spread_pct_at(i) for i in range(window_start, last_i + 1)]
+
+    # days_in_squeeze: consecutive days counting back from today with spread_pct <= threshold
+    days_in_squeeze = 0
+    for s in reversed(spread_history):
+        if s is not None and s <= squeeze_threshold:
+            days_in_squeeze += 1
+        else:
+            break
+
+    # Tightening trend: mean(last 5 days) < mean(days 6-20 back) — MAs still converging
+    recent = [s for s in spread_history[-SQUEEZE_TIGHTEN_RECENT_DAYS:] if s is not None]
+    prior  = [s for s in spread_history[-SQUEEZE_TIGHTEN_PRIOR_DAYS:-SQUEEZE_TIGHTEN_RECENT_DAYS]
+              if s is not None]
+    is_tightening = (bool(recent) and bool(prior)
+                      and sum(recent) / len(recent) < sum(prior) / len(prior))
+
+    is_fresh = days_in_squeeze <= max_squeeze_age and is_tightening
+
+    detail = (
+        f"Spread {spread_today:.1f}% · in squeeze {days_in_squeeze}d"
+        f" · {'tightening' if is_tightening else 'expanding'}"
+    )
+    return {
+        "ticker": ticker, "pattern_name": "MA Squeeze",
+        "signal_detail": detail,
+        "squeeze_spread_pct": round(spread_today, 2),
+        "squeeze_days":       days_in_squeeze,
+        "squeeze_fresh":      int(is_fresh),
+        **_ef(rows),
+    }
+
+
+# ── Pattern 9: VCP (Volatility Contraction Pattern) ───────────────────────────
+def _run_vcp(ticker: str, rows: list):
+    """Runs the VCP detector once per ticker/date. Returns (vcp_signal_row, pattern_row).
+    vcp_signal_row feeds vcp_signals (badge data for every pattern hit on this
+    ticker/date); pattern_row is only set when a full VCP setup is detected, so
+    it also shows up as its own "VCP" pattern row/sub-tab."""
+    try:
+        r = detect_vcp(ticker, rows)
+    except Exception:
+        return None, None
+    if r.get("pivot_price") is None:
+        return None, None
+
+    last    = rows[-1]
+    sig_row = {**r, "close": last.get("close")}
+
+    pat_row = None
+    if r["vcp_detected"]:
+        depths = " → ".join(f"{d:.1f}%" for d in r["contraction_depths"])
+        pat_row = {
+            "ticker": ticker, "pattern_name": "VCP",
+            "signal_detail": f"{r['num_contractions']} contractions ({depths}), pivot ${r['pivot_price']:.2f}",
+            **_ef(rows),
+        }
+    return sig_row, pat_row
+
+
+def _save_vcp_results(scan_date: str, results: list):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM vcp_signals WHERE scan_date = ?", (scan_date,))
+        for r in results:
+            try:
+                conn.execute("""
+                    INSERT INTO vcp_signals
+                        (scan_date, ticker, vcp_detected, num_contractions,
+                         contraction_depths, volume_dryup, pivot_price,
+                         suggested_stop, current_price_vs_pivot, tightness_pct, close)
+                    VALUES
+                        (:scan_date, :ticker, :vcp_detected, :num_contractions,
+                         :contraction_depths, :volume_dryup, :pivot_price,
+                         :suggested_stop, :current_price_vs_pivot, :tightness_pct, :close)
+                """, {
+                    "scan_date":              scan_date,
+                    "ticker":                 r["ticker"],
+                    "vcp_detected":           int(bool(r["vcp_detected"])),
+                    "num_contractions":       r["num_contractions"],
+                    "contraction_depths":     json.dumps(r["contraction_depths"]),
+                    "volume_dryup":           int(bool(r["volume_dryup"])),
+                    "pivot_price":            r["pivot_price"],
+                    "suggested_stop":         r["suggested_stop"],
+                    "current_price_vs_pivot": r["current_price_vs_pivot"],
+                    "tightness_pct":          r["tightness_pct"],
+                    "close":                  r.get("close"),
+                })
+            except Exception:
+                pass
+
+
+_SCANNERS = [_cup_handle, _golden_cross, _ma200_breakout, _pullback_bounce,
              _momentum_expansion, _momentum_10_8]
 
 
-def scan_date_range(from_date: str, to_date: str, progress_cb=None) -> list:
+def scan_date_range(from_date: str, to_date: str, progress_cb=None,
+                     squeeze_threshold: float = None, price_threshold: float = None,
+                     max_squeeze_age: float = None, vol_surge_mult: float = None) -> list:
     """Scan all patterns for every trading day in [from_date, to_date].
     Each date's results are saved to the DB independently (same as single-date scan).
     """
+    sq_thresh  = squeeze_threshold if squeeze_threshold is not None else SQUEEZE_THRESHOLD
+    pr_thresh  = price_threshold   if price_threshold   is not None else PRICE_THRESHOLD
+    age_thresh = max_squeeze_age   if max_squeeze_age   is not None else MAX_SQUEEZE_AGE
+    vs_mult    = vol_surge_mult    if vol_surge_mult    is not None else VOL_SURGE_MULT
     with get_connection() as conn:
         date_rows = conn.execute(
             "SELECT DISTINCT date FROM stocks_daily"
@@ -340,6 +522,7 @@ def scan_date_range(from_date: str, to_date: str, progress_cb=None) -> list:
 
     for scan_date in trading_dates:
         date_results = []
+        vcp_results  = []
         for ticker in tickers:
             done += 1
             if progress_cb:
@@ -354,18 +537,43 @@ def scan_date_range(from_date: str, to_date: str, progress_cb=None) -> list:
                         date_results.append({**r, "scan_date": scan_date})
                 except Exception:
                     pass
+            try:
+                r = _volume_surge(ticker, rows_up_to, vs_mult)
+                if r:
+                    date_results.append({**r, "scan_date": scan_date})
+            except Exception:
+                pass
+            try:
+                r = _ma_squeeze(ticker, rows_up_to, sq_thresh, pr_thresh, age_thresh)
+                if r:
+                    date_results.append({**r, "scan_date": scan_date})
+            except Exception:
+                pass
+            vcp_sig, vcp_pat = _run_vcp(ticker, rows_up_to)
+            if vcp_sig:
+                vcp_results.append(vcp_sig)
+            if vcp_pat:
+                date_results.append({**vcp_pat, "scan_date": scan_date})
         _save_results(scan_date, date_results)
+        _save_vcp_results(scan_date, vcp_results)
         all_results.extend(date_results)
 
     return all_results
 
 
-def scan_all_patterns(scan_date: str = None, progress_cb=None) -> list:
+def scan_all_patterns(scan_date: str = None, progress_cb=None,
+                       squeeze_threshold: float = None, price_threshold: float = None,
+                       max_squeeze_age: float = None, vol_surge_mult: float = None) -> list:
     if not scan_date:
         scan_date = datetime.now().strftime("%Y-%m-%d")
-    all_prices = _load_prices_up_to(scan_date)
-    total      = len(all_prices)
-    results    = []
+    sq_thresh  = squeeze_threshold if squeeze_threshold is not None else SQUEEZE_THRESHOLD
+    pr_thresh  = price_threshold   if price_threshold   is not None else PRICE_THRESHOLD
+    age_thresh = max_squeeze_age   if max_squeeze_age   is not None else MAX_SQUEEZE_AGE
+    vs_mult    = vol_surge_mult    if vol_surge_mult    is not None else VOL_SURGE_MULT
+    all_prices  = _load_prices_up_to(scan_date)
+    total       = len(all_prices)
+    results     = []
+    vcp_results = []
     for i, (ticker, rows) in enumerate(all_prices.items()):
         if progress_cb:
             progress_cb(i + 1, total, ticker)
@@ -376,7 +584,25 @@ def scan_all_patterns(scan_date: str = None, progress_cb=None) -> list:
                     results.append({**r, "scan_date": scan_date})
             except Exception:
                 pass
+        try:
+            r = _volume_surge(ticker, rows, vs_mult)
+            if r:
+                results.append({**r, "scan_date": scan_date})
+        except Exception:
+            pass
+        try:
+            r = _ma_squeeze(ticker, rows, sq_thresh, pr_thresh, age_thresh)
+            if r:
+                results.append({**r, "scan_date": scan_date})
+        except Exception:
+            pass
+        vcp_sig, vcp_pat = _run_vcp(ticker, rows)
+        if vcp_sig:
+            vcp_results.append(vcp_sig)
+        if vcp_pat:
+            results.append({**vcp_pat, "scan_date": scan_date})
     _save_results(scan_date, results)
+    _save_vcp_results(scan_date, vcp_results)
     return results
 
 
@@ -387,42 +613,101 @@ def _save_results(scan_date: str, results: list):
             try:
                 r.setdefault("mom_15d_start", None)
                 r.setdefault("mom_15d_gain_pct", None)
+                r.setdefault("squeeze_spread_pct", None)
+                r.setdefault("squeeze_days", None)
+                r.setdefault("squeeze_fresh", None)
                 conn.execute("""
                     INSERT INTO pattern_scan_results
                         (scan_date, ticker, pattern_name, signal_detail,
-                         signal_date, close, ma10, ma30, ma50, ma200,
+                         signal_date, close, ma9, ma21, ma30, ma50, ma100, ma200,
                          volume, vol_ma10, high_30d, low_30d, pct_change,
-                         mom_15d_start, mom_15d_gain_pct)
+                         mom_15d_start, mom_15d_gain_pct,
+                         squeeze_spread_pct, squeeze_days, squeeze_fresh)
                     VALUES
                         (:scan_date, :ticker, :pattern_name, :signal_detail,
-                         :signal_date, :close, :ma10, :ma30, :ma50, :ma200,
+                         :signal_date, :close, :ma9, :ma21, :ma30, :ma50, :ma100, :ma200,
                          :volume, :vol_ma10, :high_30d, :low_30d, :pct_change,
-                         :mom_15d_start, :mom_15d_gain_pct)
+                         :mom_15d_start, :mom_15d_gain_pct,
+                         :squeeze_spread_pct, :squeeze_days, :squeeze_fresh)
                 """, r)
             except Exception:
                 pass
 
 
+_TT_JOIN = """
+    LEFT JOIN stocks_daily s
+           ON s.ticker = p.ticker
+          AND s.date = (
+                SELECT MAX(s2.date) FROM stocks_daily s2
+                WHERE s2.ticker = p.ticker AND s2.date <= p.scan_date
+              )
+    LEFT JOIN universe_prices u
+           ON u.ticker = p.ticker
+          AND s.ticker IS NULL
+          AND u.date = (
+                SELECT MAX(u2.date) FROM universe_prices u2
+                WHERE u2.ticker = p.ticker AND u2.date <= p.scan_date
+              )
+    LEFT JOIN vcp_signals  v  ON v.ticker = p.ticker AND v.scan_date = p.scan_date
+    LEFT JOIN rs_ratings   rr ON rr.ticker = p.ticker AND rr.date = COALESCE(s.date, u.date)
+"""
+# stocks_daily (s) wins when a ticker is tracked; universe_prices (u) fills in
+# the Trend Template/RS/52wk columns for the ~787 active-universe tickers that
+# aren't on the tracked Ticker List (same "tracked wins on overlap" rule
+# /api/data/summary uses) — _load_prices_up_to() applies the same rule for
+# the pattern DETECTION side, this is the display-join side.
+_TT_COLS = """
+    COALESCE(s.ma150, u.ma150) AS ma150,
+    COALESCE(s.high_52wk, u.high_52wk) AS high_52wk,
+    COALESCE(s.low_52wk, u.low_52wk) AS low_52wk,
+    COALESCE(rr.rs_rating, s.rs_rank, u.rs_rank) AS rs_rank,
+    rr.rs_leader,
+    COALESCE(s.c1, u.c1) AS c1, COALESCE(s.c2, u.c2) AS c2, COALESCE(s.c3, u.c3) AS c3,
+    COALESCE(s.c4, u.c4) AS c4, COALESCE(s.c5, u.c5) AS c5, COALESCE(s.c6, u.c6) AS c6,
+    COALESCE(s.c7, u.c7) AS c7, COALESCE(s.c8, u.c8) AS c8,
+    COALESCE(s.trend_score, u.trend_score) AS trend_score,
+    v.vcp_detected, v.num_contractions, v.contraction_depths, v.volume_dryup,
+    v.pivot_price, v.suggested_stop, v.current_price_vs_pivot, v.tightness_pct
+"""
+
+
+def _rows_with_parsed_vcp(rows: list) -> list:
+    out = []
+    for r in rows:
+        d = dict(r)
+        if d.get("contraction_depths"):
+            try:
+                d["contraction_depths"] = json.loads(d["contraction_depths"])
+            except (TypeError, ValueError):
+                d["contraction_depths"] = []
+        out.append(d)
+    return out
+
+
 def get_scan_results_range(from_date: str, to_date: str) -> list:
     with get_connection() as conn:
         rows = conn.execute(
-            """SELECT * FROM pattern_scan_results
-               WHERE scan_date >= ? AND scan_date <= ?
-               ORDER BY scan_date DESC, pattern_name, ticker""",
+            f"""SELECT p.*, {_TT_COLS}
+               FROM pattern_scan_results p
+               {_TT_JOIN}
+               WHERE p.scan_date >= ? AND p.scan_date <= ?
+               ORDER BY p.scan_date DESC, p.pattern_name, p.ticker""",
             (from_date, to_date),
         ).fetchall()
-    return [dict(r) for r in rows]
+    return _rows_with_parsed_vcp(rows)
 
 
 def get_scan_results(scan_date: str) -> list:
     with get_connection() as conn:
         rows = conn.execute(
-            """SELECT * FROM pattern_scan_results
-               WHERE scan_date = ?
-               ORDER BY pattern_name, ticker""",
+            f"""SELECT p.*, {_TT_COLS}
+               FROM pattern_scan_results p
+               {_TT_JOIN}
+               WHERE p.scan_date = ?
+               ORDER BY p.pattern_name, p.ticker""",
             (scan_date,)
         ).fetchall()
-    return [dict(r) for r in rows]
+    return _rows_with_parsed_vcp(rows)
 
 
 def get_available_scan_dates() -> list:
