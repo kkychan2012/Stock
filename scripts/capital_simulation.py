@@ -16,11 +16,19 @@ import json
 import sys
 import pandas as pd
 
-MONTHS = (
-    ["2024_11", "2024_12"]
-    + [f"2025_{m:02d}" for m in range(1, 13)]
-    + [f"2026_{m:02d}" for m in range(1, 9)]
-)
+def _find_months(data_dir="strategies"):
+    """Every monthly study file present (study_volume_surge_YYYY_MM.json), oldest first.
+    Run from the folder that contains ./strategies/ (project root for the US study,
+    hk/ for the Hong Kong one)."""
+    import glob
+    import os
+    import re
+    months = []
+    for p in glob.glob(os.path.join(data_dir, "study_volume_surge_*.json")):
+        m = re.search(r"study_volume_surge_(\d{4}_\d{2})\.json$", p)
+        if m:
+            months.append(m.group(1))
+    return sorted(months)
 
 
 def run_simulation(starting_capital, position_size, out_path, skip_if_held=False, compound_slots=None,
@@ -30,7 +38,7 @@ def run_simulation(starting_capital, position_size, out_path, skip_if_held=False
     the still-free slots rather than dumped into the next trade. position_size
     is ignored in this mode unless > 0, in which case it is the base stake and
     buys are sized base + (profit above base) / free slots, floored at base."""
-    all_data = [json.load(open(f'strategies/study_volume_surge_{m}.json')) for m in MONTHS]
+    all_data = [json.load(open(f'strategies/study_volume_surge_{m}.json')) for m in _find_months()]
     trades = [t for d in all_data for t in d['trades'] if t['scenario'] == 'A']
 
     events = []

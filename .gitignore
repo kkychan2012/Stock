@@ -34,3 +34,8 @@ desktop.ini
 
 # Logs / temp
 *.log
+
+# Hong Kong study (generated)
+hk/runs/
+hk/strategies/
+hk/*.log
