@@ -97,7 +97,11 @@
     .surge-alert.warn   { background: rgba(217,119,6,.12); border-color: rgba(217,119,6,.45); }
     .surge-alert.target,
     .surge-alert.buy    { background: rgba(22,163,74,.10); border-color: rgba(22,163,74,.40); }
+    .surge-alert.drop   { background: rgba(37,99,235,.10); border-color: rgba(37,99,235,.40); }
+    tr.surge-drop td { background: rgba(37,99,235,.09); }
     .surge-alert b { min-width: 58px; }
+    .hk-log { font-family: monospace; font-size: 11px; background: var(--surface); border: 1px solid var(--border);
+              border-radius: 6px; padding: 8px 10px; max-height: 150px; overflow-y: auto; white-space: pre-wrap; margin-bottom: 10px; }
     .surge-small { font-size: 10.5px; color: var(--muted); line-height: 1.35; max-width: 260px; }
 
     /* ── Summary cards ── */
@@ -357,7 +361,7 @@
   <span class="sep"></span>
   <span class="subtitle">Yahoo Finance · SQLite</span>
   <span id="last-updated"></span>
-  <button class="btn btn-fetch"   onclick="openFetchModal()">&#8659; Fetch Data</button>
+  <button class="btn btn-fetch"   onclick="openFetchModal()">&#8659; Fetch US Data</button>
   <button class="btn btn-primary" onclick="refreshCurrent()">&#8635; Refresh</button>
   <a href="/api/backup/download" download>
     <button class="btn btn-ghost" title="Download database backup">&#8681; Backup DB</button>
@@ -382,6 +386,7 @@
   <button class="tab-btn"        onclick="showTab('market')">Market</button>
   <button class="tab-btn"        onclick="showTab('dataview')">Data</button>
   <button class="tab-btn"        onclick="showTab('surge')">Surge Strategy<span id="surge-badge" style="margin-left:5px;color:var(--green);font-weight:700"></span></button>
+  <button class="tab-btn"        onclick="showTab('hk')">HK Surge<span id="hk-badge" style="margin-left:5px;color:var(--green);font-weight:700"></span></button>
 </nav>
 
 <!-- ════════════ MAIN ════════════ -->
@@ -1471,7 +1476,7 @@
 <div id="fetch-modal" class="modal-overlay" onclick="handleOverlayClick(event)">
   <div class="modal">
     <div class="modal-header">
-      <span class="modal-title">&#8659; Fetch Market Data</span>
+      <span class="modal-title">&#8659; Fetch US Market Data</span>
       <button class="modal-close" onclick="closeFetchModal()">&#10005;</button>
     </div>
     <div class="modal-body">
@@ -1677,12 +1682,12 @@
       <tbody id="surge-buy-body"></tbody>
     </table></div>
 
-    <div class="surge-title" style="color:#d97706">&#9679; Armed — limit order is live
-      <span class="surge-sub">drop day found; waiting for the High to reach the limit price</span></div>
+    <div class="surge-title" style="color:#2563eb">&#9679; Drop Day — buy level armed
+      <span class="surge-sub">first red candle after the surge; the surge-day close is now the buy level for 5 trading days — a Buy Signal follows when the High reaches it</span></div>
     <div class="table-wrap"><table>
       <thead><tr>
         <th class="left">Ticker</th><th class="left">Surge day</th><th>Vol&times;</th>
-        <th class="left">Drop day</th><th>Limit price</th><th>Window days left</th>
+        <th class="left">Drop day</th><th>Days since</th><th>Buy level</th><th>Window days left</th>
         <th class="left">Action</th>
       </tr></thead>
       <tbody id="surge-armed-body"></tbody>
@@ -1717,6 +1722,85 @@
         <th>P/L %</th><th class="left">Action</th>
       </tr></thead>
       <tbody id="surge-closed-body"></tbody>
+    </table></div>
+  </div>
+
+  <!-- ════════════ HK SURGE TAB (Hong Kong; separate data, fetch and positions from the US tab) ════════════ -->
+  <div id="tab-hk" class="tab-pane">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+      <button id="hk-fetch-quick" class="btn btn-fetch" onclick="runHkFetch('quick')" title="Last ~20 days for the HK stocks that pass the size/liquidity screen, then scans (about a minute)">&#8659; Fetch HK Data (quick)</button>
+      <button id="hk-fetch-full" class="btn btn-ghost" onclick="runHkFetch('full')" title="Re-download the HKEX list and every stock's full history (about 5 minutes)">Full refresh</button>
+      <button id="hk-fetch-shares" class="btn btn-ghost" onclick="runHkFetch('shares')" title="Re-download shares outstanding (used for market cap)">Refresh shares</button>
+      <span style="width:10px"></span>
+      <button class="btn btn-primary" onclick="runHkScan()">&#8635; Scan Now</button>
+      <button class="btn btn-primary" onclick="runHkLive()" title="Fetch live prices for your HK positions and armed signals now">&#9889; Live Refresh</button>
+      <button class="btn btn-ghost" onclick="loadHkSurge()">Reload</button>
+      <button id="hk-notify-btn" class="btn btn-ghost" onclick="enableHkNotifications()">&#128276; Enable alerts</button>
+      <span id="hk-status" style="font-size:12px;font-weight:600"></span>
+    </div>
+    <div id="hk-fetch-log" class="hk-log" style="display:none"></div>
+    <div id="hk-meta" style="font-size:12px;color:var(--muted);margin-bottom:4px"></div>
+    <div id="hk-monitor-line" style="font-size:11.5px;color:var(--muted);margin-bottom:8px"></div>
+    <div id="hk-alerts"></div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+      Same strategy as the US tab, on Hong Kong stocks only: surge day (3.5&times; volume) &rarr; red-candle drop day &rarr;
+      limit-buy at the <b>surge-day close</b> for 5 days &rarr; <b>Buy Signal</b> (kept 3 trading days) &rarr; <b>I bought</b> &rarr;
+      sell half at <b>+15%</b>, the rest when a close is below <b>MA21</b> and the next open is still below.
+      Only stocks with market cap &ge; HK$1B and turnover &ge; HK$5M/day. Sizing: HK$10,000 per slot, max 20 slots,
+      profit shared evenly over free slots, one position &le; 10% of equity, ~0.32% round-trip costs.
+    </div>
+
+    <div class="summary-row" id="hk-cards"></div>
+
+    <div class="surge-title" style="color:var(--green)">&#9679; Buy Signals &mdash; limit price was reached
+      <span class="surge-sub">suggested size follows your slot / profit-sharing rule and rounds down to whole board lots</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th class="left">Stock</th><th class="left">Surge day</th><th>Vol&times;</th><th>Mkt cap</th>
+        <th>Limit price</th><th class="left">Triggered</th><th>Expires in</th>
+        <th class="left">Suggested buy</th><th class="left">Action</th>
+      </tr></thead>
+      <tbody id="hk-buy-body"></tbody>
+    </table></div>
+
+    <div class="surge-title" style="color:#2563eb">&#9679; Drop Day &mdash; buy level armed
+      <span class="surge-sub">first red candle after the surge; the surge-day close is now the buy level for 5 trading days &mdash; a Buy Signal follows when the High reaches it</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th class="left">Stock</th><th class="left">Surge day</th><th>Vol&times;</th><th class="left">Drop day</th>
+        <th>Days since</th><th>Buy level</th><th>Window days left</th><th class="left">Suggested buy</th><th class="left">Action</th>
+      </tr></thead>
+      <tbody id="hk-armed-body"></tbody>
+    </table></div>
+
+    <div class="surge-title" style="color:var(--muted)">&#9679; Watching &mdash; waiting for a red candle
+      <span class="surge-sub">gives up after 10 trading days</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th class="left">Stock</th><th class="left">Surge day</th><th>Vol&times;</th><th>Mkt cap</th>
+        <th>Surge close</th><th>Days since surge</th><th class="left">Action</th>
+      </tr></thead>
+      <tbody id="hk-watch-body"></tbody>
+    </table></div>
+
+    <div class="surge-title" style="color:var(--text)">&#9679; My HK Positions &mdash; marked as bought
+      <span class="surge-sub">live price (Yahoo, ~15 min delayed) when the monitor has run, else the stored close</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th class="left">Stock</th><th class="left">Bought</th><th>Buy price</th><th>Amount</th>
+        <th>+15% target</th><th class="left">Status</th><th>Price</th><th>MA21</th>
+        <th>vs MA21</th><th>P/L % (net)</th><th>P/L HK$</th><th class="left">Alert</th><th class="left">Action</th>
+      </tr></thead>
+      <tbody id="hk-pos-body"></tbody>
+    </table></div>
+
+    <div class="surge-title" style="color:var(--muted)">&#9679; Closed HK positions</div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th class="left">Stock</th><th class="left">Bought</th><th>Buy price</th><th class="left">Half sold</th>
+        <th class="left">Exit</th><th class="left">Reason</th><th>P/L % (net)</th><th>P/L HK$</th><th class="left">Action</th>
+      </tr></thead>
+      <tbody id="hk-closed-body"></tbody>
     </table></div>
   </div>
 
@@ -1785,6 +1869,49 @@
   </div>
 </div>
 
+<!-- ════════════ HK SURGE MODAL (bought / partial / sell) ════════════ -->
+<div id="hk-modal" class="modal-overlay" onclick="if(event.target===this)closeHkModal()">
+  <div class="modal" style="width:440px">
+    <div class="modal-header">
+      <span id="hk-modal-title" class="modal-title">HK Surge</span>
+      <button class="modal-close" onclick="closeHkModal()">&#10005;</button>
+    </div>
+    <div class="modal-body" style="display:grid;grid-template-columns:110px 1fr;gap:8px 12px;align-items:center">
+      <div id="hk-m-info" style="grid-column:1/-1;font-size:12px;color:var(--muted);line-height:1.5"></div>
+      <label style="font-size:12px;color:var(--muted);text-align:right">Date</label>
+      <input id="hk-m-date" class="ticker-add-input" style="width:100%;font-size:13px;font-family:monospace"
+             placeholder="YYYY-MM-DD" maxlength="10" onblur="normaliseDateInput(this)">
+      <label style="font-size:12px;color:var(--muted);text-align:right">Price (HK$) *</label>
+      <input id="hk-m-price" class="ticker-add-input" type="number" step="0.0001" min="0" style="width:100%;font-size:13px" placeholder="0.000">
+      <div id="hk-m-shares-row" style="display:contents">
+        <label style="font-size:12px;color:var(--muted);text-align:right">Shares</label>
+        <input id="hk-m-shares" class="ticker-add-input" type="number" step="any" min="0" style="width:100%;font-size:13px"
+               placeholder="Optional" oninput="hkModalLink('shares')">
+        <label style="font-size:12px;color:var(--muted);text-align:right">Amount (HK$)</label>
+        <input id="hk-m-amount" class="ticker-add-input" type="number" step="any" min="0" style="width:100%;font-size:13px"
+               placeholder="Optional - drives your account/sizing figures" oninput="hkModalLink('amount')">
+      </div>
+      <div id="hk-m-reason-row" style="display:contents">
+        <label style="font-size:12px;color:var(--muted);text-align:right">Reason</label>
+        <select id="hk-m-reason" class="ticker-add-input" style="width:100%;font-size:13px">
+          <option value="cut_loss_ma21">Cut-loss (MA21 broken)</option>
+          <option value="manual">Manual</option>
+          <option value="target">Target</option>
+        </select>
+      </div>
+      <div id="hk-m-note-row" style="display:contents">
+        <label style="font-size:12px;color:var(--muted);text-align:right">Note</label>
+        <input id="hk-m-note" class="ticker-add-input" style="width:100%;font-size:13px" placeholder="Optional">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="hk-m-save" class="btn btn-fetch" onclick="submitHkModal()">Save</button>
+      <button class="btn btn-ghost" onclick="closeHkModal()">Cancel</button>
+      <span id="hk-m-error" style="font-size:12px;color:var(--red);flex:1"></span>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
 // ═══════════════════════════════════════
@@ -1830,7 +1957,7 @@ let _pollTimer        = null;
 let _lastLogLen       = 0;
 let _fetchRunning     = false;
 
-const TABS = ['holdings', 'signals', 'sold', 'monitor', 'patterns', 'tickers', 'backtester', 'insider', 'congress', 'market', 'dataview', 'surge'];
+const TABS = ['holdings', 'signals', 'sold', 'monitor', 'patterns', 'tickers', 'backtester', 'insider', 'congress', 'market', 'dataview', 'surge', 'hk'];
 
 // ═══════════════════════════════════════
 //  Formatting
@@ -1915,7 +2042,7 @@ async function runSurgeLive() {
     st.style.color = r.errors && r.errors.length ? '#d97706' : 'var(--green)';
     st.textContent = `Live refresh: ${r.positions} position(s) + ${r.armed} armed signal(s) checked` +
       (r.sell.length ? ` · SELL: ${r.sell.join(', ')}` : '') +
-      (r.triggered.length ? ` · new Buy Signal: ${r.triggered.join(', ')}` : '') +
+      (r.drop_day && r.drop_day.length ? ` · DROP DAY: ${r.drop_day.join(', ')}` : '') + (r.triggered.length ? ` · new Buy Signal: ${r.triggered.join(', ')}` : '') +
       (r.errors.length ? ` · ${r.errors.length} error(s): ${r.errors.slice(0, 2).join('; ')}` : '');
   } catch (e) {
     st.style.color = 'var(--red)';
@@ -1924,10 +2051,11 @@ async function runSurgeLive() {
 }
 
 const _SURGE_LEVEL = {sell: ['🔴 SELL', 'var(--red)'], warn: ['⚠ MA21', '#d97706'],
-                      target: ['🎯 Target', 'var(--green)'], buy: ['🟢 BUY', 'var(--green)']};
+                      target: ['🎯 Target', 'var(--green)'], buy: ['🟢 BUY', 'var(--green)'],
+                      drop: ['🔻 DROP DAY', '#2563eb']};
 
 function _surgeRenderBanner(alerts) {
-  const order = {sell: 0, warn: 1, target: 2, buy: 3};
+  const order = {sell: 0, warn: 1, target: 2, buy: 3, drop: 4};
   document.getElementById('surge-alerts').innerHTML = alerts.slice()
     .sort((a, b) => order[a.level] - order[b.level])
     .map(a => `<div class="surge-alert ${a.level}"><b>${a.ticker}</b><span>${_SURGE_LEVEL[a.level][0]} — ${a.message}</span></div>`)
@@ -2023,7 +2151,7 @@ function renderSurge() {
 
   document.getElementById('surge-cards').innerHTML = `
     <div class="card"><div class="card-label">Buy Signals</div><div class="card-value ${buy.length ? 'green' : ''}">${buy.length}</div></div>
-    <div class="card"><div class="card-label">Armed</div><div class="card-value">${armed.length}</div></div>
+    <div class="card"><div class="card-label">Drop Day</div><div class="card-value">${armed.length}</div></div>
     <div class="card"><div class="card-label">Watching</div><div class="card-value">${watch.length}</div></div>
     <div class="card"><div class="card-label">Open Positions</div><div class="card-value">${d.positions.length}</div></div>
     <div class="card"><div class="card-label">Below MA21</div><div class="card-value ${warn ? 'red' : ''}">${warn}</div></div>
@@ -2041,11 +2169,13 @@ function renderSurge() {
       <td class="left">${_surgeBtn('I bought', `openSurgeModal('bought',${s.id})`, 'btn-fetch')}${_surgeBtn('Dismiss', `surgeDismiss(${s.id})`)}</td></tr>`;
   }), 'No buy signals right now.');
 
-  _surgeRows('surge-armed-body', 7, armed.map(s => `<tr>
+  const _isNewDrop = s => s.days_since_drop != null && s.days_since_drop <= 1;
+  _surgeRows('surge-armed-body', 8, armed.map(s => `<tr class="${_isNewDrop(s) ? 'surge-drop' : ''}">
       <td class="left ticker-cell">${s.ticker}</td><td class="left">${fmtDate(s.surge_date)}</td>
-      <td>${_surgeVol(s)}</td><td class="left">${fmtDate(s.drop_date)}</td>
+      <td>${_surgeVol(s)}</td><td class="left">${fmtDate(s.drop_date)}${_isNewDrop(s) ? ' <span class="pill amber">NEW</span>' : ''}</td>
+      <td>${s.days_since_drop ?? '—'}</td>
       <td><b>${_surgeMoney(s.buy_level)}</b></td><td>${s.window_days_left ?? '—'}</td>
-      <td class="left">${_surgeBtn('Dismiss', `surgeDismiss(${s.id})`)}</td></tr>`), 'Nothing armed.');
+      <td class="left">${_surgeBtn('Dismiss', `surgeDismiss(${s.id})`)}</td></tr>`), 'No drop days waiting.');
 
   _surgeRows('surge-watch-body', 6, watch.map(s => `<tr>
       <td class="left ticker-cell">${s.ticker}</td><td class="left">${fmtDate(s.surge_date)}</td>
@@ -2176,6 +2306,338 @@ async function surgeUndo(id) {
 }
 
 // ═══════════════════════════════════════
+//  HK Surge (Hong Kong — separate data, fetch, positions and monitor from the US tab)
+// ═══════════════════════════════════════
+let _hkData = null, _hkModal = null, _hkFetchTimer = null, _hkLogPos = 0, _hkLastRun = null;
+const _hkMoney = v => v == null ? '<span class="dim">—</span>' : 'HK$' + Number(v).toLocaleString(undefined, {minimumFractionDigits: v < 10 ? 3 : 2, maximumFractionDigits: v < 10 ? 3 : 2});
+const _hkHkd = v => v == null ? '<span class="dim">—</span>' : 'HK$' + Math.round(v).toLocaleString();
+const _hkVol = s => s.surge_vol_ratio != null ? s.surge_vol_ratio + '×' : '<span class="dim">—</span>';
+const _hkCap = v => v == null ? '<span class="dim">—</span>' : (v >= 1e9 ? (v / 1e9).toFixed(1) + 'B' : (v / 1e6).toFixed(0) + 'M');
+const _hkStock = r => `<span class="ticker-cell">${r.ticker}</span><div class="surge-small">${r.name || ''}</div>`;
+const _hkBtn = (label, js, cls = 'btn-ghost') =>
+  `<button class="btn ${cls}" style="padding:2px 9px;font-size:11px;margin-right:4px" onclick="${js}">${label}</button>`;
+const _hkPct = v => v == null ? '<span class="dim">—</span>' : `<span class="pill ${v >= 0 ? 'green' : 'red'}">${v >= 0 ? '+' : ''}${Number(v).toFixed(2)}%</span>`;
+const _hkPl = v => v == null ? '<span class="dim">—</span>' : `<span class="${v >= 0 ? 'green' : 'red'}">${v >= 0 ? '+' : '−'}HK$${Math.abs(Math.round(v)).toLocaleString()}</span>`;
+
+async function loadHkSurge() {
+  try {
+    _hkData = await apiFetch('/api/hk/board');
+    renderHkSurge();
+    if (_hkData.fetch && _hkData.fetch.running && !_hkFetchTimer) _hkStartFetchPolling();   // resume a running fetch
+  } catch (e) {
+    document.getElementById('hk-status').textContent = '⚠ ' + e.message;
+  }
+}
+
+function _hkSetStatus(msg, color) {
+  const st = document.getElementById('hk-status');
+  st.style.color = color || 'var(--muted)';
+  st.textContent = msg;
+}
+
+// ---- fetch (HK only; the header button fetches US) ----
+function _hkFetchButtons(disabled) {
+  ['hk-fetch-quick', 'hk-fetch-full', 'hk-fetch-shares'].forEach(id => { document.getElementById(id).disabled = disabled; });
+}
+
+async function runHkFetch(mode) {
+  if (mode === 'full' && !confirm('Full refresh re-downloads every HK-listed stock (about 5 minutes). Continue?')) return;
+  try {
+    await apiFetch('/api/hk/fetch', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                     body: JSON.stringify({mode, scan: true})});
+    _hkLogPos = 0;
+    document.getElementById('hk-fetch-log').textContent = '';
+    _hkStartFetchPolling();
+  } catch (e) {
+    _hkSetStatus('⚠ ' + e.message, 'var(--red)');
+  }
+}
+
+function _hkStartFetchPolling() {
+  const box = document.getElementById('hk-fetch-log');
+  box.style.display = 'block';
+  _hkFetchButtons(true);
+  _hkSetStatus('HK fetch running…', 'var(--muted)');
+  clearInterval(_hkFetchTimer);
+  _hkFetchTimer = setInterval(async () => {
+    try {
+      const st = await apiFetch('/api/hk/fetch/status?since=' + _hkLogPos);
+      if (st.log.length) {
+        box.textContent += st.log.join('\n') + '\n';
+        box.scrollTop = box.scrollHeight;
+      }
+      _hkLogPos = st.log_len;
+      if (!st.running) {
+        clearInterval(_hkFetchTimer);
+        _hkFetchTimer = null;
+        _hkFetchButtons(false);
+        _hkSetStatus(st.ok ? `HK ${st.mode} fetch finished ${st.finished}` : '⚠ HK fetch failed: ' + (st.error || ''),
+                     st.ok ? 'var(--green)' : 'var(--red)');
+        loadHkSurge();
+      }
+    } catch (e) { /* server busy — keep polling */ }
+  }, 2000);
+}
+
+async function runHkScan() {
+  _hkSetStatus('Scanning…');
+  try {
+    const r = await apiFetch('/api/hk/scan', {method: 'POST'});
+    await loadHkSurge();
+    _hkSetStatus(`Scan done (data through ${r.as_of}): ${r.new.length} new, ${r.changed.length} changed · ` +
+                 `${r.filtered_out} surges filtered out by market cap / turnover`, 'var(--green)');
+  } catch (e) { _hkSetStatus('⚠ ' + e.message, 'var(--red)'); }
+}
+
+async function runHkLive() {
+  _hkSetStatus('Fetching live prices…');
+  try {
+    const r = await apiFetch('/api/hk/monitor/refresh', {method: 'POST'});
+    await loadHkSurge();
+    _hkSetStatus(`Live refresh: ${r.positions} position(s) + ${r.armed} armed signal(s) checked` +
+      (r.sell.length ? ` · SELL: ${r.sell.join(', ')}` : '') + (r.drop_day && r.drop_day.length ? ` · DROP DAY: ${r.drop_day.join(', ')}` : '') + (r.triggered.length ? ` · new Buy Signal: ${r.triggered.join(', ')}` : '') +
+      (r.errors.length ? ` · ${r.errors.length} error(s): ${r.errors.slice(0, 2).join('; ')}` : ''),
+      r.errors.length ? '#d97706' : 'var(--green)');
+  } catch (e) { _hkSetStatus('⚠ ' + e.message, 'var(--red)'); }
+}
+
+function _hkRows(id, cols, rows, msg) {
+  document.getElementById(id).innerHTML = rows.length ? rows.join('') : `<tr><td colspan="${cols}" class="state-msg">${msg}</td></tr>`;
+}
+
+function _hkSuggest(s) {
+  const g = s.suggest;
+  if (!g) return '<span class="dim">—</span>';
+  if (g.shares > 0)
+    return `<b>${_hkHkd(g.amount)}</b><div class="surge-small">${g.shares.toLocaleString()} sh` +
+           (g.lots != null ? ` (${g.lots} lot${g.lots === 1 ? '' : 's'} × ${g.lot_size.toLocaleString()})` : '') + '</div>';
+  return `<span class="dim">${g.note || 'no free slot'}</span>`;
+}
+
+function renderHkSurge() {
+  const d = _hkData, cfg = d.config, a = d.account;
+  const isStale = s => s.expires_in != null && s.expires_in < 0;
+  const buyAll = d.signals.filter(s => s.status === 'triggered');
+  const buy = buyAll.filter(s => !isStale(s));
+  const armed = d.signals.filter(s => s.status === 'armed');
+  const watch = d.signals.filter(s => s.status === 'watching');
+  const warn = d.positions.filter(p => p.alert_state === 'sell' || p.alert_state === 'below_ma21' || p.below_ma21).length;
+  const closedPl = d.closed.map(p => p.pnl_net_pct).filter(v => v != null);
+  const avgCl = closedPl.length ? closedPl.reduce((x, y) => x + y, 0) / closedPl.length : null;
+
+  _hkApplyAlerts(d.alerts || [], true);
+  _hkRenderBanner(d.alerts || []);
+  _hkRenderMonitor(d.monitor);
+  document.getElementById('hk-meta').textContent =
+    `HK data through ${d.data_through || '—'} · ${d.tickers_in_db.toLocaleString()} stocks stored` +
+    (d.last_scan && d.last_scan.at ? ` · last scan ${d.last_scan.at} HKT` : ' · not scanned this session');
+
+  document.getElementById('hk-cards').innerHTML = `
+    <div class="card"><div class="card-label">Buy Signals</div><div class="card-value ${buy.length ? 'green' : ''}">${buy.length}</div></div>
+    <div class="card"><div class="card-label">Drop Day</div><div class="card-value">${armed.length}</div></div>
+    <div class="card"><div class="card-label">Watching</div><div class="card-value">${watch.length}</div></div>
+    <div class="card"><div class="card-label">Open / Slots</div><div class="card-value">${a.open_positions} / ${a.slots}</div></div>
+    <div class="card"><div class="card-label">Next stake</div><div class="card-value">${_hkHkd(a.next_stake)}</div></div>
+    <div class="card"><div class="card-label">Realized P/L</div><div class="card-value ${a.realized_pl >= 0 ? 'green' : 'red'}">${a.realized_pl >= 0 ? '+' : '−'}HK$${Math.abs(Math.round(a.realized_pl)).toLocaleString()}</div></div>
+    <div class="card"><div class="card-label">Alerts on positions</div><div class="card-value ${warn ? 'red' : ''}">${warn}</div></div>
+    <div class="card"><div class="card-label">Closed avg (net)</div><div class="card-value ${avgCl == null ? '' : avgCl >= 0 ? 'green' : 'red'}">${avgCl == null ? '—' : (avgCl >= 0 ? '+' : '') + avgCl.toFixed(2) + '%'}</div></div>`;
+
+  _hkRows('hk-buy-body', 9, buyAll.map(s => {
+    const stale = isStale(s);
+    const exp = s.expires_in == null ? '—' : stale ? '<span class="dim">stale — press Scan Now</span>'
+              : s.expires_in === 0 ? '<span class="red">last day</span>' : s.expires_in + ' day(s)';
+    return `<tr class="${stale ? '' : 'surge-buy'}" style="${stale ? 'opacity:.55' : ''}">
+      <td class="left">${_hkStock(s)}</td><td class="left">${fmtDate(s.surge_date)}</td><td>${_hkVol(s)}</td><td>${_hkCap(s.mcap)}</td>
+      <td><b>${_hkMoney(s.buy_level)}</b></td><td class="left">${fmtDate(s.trigger_date)}</td><td>${exp}</td>
+      <td class="left">${_hkSuggest(s)}</td>
+      <td class="left">${_hkBtn('I bought', `openHkModal('bought',${s.id})`, 'btn-fetch')}${_hkBtn('Dismiss', `hkDismiss(${s.id})`)}</td></tr>`;
+  }), 'No buy signals right now.');
+
+  const _isNewHkDrop = s => s.days_since_drop != null && s.days_since_drop <= 1;
+  _hkRows('hk-armed-body', 9, armed.map(s => `<tr class="${_isNewHkDrop(s) ? 'surge-drop' : ''}">
+      <td class="left">${_hkStock(s)}</td><td class="left">${fmtDate(s.surge_date)}</td><td>${_hkVol(s)}</td>
+      <td class="left">${fmtDate(s.drop_date)}${_isNewHkDrop(s) ? ' <span class="pill amber">NEW</span>' : ''}</td>
+      <td>${s.days_since_drop ?? '—'}</td><td><b>${_hkMoney(s.buy_level)}</b></td><td>${s.window_days_left ?? '—'}</td>
+      <td class="left">${_hkSuggest(s)}</td><td class="left">${_hkBtn('Dismiss', `hkDismiss(${s.id})`)}</td></tr>`), 'No drop days waiting.');
+
+  _hkRows('hk-watch-body', 7, watch.map(s => `<tr>
+      <td class="left">${_hkStock(s)}</td><td class="left">${fmtDate(s.surge_date)}</td><td>${_hkVol(s)}</td><td>${_hkCap(s.mcap)}</td>
+      <td>${_hkMoney(s.surge_close)}</td><td>${s.days_since_surge} / ${cfg.MAX_DAYS_TO_DROP}</td>
+      <td class="left">${_hkBtn('Dismiss', `hkDismiss(${s.id})`)}</td></tr>`), 'Nothing being watched.');
+
+  _hkRows('hk-pos-body', 13, d.positions.map(p => {
+    const half = p.status === 'partial_sold';
+    const reached = !half && p.last_close != null && p.last_close >= p.partial_target;
+    let alert = '';
+    if (p.alert_state === 'sell') alert += `<span class="pill red">🔴 SELL</span><div class="surge-small">${p.alert_note || ''}</div>`;
+    else if (p.alert_state === 'below_ma21') alert += `<span class="pill amber">⚠ Below MA21</span><div class="surge-small">${p.alert_note || ''}</div>`;
+    if (p.status === 'holding' && (p.target_hit_date || reached)) alert += `<div><span class="pill green">🎯 +15% reached</span></div>`;
+    if (!alert) alert = '<span class="dim">—</span>';
+    return `<tr class="${p.alert_state === 'sell' ? 'surge-sell' : (p.alert_state === 'below_ma21' || p.below_ma21) ? 'surge-hot' : ''}">
+      <td class="left">${_hkStock(p)}</td><td class="left">${fmtDate(p.buy_date)}</td><td>${_hkMoney(p.buy_price)}</td>
+      <td>${p.amount ? _hkHkd(p.amount) : '<span class="dim">—</span>'}</td><td>${_hkMoney(p.partial_target)}</td>
+      <td class="left">${half ? `Half sold @ ${_hkMoney(p.partial_price)}` : 'Holding'}</td>
+      <td>${_hkMoney(p.last_close)}<div class="dim" style="font-size:10px">${p.price_is_live ? '● live · ' : ''}${p.last_close_date || ''}${p.last_checked ? ' · chk ' + p.last_checked.slice(11, 16) + ' HKT' : ''}</div></td>
+      <td>${_hkMoney(p.ma21)}</td>
+      <td>${p.dist_ma21_pct == null ? '<span class="dim">—</span>' : `<span class="${p.dist_ma21_pct >= 0 ? 'green' : 'red'}">${p.dist_ma21_pct}%</span>`}</td>
+      <td>${_hkPct(p.pnl_net_pct)}</td><td>${_hkPl(p.pnl_hkd)}</td><td class="left">${alert}</td>
+      <td class="left">${half ? '' : _hkBtn('Half sold', `openHkModal('partial',${p.id})`)}${_hkBtn('Sold', `openHkModal('sell',${p.id})`, 'btn-fetch')}${_hkBtn('Undo', `hkUndo(${p.id})`)}</td></tr>`;
+  }), 'No open HK positions. Mark a Buy Signal as bought to track it here.');
+
+  _hkRows('hk-closed-body', 9, d.closed.map(p => `<tr>
+      <td class="left">${_hkStock(p)}</td><td class="left">${fmtDate(p.buy_date)}</td><td>${_hkMoney(p.buy_price)}</td>
+      <td class="left">${p.partial_price ? `${fmtDate(p.partial_date)} @ ${_hkMoney(p.partial_price)}` : '<span class="dim">—</span>'}</td>
+      <td class="left">${fmtDate(p.exit_date)} @ ${_hkMoney(p.exit_price)}</td><td class="left">${p.exit_reason || '—'}</td>
+      <td>${_hkPct(p.pnl_net_pct)}</td><td>${_hkPl(p.pnl_hkd)}</td>
+      <td class="left">${_hkBtn('Undo', `hkUndo(${p.id})`)}</td></tr>`), 'No closed HK positions yet.');
+}
+
+function _hkRenderBanner(alerts) {
+  const order = {sell: 0, warn: 1, target: 2, buy: 3, drop: 4};
+  document.getElementById('hk-alerts').innerHTML = alerts.slice().sort((x, y) => order[x.level] - order[y.level])
+    .map(x => `<div class="surge-alert ${x.level}"><b>${x.ticker}</b><span>${_SURGE_LEVEL[x.level][0]} — ${x.message}</span></div>`).join('');
+}
+
+function _hkRenderMonitor(m) {
+  const el = document.getElementById('hk-monitor-line');
+  if (!m) { el.textContent = ''; return; }
+  const parts = [m.enabled ? `HK live monitor <b style="color:var(--green)">on</b> (every 30 min, Hong Kong hours)`
+                           : `HK live monitor <b style="color:var(--red)">off</b> (server started without it)`];
+  parts.push(m.market_open ? 'HK market open' : 'HK market closed');
+  parts.push(m.last_run ? `last pass ${m.last_run.slice(11, 16)} HKT (${m.last_reason})` : 'no pass yet this session');
+  if (m.next_run) parts.push(`next ≈ ${m.next_run.slice(5, 16).replace('-', '/')} HKT`);
+  if (m.last_error) parts.push(`<span style="color:var(--red)">last error: ${m.last_error}</span>`);
+  el.innerHTML = parts.join(' · ');
+}
+
+// ---- modal ----
+function openHkModal(mode, id) {
+  const d = _hkData, pad = n => String(n).padStart(2, '0'), t = new Date();
+  const today = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+  _hkModal = {mode, id};
+  let title, info, price = '', shares = '', amount = '';
+  if (mode === 'bought') {
+    const s = d.signals.find(x => x.id === id), g = s.suggest || {};
+    title = `I bought ${s.ticker} ${s.name || ''}`;
+    info = `Limit price was <b>${_hkMoney(s.buy_level)}</b>. ` +
+           (g.shares > 0 ? `Suggested: <b>${g.shares.toLocaleString()} shares</b> (${_hkHkd(g.amount)}). ` : (g.note ? g.note + '. ' : '')) +
+           `Enter your actual fill — shares <i>or</i> amount is enough.`;
+    price = s.buy_level; shares = g.shares > 0 ? g.shares : ''; amount = g.shares > 0 ? g.amount : '';
+  } else {
+    const p = d.positions.find(x => x.id === id);
+    if (mode === 'partial') {
+      title = `${p.ticker} — sold half`;
+      info = `+15% target is <b>${_hkMoney(p.partial_target)}</b> (buy ${_hkMoney(p.buy_price)}).`;
+      price = p.partial_target;
+    } else {
+      title = `${p.ticker} — sold the position`;
+      info = `Closes whatever is left. Buy ${_hkMoney(p.buy_price)}` + (p.last_close != null ? `, last price ${_hkMoney(p.last_close)}.` : '.');
+      price = p.last_close ?? '';
+    }
+  }
+  document.getElementById('hk-modal-title').textContent = title;
+  document.getElementById('hk-m-info').innerHTML = info;
+  document.getElementById('hk-m-date').value = today;
+  document.getElementById('hk-m-price').value = price;
+  document.getElementById('hk-m-shares').value = shares;
+  document.getElementById('hk-m-amount').value = amount;
+  document.getElementById('hk-m-note').value = '';
+  document.getElementById('hk-m-error').textContent = '';
+  document.getElementById('hk-m-shares-row').style.display = mode === 'bought' ? 'contents' : 'none';
+  document.getElementById('hk-m-note-row').style.display = mode === 'bought' ? 'contents' : 'none';
+  document.getElementById('hk-m-reason-row').style.display = mode === 'sell' ? 'contents' : 'none';
+  document.getElementById('hk-modal').classList.add('open');
+  document.getElementById('hk-m-price').focus();
+}
+
+// keep shares and amount consistent while typing (amount = shares x price x 1.001605)
+function hkModalLink(changed) {
+  const price = parseFloat(document.getElementById('hk-m-price').value);
+  if (!price) return;
+  const f = 1 + (_hkData.config.COST_PER_SIDE_PCT / 100);
+  const sh = document.getElementById('hk-m-shares'), am = document.getElementById('hk-m-amount');
+  if (changed === 'shares') { const v = parseFloat(sh.value); am.value = v > 0 ? (v * price * f).toFixed(2) : ''; }
+  else { const v = parseFloat(am.value); sh.value = v > 0 ? Math.floor(v / f / price) : ''; }
+}
+
+function closeHkModal() { document.getElementById('hk-modal').classList.remove('open'); _hkModal = null; }
+
+async function submitHkModal() {
+  if (!_hkModal) return;
+  const {mode, id} = _hkModal;
+  const date = document.getElementById('hk-m-date').value.trim();
+  const price = parseFloat(document.getElementById('hk-m-price').value);
+  const err = document.getElementById('hk-m-error');
+  err.textContent = '';
+  if (!price || price <= 0) { err.textContent = 'Enter a price greater than 0.'; return; }
+  let url, body;
+  if (mode === 'bought') {
+    const shares = parseFloat(document.getElementById('hk-m-shares').value), amount = parseFloat(document.getElementById('hk-m-amount').value);
+    url = `/api/hk/signals/${id}/bought`;
+    body = {buy_date: date, buy_price: price, shares: shares > 0 ? shares : null, amount: amount > 0 ? amount : null,
+            note: document.getElementById('hk-m-note').value.trim() || null};
+  } else if (mode === 'partial') {
+    url = `/api/hk/positions/${id}/partial`; body = {date, price};
+  } else {
+    url = `/api/hk/positions/${id}/sell`; body = {date, price, reason: document.getElementById('hk-m-reason').value};
+  }
+  const btn = document.getElementById('hk-m-save');
+  btn.disabled = true;
+  try {
+    await apiFetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    closeHkModal();
+    await loadHkSurge();
+  } catch (e) { err.textContent = e.message; } finally { btn.disabled = false; }
+}
+
+async function hkDismiss(id) {
+  if (!confirm('Dismiss this HK signal?')) return;
+  try { await apiFetch(`/api/hk/signals/${id}/dismiss`, {method: 'POST'}); await loadHkSurge(); } catch (e) { alert(e.message); }
+}
+async function hkUndo(id) {
+  if (!confirm('Remove this HK position and send the signal back to the board?')) return;
+  try { await apiFetch(`/api/hk/positions/${id}`, {method: 'DELETE'}); await loadHkSurge(); } catch (e) { alert(e.message); }
+}
+
+// ---- notifications + page-wide poll (works from any tab) ----
+let _hkSeen = new Set();
+try { _hkSeen = new Set(JSON.parse(localStorage.getItem('hkSurgeSeenAlerts') || '[]')); } catch (e) {}
+
+function _hkNotifyBtn() {
+  const b = document.getElementById('hk-notify-btn');
+  if (!b) return;
+  if (!('Notification' in window)) { b.style.display = 'none'; return; }
+  const p = Notification.permission;
+  b.innerHTML = p === 'granted' ? '&#128276; Alerts on' : p === 'denied' ? '&#128277; Alerts blocked' : '&#128276; Enable alerts';
+}
+function enableHkNotifications() {
+  if (!('Notification' in window)) { alert('This browser does not support notifications.'); return; }
+  Notification.requestPermission().then(_hkNotifyBtn);
+}
+function _hkApplyAlerts(alerts, notify) {
+  const badge = document.getElementById('hk-badge');
+  badge.textContent = alerts.length ? `(${alerts.length})` : '';
+  badge.style.color = alerts.some(x => x.level === 'sell') ? 'var(--red)' : alerts.some(x => x.level === 'warn') ? '#d97706' : 'var(--green)';
+  if (!notify) return;
+  const fresh = alerts.filter(x => !_hkSeen.has(x.key));
+  if (fresh.length && 'Notification' in window && Notification.permission === 'granted')
+    fresh.forEach(x => { try { new Notification(`HK ${x.ticker} — ${_SURGE_LEVEL[x.level][0]}`, {body: x.message, tag: x.key}); } catch (e) {} });
+  if (fresh.length) {
+    fresh.forEach(x => _hkSeen.add(x.key));
+    try { localStorage.setItem('hkSurgeSeenAlerts', JSON.stringify([..._hkSeen].slice(-300))); } catch (e) {}
+  }
+}
+async function pollHkAlerts() {
+  try {
+    const r = await apiFetch('/api/hk/alerts');
+    _hkApplyAlerts(r.alerts, true);
+    const lr = r.monitor && r.monitor.last_run;
+    if (currentTab === 'hk' && lr && lr !== _hkLastRun) loadHkSurge();
+    _hkLastRun = lr || _hkLastRun;
+  } catch (e) { /* server busy — try again next minute */ }
+}
+
+// ═══════════════════════════════════════
 //  Tab switching
 // ═══════════════════════════════════════
 function showTab(name) {
@@ -2187,7 +2649,7 @@ function showTab(name) {
   ({holdings: loadHoldings, signals: loadSignals, sold: loadSold,
     monitor: loadMonitor, patterns: loadPatterns, tickers: loadTickerList,
     backtester: loadBacktester, insider: loadInsider, congress: loadCongress,
-    market: loadMarket, dataview: loadDataView, surge: loadSurge})[name]();
+    market: loadMarket, dataview: loadDataView, surge: loadSurge, hk: loadHkSurge})[name]();
 }
 
 // ═══════════════════════════════════════
@@ -5446,6 +5908,9 @@ _refreshCongressTickerSet(); // pre-load so the Congress badge works from any ta
 _surgeNotifyBtn();
 pollSurgeAlerts();                       // badge/notifications for the Surge Strategy tab from any tab
 setInterval(pollSurgeAlerts, 60000);
+_hkNotifyBtn();
+pollHkAlerts();
+setInterval(pollHkAlerts, 60000);
 _updateSigControlVisibility(currentSignalType); // sync Signals-tab controls for the default type
                                                  // (setSignalType() never runs for it — see its own comment)
 </script>

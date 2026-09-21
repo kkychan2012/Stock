@@ -72,6 +72,11 @@ from congress_trades import fetch_congress_trades
 from volume_profile import analyze as analyze_volume_profile, VP_LOOKBACK_DAYS, VP_TOP_N, VP_PIVOT_LOOKBACK_DAYS, VP_PIVOT_WINDOW
 import surge_strategy
 
+# Hong Kong Surge Strategy: separate blueprint + database (hk/hk_stocks.db); the US code paths are untouched.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "hk"))
+import hk_routes
+import hk_surge
+
 # ---------------------------------------------------------------------------
 # Date normalisation
 # ---------------------------------------------------------------------------
@@ -2388,6 +2393,7 @@ def _surge_signals_with_age(conn):
         "ORDER BY surge_date DESC, ticker")]
     for s in signals:
         s["days_since_surge"] = sum(1 for d in tdates if d > s["surge_date"])
+        s["days_since_drop"] = sum(1 for d in tdates if d > s["drop_date"]) if s["drop_date"] else None
         if s["trigger_date"]:
             since = sum(1 for d in tdates if d > s["trigger_date"])
             s["days_since_trigger"] = since
@@ -2413,6 +2419,10 @@ def _surge_alerts(signals, positions):
             out.append({"key": f"pos{p['id']}:target", "level": "target", "ticker": p["ticker"],
                         "message": f"+15% target ${p['partial_target']:.2f} reached ({p['target_hit_date']}) — sell half"})
     for s in signals:
+        if s["status"] == "armed" and s.get("days_since_drop") is not None and s["days_since_drop"] <= 1:
+            out.append({"key": f"sig{s['id']}:drop", "level": "drop", "ticker": s["ticker"],
+                        "message": f"Drop Day {s['drop_date']} (red candle) - buy level ${s['buy_level']:.2f} "
+                                   f"armed for {s['window_days_left']} more trading day(s)"})
         if s["status"] == "triggered" and (s.get("expires_in") is None or s["expires_in"] >= 0):
             out.append({"key": f"sig{s['id']}:buy", "level": "buy", "ticker": s["ticker"],
                         "message": f"Buy Signal — limit ${s['buy_level']:.2f} reached ({s['trigger_date']})"})
@@ -2614,6 +2624,9 @@ def surge_delete_position(pid):
     return jsonify({"ok": True})
 
 
+app.register_blueprint(hk_routes.bp)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -2660,4 +2673,6 @@ if __name__ == "__main__":
     if not args.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
         if surge_strategy.start_monitor_thread():
             print("  Surge Strategy live monitor started (every 30 min, US market hours)")
+        if hk_surge.start_monitor_thread():
+            print("  HK Surge live monitor started (every 30 min, Hong Kong market hours)")
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
