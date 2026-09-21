@@ -39,3 +39,6 @@ desktop.ini
 hk/runs/
 hk/strategies/
 hk/*.log
+
+# Entry-fill comparison runs (generated)
+us_entry_runs/

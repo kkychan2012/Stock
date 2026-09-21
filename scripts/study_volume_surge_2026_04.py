@@ -130,21 +130,47 @@ def find_drop_day(series, surge_idx):
 
 SCENARIO_A_MAX_DAYS = 5  # trading days, counted starting the day AFTER the Drop Day
 
+# How the Scenario A buy at the surge-day close is FILLED:
+#   "optimistic" (original): trigger = the day's High reaches the level; fill exactly at the level even if
+#                the stock never traded down to it (it gapped/ran above). Overstates results.
+#   "stop"       buy on the way up: same trigger (High >= level) but you pay what the market charges -
+#                the level if the day trades up through it, the OPEN if it gapped above it.
+#   "limit"      a true buy limit at the level: only fills if the day's Low trades down to it; fill at
+#                the level, or at the open if it gapped below it.
+ENTRY_MODE = "optimistic"
+
 
 def find_scenario_a(series, surge_idx, drop_idx):
-    """Limit-buy at the surge-day close: trigger = first day AFTER the Drop
-    Day (never on the Drop Day itself -- it's a signal day only), within the
-    next SCENARIO_A_MAX_DAYS trading days, whose intraday High reaches that
-    price level. Entry fills at the surge-day close itself, not the
-    trigger day's own close."""
+    """Buy at the surge-day close level: trigger = first day AFTER the Drop Day (never on the Drop Day
+    itself -- it's a signal day only), within the next SCENARIO_A_MAX_DAYS trading days. Whether a day
+    triggers depends on ENTRY_MODE ("limit": Low <= level; otherwise High >= level); the price paid is
+    entry_fill()."""
     surge_close = series[surge_idx]["close"]
     window_start = drop_idx + 1
     window_end = min(window_start + SCENARIO_A_MAX_DAYS, len(series))
     for i in range(window_start, window_end):
-        h = series[i]["high"]
-        if h is not None and h >= surge_close:
-            return i
+        if ENTRY_MODE == "limit":
+            lo = series[i]["low"]
+            if lo is not None and lo <= surge_close:
+                return i
+        else:
+            h = series[i]["high"]
+            if h is not None and h >= surge_close:
+                return i
     return None
+
+
+def entry_fill(series, idx, level, mode=None):
+    """Price actually paid on trigger day `idx` for a buy at `level` (see ENTRY_MODE)."""
+    mode = mode or ENTRY_MODE
+    o = series[idx]["open"]
+    if mode == "optimistic" or o is None:
+        return level
+    if mode == "stop":
+        return max(o, level)       # gapped above the level -> pay the open; traded up through it -> the level
+    if mode == "limit":
+        return min(o, level)       # gapped below the level -> fill at the (better) open; traded down to it -> the level
+    raise ValueError(f"unknown ENTRY_MODE {mode!r}")
 
 
 def find_scenario_b(series, drop_idx):

@@ -47,11 +47,12 @@ DB_PATH = hk_fetch.DB_PATH
 HK_GOV_EXCHANGE_PCT = 0.1105
 
 
-def load_series(tickers=None):
+def load_series(tickers=None, data_through=None):
     conn = sqlite3.connect(DB_PATH)
     rows = conn.execute(
         "SELECT ticker, date, open, close, low, high, volume, vol_ma10, ma200, ma50 "
-        "FROM hk_daily ORDER BY ticker, date").fetchall()
+        "FROM hk_daily " + ("WHERE date <= ? " if data_through else "") + "ORDER BY ticker, date",
+        (data_through,) if data_through else ()).fetchall()
     conn.close()
     keep = set(tickers) if tickers else None
     by_ticker = {}
@@ -107,7 +108,7 @@ def run_month(by_ticker, ym, min_turnover, min_mcap=0.0, shares=None):
             surge_close = series[surge_idx]["close"]
             trades.append(study.build_trade(
                 ticker, series[surge_idx]["date"], surge_close, series[drop_idx]["date"],
-                "A", series, a_idx, entry_price=surge_close))
+                "A", series, a_idx, entry_price=study.entry_fill(series, a_idx, surge_close)))
     return signals, illiquid, trades
 
 
@@ -117,6 +118,9 @@ def main():
     ap.add_argument("--from", dest="start", default="2024-01", help="first surge month YYYY-MM")
     ap.add_argument("--vol-mult", type=float, default=study.VOL_MULT)
     ap.add_argument("--target", type=float, default=study.PARTIAL_TARGET_PCT, help="partial-sell target, e.g. 0.15")
+    ap.add_argument("--entry-mode", choices=["optimistic", "stop", "limit"], default="optimistic",
+                    help="how the buy at the surge-day close is filled (see study_volume_surge_2026_04.ENTRY_MODE)")
+    ap.add_argument("--data-through", help="ignore price data after this date YYYY-MM-DD (e.g. drop an unfinished day)")
     ap.add_argument("--min-mcap", type=float, default=0.0, help="min market cap in HKD at the time of the surge (0 = no filter)")
     ap.add_argument("--min-turnover", type=float, default=0.0, help="min avg daily turnover in HKD (0 = no filter)")
     ap.add_argument("--capital", type=float, help="also run the capital simulation with this starting capital")
@@ -134,14 +138,16 @@ def main():
         sys.exit("hk/hk_stocks.db not found - run: python hk/hk_fetch.py")
     study.VOL_MULT = args.vol_mult
     study.PARTIAL_TARGET_PCT = args.target
+    study.ENTRY_MODE = args.entry_mode
 
     tickers = hk_fetch.read_ticker_file(hk_fetch.ALL_FILE if args.universe == "all" else hk_fetch.HSI_FILE)
-    by_ticker = load_series(tickers)
+    by_ticker = load_series(tickers, args.data_through)
     for series in by_ticker.values():
         study.add_ma21(series)
     last_date = max(s[-1]["date"] for s in by_ticker.values())
     tag = args.tag or (f"{args.universe}_vm{args.vol_mult:g}_liq{int(args.min_turnover / 1e6) if args.min_turnover else 0}m"
-                       + (f"_cap{int(args.min_mcap / 1e6)}m" if args.min_mcap else ""))
+                       + (f"_cap{int(args.min_mcap / 1e6)}m" if args.min_mcap else "")
+                       + (f"_{args.entry_mode}" if args.entry_mode != "optimistic" else ""))
     shares = load_shares() if args.min_mcap else None
     if args.min_mcap:
         have = sum(1 for t in by_ticker if t in shares)
