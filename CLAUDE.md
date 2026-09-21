@@ -172,6 +172,15 @@ POST   /api/surge/signals/<id>/dismiss
 POST   /api/surge/positions/<id>/partial {price, date?}   half sold at the +15% target
 POST   /api/surge/positions/<id>/sell    {price, date?, reason?}  closes the rest
 DELETE /api/surge/positions/<id>        undo a mistaken "I bought" (signal returns to the board)
+
+# HK Surge (Hong Kong counterpart — separate DB/fetch/positions, see hk/hk_routes.py; all under /api/hk/)
+POST   /api/hk/fetch                    {mode: quick|full|shares} background HK fetch — never touches US data (the header Fetch button is US-only)
+GET    /api/hk/fetch/status?since=N     running/ok/error + log lines
+GET    /api/hk/board                    signals, positions, closed, alerts, monitor, account + sizing suggestions
+POST   /api/hk/scan                     scan stored HK data (mcap >= HK$1B, turnover >= HK$5M/day) for new signals
+POST   /api/hk/signals/<id>/bought      {buy_price, shares? | amount?, buy_date?, note?}   POST /api/hk/signals/<id>/dismiss
+POST   /api/hk/positions/<id>/partial | /sell     DELETE /api/hk/positions/<id>
+GET    /api/hk/alerts   GET /api/hk/monitor/status   POST /api/hk/monitor/refresh
 GET    /api/surge/alerts                actionable alerts (sell / MA21 warn / +15% target / new buy signal) + monitor status; the page polls it every 60 s from any tab
 GET    /api/surge/monitor/status        last/next live pass, market open, last error
 POST   /api/surge/monitor/refresh       run one live pass now (Yahoo) — the "Live Refresh" button
@@ -199,9 +208,11 @@ POST   /api/surge/monitor/refresh       run one live pass now (Yahoo) — the "L
 9. **Congress** — House + Senate + executive branch (President/VP/Cabinet) stock trade disclosures (PTRs / OGE 278-T), cluster-buy detection, "Fetch Data" downloads the latest snapshot
 10. **Market** — IBD-style Distribution Day / Follow-Through Day market health (Nasdaq + S&P 500), status banner + 60-day chart
 11. **Data** — combined data browser + RS Rating screener: tracked Ticker List *and* the full S&P 500 + Russell 1000 universe in one table (latest snapshot, per-ticker history, Trend Template criteria, RS Rating/Score/Line, "Tracked only" + RS Rating ≥ filters, universe admin card)
-12. **Surge Strategy** — workflow board for the Volume Surge strategy: Buy Signals (limit price reached; "I bought" / Dismiss) → Armed → Watching, then My Positions (marked as bought; +15% target, last close vs MA21, P/L, "Half sold"/"Sold"/"Undo") and Closed. A triggered signal goes stale 3 trading days after its trigger day. "Scan Now" reads stored daily data (run Fetch first) to find new surge signals; "Live Refresh" (and the automatic 30-min monitor while `api_server.py` runs) updates positions with live prices. An alert banner lists SELL / MA21-warning / +15% / new Buy Signal items, the tab shows an alert-count badge, and "Enable alerts" turns on browser notifications (page must stay open).
+12. **Surge Strategy** — workflow board for the Volume Surge strategy: Buy Signals (limit price reached; "I bought" / Dismiss) → **Drop Day** (first red candle found, buy level armed for 5 trading days; a blue 🔻 DROP DAY alert + NEW badge fires for a fresh one; `status='armed'` in the DB) → Watching (surge found, no red candle yet), then My Positions (marked as bought; +15% target, last close vs MA21, P/L, "Half sold"/"Sold"/"Undo") and Closed. A triggered signal goes stale 3 trading days after its trigger day. "Scan Now" reads stored daily data (run Fetch first) to find new surge signals; "Live Refresh" (and the automatic 30-min monitor while `api_server.py` runs) updates positions with live prices. The live monitor also watches the "Watching" signals and, once a red candle has CLOSED (after 16:20 ET; never from a still-forming candle), promotes them to Drop Day the same evening without waiting for a Fetch + Scan. An alert banner lists SELL / MA21-warning / +15% / new Buy Signal / new Drop Day items, the tab shows an alert-count badge, and "Enable alerts" turns on browser notifications (page must stay open).
 
-`TABS` array in `dashboard.html` (`['holdings','signals','sold','monitor','patterns','tickers','backtester','insider','congress','market','dataview','surge']`) order must match the HTML tab-btn order. There is no standalone RSI Signals tab — it was merged into Signals.
+13. **HK Surge** — the same Volume Surge workflow for Hong Kong stocks, fully separate from tab 12: its own data (`hk/hk_stocks.db`), its own fetch buttons (**Fetch HK Data (quick)** ≈ 40 s for the ~800 stocks passing the size/liquidity screen, **Full refresh** ≈ 5 min for all ~2,800 HKEX equities, **Refresh shares**), its own positions and its own live monitor on Hong Kong hours (09:45-16:20 HKT, lunch skipped, every 30 min). Signals are filtered to market cap >= HK$1B and turnover >= HK$5M/day (both measured the day before the surge). Same Drop Day stage and alert as the US tab (promoted after 16:20 HKT). Buy Signals show a suggested size from the account model: 20 slots x HK$10,000, profit shared evenly over free slots, one position <= 10% of equity, ~0.32% round-trip costs, rounded down to whole board lots. Positions take an HK$ amount or shares so the account (cash, free slots, next stake, realized P/L) can be tracked.
+
+`TABS` array in `dashboard.html` (`['holdings','signals','sold','monitor','patterns','tickers','backtester','insider','congress','market','dataview','surge','hk']`) order must match the HTML tab-btn order. There is no standalone RSI Signals tab — it was merged into Signals.
 
 ## Holdings — Cut Off Price column
 Calculated per row, shown in red:
@@ -346,6 +357,7 @@ histogram, not a pre-existing "SRchannel" feature being wired up.
 - `fetch_data.py` computes MA150, 52-week high/low, and a raw Relative Strength score during fetch, then ranks tickers into `rs_rank` (percentile) — self-relative, only among currently-tracked `extraction_tickers`.
 - Also evaluates IBD's 8-criteria Trend Template (columns `c1`–`c8`, aggregate `trend_score`) per ticker per day, e.g. Close > MA150 & MA200, MA150 > MA200, MA200 trending up, Close > MA50, RS Rank ≥ 70, within 25% of 52-week high, etc.
 - **C7 now prefers the real market-wide `rs_ratings.rs_rating`** (see below) wherever a matching ticker+date row exists, falling back to the self-relative `rs_rank` otherwise — same fallback applied to the `RS` column shown on Signals/Pattern Scanner/Data (via `COALESCE(rs_ratings.rs_rating, stocks_daily.rs_rank)`), so the number and the C7 badge never disagree.
+- **History is spliced, not replaced**: every Fetch downloads only `period` (default 2y) but `_splice_stored_history()` prepends the OHLCV already stored in `stocks_daily` before computing indicators, so MA150/MA200, 52-week range and RS never fall back to a 2-year window (before this, each Fetch left MA200 blank for the first 200 days of its window and silently dropped older signals/backtest trades). Only the freshly downloaded rows are written back. To repair rows after a bad run — no download — use `python fetch_data.py --recalculate` (or `recalculate_indicators()`). Caveat: prices are auto-adjusted, so after a dividend the seam between old and new rows can differ slightly.
 - Inspect via `GET /api/debug/trend-template?ticker=` (last 5 rows + criteria breakdown) or the Data tab.
 
 ## Data tab (tab 11) — tracked Ticker List + full S&P 500/Russell 1000 universe, merged
@@ -397,7 +409,7 @@ calculate_metrics(transactions)
 
 ## Frontend notes
 - All JS/CSS is inline in `templates/dashboard.html` (no build step)
-- Tab switching: `showTab(name)` — `TABS` array (12 items) order must match HTML tab-btn order
+- Tab switching: `showTab(name)` — `TABS` array (13 items) order must match HTML tab-btn order
 - Signal "Add to Monitor" and Pattern "Add to Monitor" both call POST `/api/monitor`
 - Pattern rows are colour-coded per pattern type
 - Nav tabs use `overflow-x: auto; scrollbar-width: none` to handle many tabs on narrow screens
@@ -413,4 +425,5 @@ Or via env vars `DASH_USER` / `DASH_PASS`.
 ## Not part of the dashboard
 - `Insider Trading/insider_pipeline/` is invoked by the dashboard (see above) but can also run standalone via its own `main.py` / `gui.py`.
 - `scan_cup_handle.py`, `Analysis_By_Volumn.py`, `Interrogate_Stock_file3.py`, `Stock_Figure_Extract_GUI.py`, `Stock_Strategy_Backtester.py`, and everything under `Source Code backup/` are legacy/standalone scripts predating the dashboard — not imported by `api_server.py`.
+- `hk/` — the Hong Kong module, isolated from the US code: own database `hk/hk_stocks.db` (`hk_daily`, `hk_securities` incl. shares outstanding + board lot, `hk_surge_signals`, `hk_surge_positions`). `hk_fetch.py` (CLI: default Hang Seng Index, `--all` every HKEX equity, `--quick` daily update, `--shares`), `hk_study.py` (backtest + capital simulation with `--min-mcap`, `--min-turnover`, `--slots`, `--max-pos-pct`, `--costs`, `--max-positions`), `hk_start_sweep.py` (start-month sensitivity), `hk_surge.py` (live engine: scan + Hong Kong monitor; reuses the pure functions of `surge_strategy.py`), `hk_routes.py` (Flask blueprint behind the HK Surge tab, registered by `api_server.py`), `test_hk_surge.py`. `hk/runs/` (generated) is git-ignored. Only `api_server.py` imports `hk_routes`/`hk_surge`; nothing in `hk/` reads or writes `stock_dashboard.db`. Known bias: the ticker list is today's listings (survivorship). A liquidity filter is essential for the full market (unfiltered, the study is dominated by untradeable penny stocks).
 - The `Football Video/` directory is an unrelated project that happens to live under this path; ignore it for dashboard work.

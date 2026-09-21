@@ -147,5 +147,34 @@ check("refresh_live: summary + MONITOR status recorded",
       summary["sell"] == ["POS"] and summary["triggered"] == ["ARM"] and ss.MONITOR["last_run"] is not None, summary)
 c.close()
 
+# 12. Drop Day: a "watching" signal is promoted to armed only once its red candle has CLOSED
+db = sqlite3.connect(tmp)
+db.execute("INSERT INTO surge_signals (ticker, surge_date, surge_close, status) VALUES ('WCH','2026-02-02',100,'watching')")
+db.commit()
+db.close()
+wbars = mk([100.0] * 29 + [99.0], opens=[None] * 29 + [101.0])      # idx 28 = surge day (close 100); idx 29 = 2026-02-03 red candle
+ss.refresh_live(now=et(2026, 2, 3, 12, 0), bars_by_ticker={"WCH": wbars})          # day still forming
+db = sqlite3.connect(tmp)
+db.row_factory = sqlite3.Row
+w = db.execute("SELECT * FROM surge_signals WHERE ticker='WCH'").fetchone()
+check("forming red candle does NOT promote to Drop Day", w["status"] == "watching", dict(w))
+res = ss.refresh_live(now=et(2026, 2, 3, 17, 0), bars_by_ticker={"WCH": wbars})    # after the close
+w = db.execute("SELECT * FROM surge_signals WHERE ticker='WCH'").fetchone()
+check("closed red candle promotes watching -> armed", w["status"] == "armed" and w["drop_date"] == "2026-02-03"
+      and w["window_days_left"] == 5 and w["buy_level"] == 100.0, dict(w))
+check("summary lists the new drop day", res["drop_day"] == ["WCH"], res)
+res = ss.refresh_live(now=et(2026, 2, 3, 17, 30), bars_by_ticker={"WCH": wbars})
+check("a second pass does not repeat it", res["drop_day"] == [], res)
+db.close()
+
+# 13. Drop Day alerts: only fresh drop days (<= 1 trading day old), once per signal
+import api_server
+sigs = [{"id": 1, "status": "armed", "days_since_drop": 0, "drop_date": "2026-02-03", "buy_level": 100.0,
+         "window_days_left": 5, "ticker": "WCH", "expires_in": None},
+        {"id": 2, "status": "armed", "days_since_drop": 3, "drop_date": "2026-01-29", "buy_level": 50.0,
+         "window_days_left": 2, "ticker": "OLD", "expires_in": None}]
+al = api_server._surge_alerts(sigs, [])
+check("drop-day alert only for the fresh one", [a["key"] for a in al] == ["sig1:drop"] and al[0]["level"] == "drop", al)
+
 print(f"\n{'ALL PASSED' if not fails else str(fails) + ' FAILED'}")
 sys.exit(1 if fails else 0)

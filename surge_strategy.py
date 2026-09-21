@@ -405,17 +405,18 @@ def fetch_live_bars(tickers, period="6mo"):
 
 
 def refresh_live(now=None, bars_by_ticker=None):
-    """One live pass: re-evaluate every open position and let armed signals
-    trigger intraday. `bars_by_ticker` lets tests inject bars (no network)."""
+    """One live pass: re-evaluate every open position, let armed signals trigger intraday,
+    and promote watching signals to Drop Day once their red candle has closed. `bars_by_ticker` lets tests inject bars (no network)."""
     clock = market_clock(now)
     stamp = clock["now"].strftime("%Y-%m-%d %H:%M:%S")
-    summary = {"checked_at": stamp, "positions": 0, "armed": 0, "triggered": [],
-               "sell": [], "warn": [], "errors": []}
+    summary = {"checked_at": stamp, "positions": 0, "armed": 0, "watching": 0, "triggered": [],
+               "drop_day": [], "sell": [], "warn": [], "errors": []}
     with get_connection() as conn:
         positions = [dict(r) for r in conn.execute(
             "SELECT * FROM surge_positions WHERE status IN ('holding','partial_sold')")]
         armed = [dict(r) for r in conn.execute("SELECT * FROM surge_signals WHERE status='armed'")]
-    tickers = sorted({p["ticker"] for p in positions} | {s["ticker"] for s in armed})
+        watching = [dict(r) for r in conn.execute("SELECT * FROM surge_signals WHERE status='watching'")]
+    tickers = sorted({p["ticker"] for p in positions} | {s["ticker"] for s in armed} | {s["ticker"] for s in watching})
     if not tickers:
         return summary
     if bars_by_ticker is None:
@@ -459,6 +460,27 @@ def refresh_live(now=None, bars_by_ticker=None):
                            note=?, updated_at=? WHERE id=? AND status='armed'""",
                     (ev["trigger_date"], "triggered live by the monitor", stamp, s["id"]))
                 summary["triggered"].append(s["ticker"])
+
+        # Drop Day detection: a "watching" signal whose first red candle (close < open) has now CLOSED becomes
+        # "armed" (or "triggered" if the buy level was already reached). Today's still-forming bar is never used.
+        for s in watching:
+            bars = bars_by_ticker.get(s["ticker"])
+            if not bars:
+                continue
+            summary["watching"] += 1
+            forming = bars[-1]["date"] == clock["today"] and not clock["is_final"]
+            series = bars[:-1] if forming else bars
+            idx = next((i for i, b in enumerate(series) if b["date"] == s["surge_date"]), None)
+            if idx is None:
+                continue
+            ev = evaluate_signal(series, idx)
+            if ev["status"] in ("armed", "triggered"):
+                conn.execute(
+                    """UPDATE surge_signals SET status=?, drop_date=?, buy_level=?, window_days_left=?, trigger_date=?,
+                           note=?, updated_at=? WHERE id=? AND status='watching'""",
+                    (ev["status"], ev["drop_date"], ev["buy_level"], ev["window_days_left"], ev["trigger_date"],
+                     "drop day detected live by the monitor", stamp, s["id"]))
+                summary["drop_day"].append(s["ticker"])
         conn.commit()
     return summary
 

@@ -237,6 +237,29 @@ def _upsert_daily_rows(conn, ticker: str, data: pd.DataFrame, fetched_at: str):
     """, rows)
 
 
+def _splice_stored_history(conn, ticker: str, data: pd.DataFrame):
+    """Prepend the OHLCV already stored in stocks_daily (rows older than this download) to the
+    fresh download, so the rolling indicators (MA150/MA200, 52-week range, RS 252-day, ...) are
+    computed on ALL the history we hold, not just the 2y the download happens to cover.
+    Without this, every Fetch left MA200 blank for the first 200 days of its window and quietly
+    broke older signals / backtests. Returns (combined, first_new_date); only rows from
+    first_new_date onward should be written back."""
+    fresh = data[["Open", "High", "Low", "Close", "Volume"]].copy()
+    fresh.index = pd.to_datetime(fresh.index)
+    if fresh.index.tz is not None:
+        fresh.index = fresh.index.tz_localize(None)
+    fresh.index = fresh.index.normalize()
+    first_new = fresh.index.min()
+    hist = pd.read_sql_query(
+        "SELECT date, open AS Open, high AS High, low AS Low, close AS Close, volume AS Volume "
+        "FROM stocks_daily WHERE ticker = ? AND date < ? AND close IS NOT NULL ORDER BY date",
+        conn, params=(ticker, first_new.strftime("%Y-%m-%d")))
+    if hist.empty:
+        return fresh, first_new
+    hist.index = pd.to_datetime(hist.pop("date"))
+    return pd.concat([hist, fresh]), first_new
+
+
 def _log_skipped(conn, ticker: str, reason: str):
     """One row per ticker: repeated skips/errors update the existing row
     instead of accumulating a new one on every fetch attempt."""
@@ -471,8 +494,9 @@ def fetch_all(tickers: list[str], period: str = "2y", progress_cb=None, skip_uni
                     _log_skipped(conn, ticker, "yfinance returned empty data")
                     continue
 
+                data, first_new = _splice_stored_history(conn, ticker, data)
                 data = _calculate_indicators(data)
-                _upsert_daily_rows(conn, ticker, data, fetched_at)
+                _upsert_daily_rows(conn, ticker, data.loc[data.index >= first_new], fetched_at)
 
                 # Summarise only the *unique* signal types active on the latest row
                 latest_signals = _detect_signals(ticker, data.iloc[[-1]])
@@ -505,6 +529,37 @@ def fetch_all(tickers: list[str], period: str = "2y", progress_cb=None, skip_uni
 # Ticker resolution
 # ---------------------------------------------------------------------------
 
+def recalculate_indicators(tickers=None, progress_cb=None, commit_every: int = 25):
+    """Recompute every indicator for the tracked tickers from the OHLCV ALREADY STORED in
+    stocks_daily (no network), then refresh RS Rank and the Trend Template. Use it to repair
+    rows whose MA200 / 52-week / RS values were computed on a short download window."""
+    def _emit(msg: str):
+        (progress_cb or (lambda m: print(m, flush=True)))(msg)
+
+    setup_database()
+    fetched_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with get_connection() as conn:
+        if not tickers:
+            tickers = [r["ticker"] for r in conn.execute("SELECT DISTINCT ticker FROM stocks_daily ORDER BY ticker")]
+        for i, ticker in enumerate(tickers, 1):
+            df = pd.read_sql_query(
+                "SELECT date, open AS Open, high AS High, low AS Low, close AS Close, volume AS Volume "
+                "FROM stocks_daily WHERE ticker = ? AND close IS NOT NULL ORDER BY date", conn, params=(ticker,))
+            if df.empty:
+                continue
+            df.index = pd.to_datetime(df.pop("date"))
+            _upsert_daily_rows(conn, ticker, _calculate_indicators(df), fetched_at)
+            if i % commit_every == 0:
+                conn.commit()
+                _emit(f"  {i}/{len(tickers)} tickers recalculated")
+        conn.commit()
+        _emit(f"Recalculated indicators for {len(tickers)} tickers from stored history.")
+        _compute_rs_rank(conn, _emit)
+        conn.commit()
+        _compute_trend_template(conn, _emit)
+        conn.commit()
+
+
 def get_tickers_from_db() -> list[str]:
     with get_connection() as conn:
         rows = conn.execute(
@@ -525,7 +580,13 @@ if __name__ == "__main__":
                         help="yfinance history period (default: 2y)")
     parser.add_argument("--skip-universe", action="store_true",
                         help="Skip the S&P500+Russell1000 universe refresh for this run")
+    parser.add_argument("--recalculate", action="store_true",
+                        help="No download: recompute all indicators for the tracked tickers from the stored history")
     args = parser.parse_args()
+
+    if args.recalculate:
+        recalculate_indicators([t.upper() for t in args.tickers] if args.tickers else None)
+        sys.exit(0)
 
     if args.tickers:
         tickers = [t.upper() for t in args.tickers]

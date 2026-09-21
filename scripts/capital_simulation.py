@@ -16,22 +16,43 @@ import json
 import sys
 import pandas as pd
 
-MONTHS = (
-    ["2024_11", "2024_12"]
-    + [f"2025_{m:02d}" for m in range(1, 13)]
-    + [f"2026_{m:02d}" for m in range(1, 9)]
-)
+def _find_months(data_dir="strategies"):
+    """Every monthly study file present (study_volume_surge_YYYY_MM.json), oldest first.
+    Run from the folder that contains ./strategies/ (project root for the US study,
+    hk/ for the Hong Kong one)."""
+    import glob
+    import os
+    import re
+    months = []
+    for p in glob.glob(os.path.join(data_dir, "study_volume_surge_*.json")):
+        m = re.search(r"study_volume_surge_(\d{4}_\d{2})\.json$", p)
+        if m:
+            months.append(m.group(1))
+    return sorted(months)
 
 
 def run_simulation(starting_capital, position_size, out_path, skip_if_held=False, compound_slots=None,
-                   max_pos_pct=None):
-    """compound_slots=N: profits compound. Each buy is sized at
+                   max_pos_pct=None, max_positions=None, start_date=None, end_date=None, cost_pct_side=0.0):
+    """cost_pct_side=c (a fraction, e.g. 0.0016 = 0.16%): trading cost charged on EVERY buy and EVERY sell.
+    The position size / base stake is the gross cash outlay, so a HK$10,000 buy purchases
+    10,000/(1+c) of stock; each sale delivers (1-c) of its market value.
+
+    max_positions=N: HARD cap on open positions (fixed-size mode). A new signal is skipped
+    while N positions are open (a half-sold position still counts until fully sold); profits
+    are not reinvested beyond N positions and simply build up as idle cash.
+
+    compound_slots=N: profits compound. Each buy is sized at
     cash_on_hand / (N - positions_held), so realized profit is spread across
     the still-free slots rather than dumped into the next trade. position_size
     is ignored in this mode unless > 0, in which case it is the base stake and
     buys are sized base + (profit above base) / free slots, floored at base."""
-    all_data = [json.load(open(f'strategies/study_volume_surge_{m}.json')) for m in MONTHS]
+    all_data = [json.load(open(f'strategies/study_volume_surge_{m}.json')) for m in _find_months()]
     trades = [t for d in all_data for t in d['trades'] if t['scenario'] == 'A']
+    if start_date:      # only signals whose entry is on/after this date (a "what if I had started then" run)
+        trades = [t for t in trades if t['entry_date'] >= start_date]
+    if end_date:        # ...and on/before this date (a fixed-length window; exits may still fall after it)
+        trades = [t for t in trades if t['entry_date'] <= end_date]
+    c = cost_pct_side or 0.0
 
     events = []
     for t in trades:
@@ -79,15 +100,20 @@ def run_simulation(starting_capital, position_size, out_path, skip_if_held=False
                     'date': date, 'ticker': t['ticker'], 'surge_date': t['surge_date'],
                     'entry_price': t['entry_price'], 'reason': 'ticker already held (skip-if-held enabled)',
                 })
+            elif max_positions and len(active) >= max_positions:
+                skipped_rows.append({
+                    'date': date, 'ticker': t['ticker'], 'surge_date': t['surge_date'],
+                    'entry_price': t['entry_price'], 'reason': f'hard cap: {max_positions} positions already open',
+                })
             elif size > 0 and cash >= size - 1e-9:
                 cash -= size
                 sizes[key] = size
-                active[key] = {'invested': size, 'entry_price': t['entry_price'], 'half_sold': False}
+                active[key] = {'invested': size, 'eff': size / (1 + c), 'entry_price': t['entry_price'], 'half_sold': False}
                 held_tickers.add(t['ticker'])
                 executed_keys.append(key)
                 log_rows.append({
                     'date': date, 'ticker': t['ticker'], 'surge_date': t['surge_date'],
-                    'action': 'BUY', 'price': t['entry_price'], 'shares': round(size / t['entry_price'], 4),
+                    'action': 'BUY', 'price': t['entry_price'], 'shares': round(size / (1 + c) / t['entry_price'], 4),
                     'cash_flow': -round(size, 2), 'cash_balance_after': round(cash, 2),
                     'note': f"entry (Scenario A, surge close {t['surge_close']})",
                 })
@@ -102,12 +128,12 @@ def run_simulation(starting_capital, position_size, out_path, skip_if_held=False
             if key in active and not active[key]['half_sold']:
                 pos = active[key]
                 price = t['partial_sell']['price']
-                half_value = pos['invested'] * 0.5 * (price / pos['entry_price'])
+                half_value = pos['eff'] * 0.5 * (price / pos['entry_price']) * (1 - c)
                 cash += half_value
                 pos['half_sold'] = True
                 log_rows.append({
                     'date': date, 'ticker': t['ticker'], 'surge_date': t['surge_date'],
-                    'action': 'SELL_HALF', 'price': price, 'shares': round((pos['invested'] / pos['entry_price']) * 0.5, 4),
+                    'action': 'SELL_HALF', 'price': price, 'shares': round((pos['eff'] / pos['entry_price']) * 0.5, 4),
                     'cash_flow': round(half_value, 2), 'cash_balance_after': round(cash, 2),
                     'note': '28%/24%/15% partial-sell target hit',
                 })
@@ -116,12 +142,12 @@ def run_simulation(starting_capital, position_size, out_path, skip_if_held=False
                 pos = active[key]
                 price = t['exit_price']
                 fraction = 0.5 if pos['half_sold'] else 1.0
-                final_value = pos['invested'] * fraction * (price / pos['entry_price'])
+                final_value = pos['eff'] * fraction * (price / pos['entry_price']) * (1 - c)
                 cash += final_value
                 log_rows.append({
                     'date': date, 'ticker': t['ticker'], 'surge_date': t['surge_date'],
                     'action': 'SELL_FINAL' if not pos['half_sold'] else 'SELL_REMAINING_HALF',
-                    'price': price, 'shares': round((pos['invested'] / pos['entry_price']) * fraction, 4),
+                    'price': price, 'shares': round((pos['eff'] / pos['entry_price']) * fraction, 4),
                     'cash_flow': round(final_value, 2), 'cash_balance_after': round(cash, 2),
                     'note': t['exit_type'],
                 })
@@ -134,11 +160,11 @@ def run_simulation(starting_capital, position_size, out_path, skip_if_held=False
         t = next(tr for tr in trades if tid(tr) == key)
         fraction = 0.5 if pos['half_sold'] else 1.0
         mark_price = t['last_close'] if t['status'] == 'still_open' else t['exit_price']
-        mv = pos['invested'] * fraction * (mark_price / pos['entry_price'])
+        mv = pos['eff'] * fraction * (mark_price / pos['entry_price']) * (1 - c)
         open_value += mv
         open_rows.append({
             'ticker': t['ticker'], 'surge_date': t['surge_date'], 'entry_date': t['entry_date'],
-            'entry_price': pos['entry_price'], 'shares': round((pos['invested'] / pos['entry_price']) * fraction, 4),
+            'entry_price': pos['entry_price'], 'shares': round((pos['eff'] / pos['entry_price']) * fraction, 4),
             'last_close': mark_price, 'unrealized_value': round(mv, 2),
             'invested_fraction': 'remaining half' if pos['half_sold'] else 'full position',
         })
@@ -152,12 +178,12 @@ def run_simulation(starting_capital, position_size, out_path, skip_if_held=False
         t = next(tr for tr in trades if tid(tr) == key)
         entry_price = t['entry_price']
         invested = sizes[key]
-        shares_at_entry = invested / entry_price
+        shares_at_entry = invested / (1 + c) / entry_price
 
         if t['partial_sell']:
             partial_price = t['partial_sell']['price']
             partial_shares = shares_at_entry * 0.5
-            partial_proceeds = partial_shares * partial_price
+            partial_proceeds = partial_shares * partial_price * (1 - c)
             final_fraction = 0.5
         else:
             partial_price = partial_shares = partial_proceeds = None
@@ -172,7 +198,9 @@ def run_simulation(starting_capital, position_size, out_path, skip_if_held=False
             final_price = t['last_close']
             final_date = t['last_date']
             status = 'still open (unrealized)'
-        final_proceeds = final_shares * final_price
+        final_proceeds = final_shares * final_price * (1 - c)
+        buy_cost = invested - invested / (1 + c)
+        sell_cost = c * ((partial_shares or 0) * (partial_price or 0) + final_shares * final_price)
 
         total_proceeds = (partial_proceeds or 0) + final_proceeds
         total_pnl = total_proceeds - invested
@@ -200,6 +228,7 @@ def run_simulation(starting_capital, position_size, out_path, skip_if_held=False
             'total_proceeds': round(total_proceeds, 2),
             'total_pnl': round(total_pnl, 2),
             'total_pnl_pct': round(total_pnl_pct, 2),
+            'costs': round(buy_cost + sell_cost, 2),
         })
 
     df_trades = pd.DataFrame(trade_rows).sort_values('buy_date').reset_index(drop=True)
@@ -210,7 +239,7 @@ def run_simulation(starting_capital, position_size, out_path, skip_if_held=False
     df_summary = pd.DataFrame([{
         'starting_capital': starting_capital,
         'position_size_per_trade': (f'dynamic: cash / ({compound_slots} - held)' if compound_slots else position_size),
-        'max_concurrent_positions': compound_slots or int(starting_capital // position_size),
+        'max_concurrent_positions': max_positions or compound_slots or int(starting_capital // position_size),
         'total_signals': len(trades),
         'trades_executed': len({r['ticker'] + r['surge_date'] for r in log_rows if r['action'] == 'BUY'}),
         'trades_skipped': len(skipped_rows),
@@ -218,6 +247,7 @@ def run_simulation(starting_capital, position_size, out_path, skip_if_held=False
         'value_in_open_positions': round(open_value, 2),
         'total_ending_value': round(ending_total, 2),
         'total_pnl': round(ending_total - starting_capital, 2),
+        'total_costs_paid': round(float(df_trades['costs'].sum()), 2),
         'total_return_pct': round(100 * (ending_total - starting_capital) / starting_capital, 2),
     }])
 
@@ -232,6 +262,7 @@ def run_simulation(starting_capital, position_size, out_path, skip_if_held=False
     print(f"Executed: {df_summary.iloc[0]['trades_executed']}  Skipped: {len(skipped_rows)}")
     print(f"Ending value: ${ending_total:,.2f}  (P/L ${ending_total-starting_capital:,.2f}, {100*(ending_total-starting_capital)/starting_capital:.2f}%)")
     print(f"Wrote {out_path}")
+    return {"summary": df_summary.iloc[0].to_dict(), "trades": df_trades, "skipped": df_skipped}
 
 
 if __name__ == "__main__":
@@ -241,4 +272,7 @@ if __name__ == "__main__":
     out = sys.argv[4] if len(sys.argv) > 4 else f"strategies/capital_simulation_{int(starting)}.xlsx"
     compound = int(sys.argv[5]) if len(sys.argv) > 5 else None
     cap_pct = float(sys.argv[6]) if len(sys.argv) > 6 else None   # e.g. 0.10 = max 10% of equity per position
-    run_simulation(starting, pos_size, out, skip_if_held=skip_held, compound_slots=compound, max_pos_pct=cap_pct)
+    hard_cap = int(sys.argv[7]) if len(sys.argv) > 7 else None      # e.g. 10 = never more than 10 open positions
+    cost = float(sys.argv[8]) if len(sys.argv) > 8 else 0.0         # per-side trading cost as a fraction, e.g. 0.0016
+    run_simulation(starting, pos_size, out, skip_if_held=skip_held, compound_slots=compound, max_pos_pct=cap_pct,
+                   max_positions=hard_cap, cost_pct_side=cost)
