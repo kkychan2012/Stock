@@ -158,6 +158,62 @@ sigs = [{"id": 1, "status": "armed", "days_since_drop": 1, "drop_date": "2026-02
 al = hk_routes._alerts(sigs, [])
 check("HK: drop-day alert only for the fresh one", [a["key"] for a in al] == ["hksig1:drop"] and "HK$3.045" in al[0]["message"], al)
 
+# ---- current price on every active signal (HK) ----
+db = sqlite3.connect(tmp)
+db.execute("INSERT INTO hk_surge_signals (ticker, surge_date, surge_close, status, drop_date, buy_level, trigger_date) "
+           "VALUES ('0005.HK','2026-02-02',100,'triggered','2026-02-03',100,'2026-02-04')")
+db.commit()
+db.close()
+tbars = mk([100.0] * 28 + [100.0, 98.0, 103.0, 104.5])
+hs.refresh_live(now=hkt(2026, 3, 1, 12, 0), bars_by_ticker={"0005.HK": tbars, "0003.HK": wbars})
+db = sqlite3.connect(tmp)
+db.row_factory = sqlite3.Row
+t = db.execute("SELECT * FROM hk_surge_signals WHERE ticker='0005.HK'").fetchone()
+check("HK: triggered signal gets its current price", t["last_price"] == 104.5 and t["price_asof"] == tbars[-1]["date"], dict(t))
+w = db.execute("SELECT * FROM hk_surge_signals WHERE ticker='0003.HK'").fetchone()
+check("HK: armed signal gets a price too", w["last_price"] == 99.0, dict(w))
+hs.refresh_live(now=hkt(2026, 2, 5, 11, 0), bars_by_ticker={"0005.HK": tbars})
+t = db.execute("SELECT * FROM hk_surge_signals WHERE ticker='0005.HK'").fetchone()
+check("HK: today's forming bar is flagged live", t["price_is_live"] == 1, dict(t))
+db.close()
+
+last = {"date": "2026-02-05", "close": 104.5}
+s1 = {"last_price": 106.0, "price_asof": "2026-02-06", "price_is_live": 1, "buy_level": 100.0, "surge_close": 100.0}
+hk_routes._attach_signal_price(s1, last)
+check("HK: live price newer than stored wins; +6% vs the level", s1["current_price"] == 106.0 and s1["vs_level_pct"] == 6.0, s1)
+s2 = {"last_price": 90.0, "price_asof": "2026-02-01", "price_is_live": 0, "buy_level": 100.0, "surge_close": 100.0}
+hk_routes._attach_signal_price(s2, last)
+check("HK: stale live price loses to the newer stored close", s2["current_price"] == 104.5, s2)
+
+# an existing table without the new columns is upgraded by connect()
+old = os.path.join(tempfile.gettempdir(), "hk_old_schema.db")
+for f in (old, old + "-wal", old + "-shm"):
+    if os.path.exists(f):
+        os.remove(f)
+o = sqlite3.connect(old)
+o.execute("CREATE TABLE hk_surge_signals (id INTEGER PRIMARY KEY, ticker TEXT, surge_date TEXT, surge_close REAL, status TEXT)")
+o.commit()
+o.close()
+keep = hs.DB_PATH
+hs.DB_PATH = old
+cx = hs.connect()
+cols = {r[1] for r in cx.execute("PRAGMA table_info(hk_surge_signals)")}
+cx.close()
+hs.DB_PATH = keep
+check("HK: old signals table gets the price columns", {"last_price", "price_asof", "price_is_live", "last_checked"} <= cols, cols)
+for f in (old, old + "-wal", old + "-shm"):
+    if os.path.exists(f):
+        os.remove(f)
+
+# ---- scan ignores today's still-forming HK bar ----
+import surge_strategy as _ss
+data = {"0700.HK": [{"date": "2026-09-18", "open": 10, "close": 11}, {"date": "2026-09-21", "open": 11, "close": 10}]}
+n = _ss.drop_forming_bars(data, hs.hk_clock(hkt(2026, 9, 21, 11, 0)))
+check("HK: forming bar (11:00 HKT) is dropped", n == 1 and len(data["0700.HK"]) == 1)
+data = {"0700.HK": [{"date": "2026-09-18", "open": 10, "close": 11}, {"date": "2026-09-21", "open": 11, "close": 10}]}
+n = _ss.drop_forming_bars(data, hs.hk_clock(hkt(2026, 9, 21, 17, 0)))
+check("HK: after 16:20 HKT the bar is kept", n == 0 and len(data["0700.HK"]) == 2)
+
 print(f"\n{'ALL PASSED' if not fails else str(fails) + ' FAILED'}")
 for f in (tmp, tmp + "-wal", tmp + "-shm"):
     if os.path.exists(f):

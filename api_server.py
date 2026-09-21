@@ -63,7 +63,7 @@ from datetime import datetime, timedelta
 from flask import Flask, jsonify, request, render_template, Response, send_file
 
 from db_setup import get_connection, setup_database
-from fetch_data import fetch_all, get_tickers_from_db
+from fetch_data import fetch_all, get_tickers_from_db, quick_update
 from scan_patterns import scan_all_patterns, scan_date_range, get_scan_results, get_scan_results_range, get_available_scan_dates
 from backtest_engine import run_trading_simulation, calculate_metrics
 import universe as universe_mod
@@ -148,7 +148,7 @@ def _require_auth():
 # Fetch state (module-level, single-user local tool)
 # ---------------------------------------------------------------------------
 
-_fetch_state = {"running": False, "total": 0, "done": 0, "log": [], "error": None}
+_fetch_state = {"running": False, "total": 0, "done": 0, "log": [], "error": None, "mode": None, "summary": None}
 _fetch_lock  = threading.Lock()
 
 _scan_state = {
@@ -1725,6 +1725,8 @@ def start_fetch():
             "done":    0,
             "log":     [],
             "error":   None,
+            "mode":    "full",
+            "summary": None,
         })
 
     def _run():
@@ -1752,7 +1754,45 @@ def fetch_status():
         "done":    _fetch_state["done"],
         "log":     list(_fetch_state["log"]),
         "error":   _fetch_state["error"],
+        "mode":    _fetch_state.get("mode"),
+        "summary": _fetch_state.get("summary"),
     })
+
+
+@app.post("/api/us/quick-update")
+def start_us_quick_update():
+    """Fast US update (last ~20 days, batched) + optional Surge scan. Shares the full Fetch's lock and
+    log, so the two can never run at the same time; poll GET /api/fetch/status for progress."""
+    with _fetch_lock:
+        if _fetch_state["running"]:
+            return jsonify({"status": "already_running"}), 409
+        do_scan = bool((request.get_json(silent=True) or {}).get("scan", True))
+        _fetch_state.update({"running": True, "total": 0, "done": 0, "log": [], "error": None,
+                             "mode": "quick", "summary": None})
+
+    def _run():
+        def _cb(msg: str):
+            _fetch_state["log"].append(msg)
+        try:
+            _fetch_state["summary"] = quick_update(progress_cb=_cb)
+            if do_scan:
+                res = surge_strategy.scan_signals()
+                if "error" in res:
+                    _cb(f"Surge scan skipped: {res['error']}")
+                else:
+                    _surge_last_scan["at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    _surge_last_scan["summary"] = {"as_of": res["as_of"], "tickers_scanned": res["tickers_scanned"],
+                                                   "new": len(res["new"]), "changed": len(res["changed"])}
+                    _cb(f"Surge scan (data through {res['as_of']}): {len(res['new'])} new signal(s), "
+                        f"{len(res['changed'])} changed")
+        except Exception as exc:
+            _fetch_state["error"] = f"{type(exc).__name__}: {exc}"
+            _cb(f"ERROR: {_fetch_state['error']}")
+        finally:
+            _fetch_state["running"] = False
+
+    threading.Thread(target=_run, daemon=True, name="us-quick-update").start()
+    return jsonify({"status": "started"}), 202
 
 
 # ---------------------------------------------------------------------------
@@ -2324,7 +2364,9 @@ def _surge_date(val):
 
 
 def _surge_trading_dates(conn, n=80):
-    rows = conn.execute("SELECT DISTINCT date FROM stocks_daily ORDER BY date DESC LIMIT ?", (n,)).fetchall()
+    # US trading days only: the tracked list also holds .HK tickers whose dates run ahead of the US calendar
+    rows = conn.execute("SELECT DISTINCT date FROM stocks_daily WHERE ticker NOT LIKE '%.HK' "
+                        "ORDER BY date DESC LIMIT ?", (n,)).fetchall()
     return sorted(r[0] for r in rows)
 
 
@@ -2383,6 +2425,20 @@ def _surge_position_view(p, daily):
     return d
 
 
+def _attach_signal_price(s, last):
+    """Current price for a signal: the live monitor's price when it is at least as recent as the stored
+    daily close, otherwise the stored close. Adds distance from the buy level / surge close in %."""
+    live = (s.get("last_price") is not None and s.get("price_asof")
+            and (not last or s["price_asof"] >= last["date"]))
+    price = s["last_price"] if live else (last["close"] if last else None)
+    s["current_price"] = price
+    s["price_date"] = s["price_asof"] if live else (last["date"] if last else None)
+    s["price_is_live"] = bool(live and s.get("price_is_live"))
+    lvl, sc = s.get("buy_level"), s.get("surge_close")
+    s["vs_level_pct"] = round((price / lvl - 1) * 100, 2) if price and lvl else None
+    s["vs_surge_pct"] = round((price / sc - 1) * 100, 2) if price and sc else None
+
+
 def _surge_signals_with_age(conn):
     """Active signals + trading-day ages (days since surge / since trigger, days
     until a triggered signal goes stale)."""
@@ -2399,6 +2455,9 @@ def _surge_signals_with_age(conn):
             s["days_since_trigger"] = since
             stale = cfg["STALE_AFTER_TRIGGER_DAYS"]
             s["expires_in"] = (stale - since) if stale is not None else None
+    daily = _surge_latest_daily(conn, {s["ticker"] for s in signals})
+    for s in signals:
+        _attach_signal_price(s, daily.get(s["ticker"]))
     return signals
 
 
@@ -2456,7 +2515,7 @@ def surge_board():
         counts = {st: 0 for st in ("watching", "armed", "triggered")}
         for s in signals:
             counts[s["status"]] += 1
-        latest = conn.execute("SELECT MAX(date) FROM stocks_daily").fetchone()[0]
+        latest = conn.execute("SELECT MAX(date) FROM stocks_daily WHERE ticker NOT LIKE '%.HK'").fetchone()[0]
     return jsonify({
         "signals": signals,
         "positions": [p for p in positions if p["status"] != "closed"],

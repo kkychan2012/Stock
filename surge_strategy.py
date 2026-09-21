@@ -204,6 +204,24 @@ def replay(by_ticker, start_date, end_date, config=None):
 # Live scan -> surge_signals
 # ---------------------------------------------------------------------------
 
+def drop_forming_bars(by_ticker, clock, skip_suffix=None):
+    """Remove today's still-forming daily bar from every series (in place; returns how many).
+    A fetch made while the market is open stores a PARTIAL bar for today (close = last trade so far),
+    and a partial 'red' candle is not a drop day - it can turn green by the close. So a live scan must not
+    treat it as a closed candle. `clock` = market_clock() (or the HK equivalent); `skip_suffix` leaves
+    tickers listed in another market alone (e.g. '.HK' in the US tables)."""
+    if not (clock["weekday"] and not clock["is_final"]):
+        return 0
+    n = 0
+    for t, series in by_ticker.items():
+        if skip_suffix and t.endswith(skip_suffix):
+            continue
+        if series and series[-1]["date"] == clock["today"]:
+            series.pop()
+            n += 1
+    return n
+
+
 def scan_signals(as_of=None, config=None):
     """Find new surge days in the last LOOKBACK_DAYS trading days and refresh
     every watching/armed/triggered signal (a triggered one goes stale after
@@ -212,13 +230,14 @@ def scan_signals(as_of=None, config=None):
     touched. Returns a summary dict."""
     cfg = _cfg(config)
     with get_connection() as conn:
-        latest = conn.execute("SELECT MAX(date) FROM stocks_daily").fetchone()[0]
+        latest = conn.execute("SELECT MAX(date) FROM stocks_daily WHERE ticker NOT LIKE '%.HK'").fetchone()[0]
         if not latest:
             return {"error": "no price data"}
         ref = min(as_of, latest) if as_of else latest
         # ~90 calendar days comfortably covers LOOKBACK_DAYS + the drop/buy windows
         since = (datetime.strptime(ref, "%Y-%m-%d") - timedelta(days=90)).strftime("%Y-%m-%d")
         by_ticker = load_series(conn, as_of=ref, since=since)
+        forming = 0 if as_of else drop_forming_bars(by_ticker, market_clock(), skip_suffix=".HK")
 
         active = {}
         for r in conn.execute(
@@ -228,7 +247,7 @@ def scan_signals(as_of=None, config=None):
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         summary = {"as_of": ref, "tickers_scanned": len(by_ticker), "new": [],
-                   "changed": [], "dead_on_arrival": 0}
+                   "changed": [], "dead_on_arrival": 0, "forming_bars_ignored": forming}
 
         for ticker, series in by_ticker.items():
             date_idx = {r["date"]: i for i, r in enumerate(series)}
@@ -416,7 +435,9 @@ def refresh_live(now=None, bars_by_ticker=None):
             "SELECT * FROM surge_positions WHERE status IN ('holding','partial_sold')")]
         armed = [dict(r) for r in conn.execute("SELECT * FROM surge_signals WHERE status='armed'")]
         watching = [dict(r) for r in conn.execute("SELECT * FROM surge_signals WHERE status='watching'")]
-    tickers = sorted({p["ticker"] for p in positions} | {s["ticker"] for s in armed} | {s["ticker"] for s in watching})
+        triggered = [dict(r) for r in conn.execute("SELECT * FROM surge_signals WHERE status='triggered'")]
+    tickers = sorted({p["ticker"] for p in positions} | {s["ticker"] for s in armed}
+                     | {s["ticker"] for s in watching} | {s["ticker"] for s in triggered})
     if not tickers:
         return summary
     if bars_by_ticker is None:
@@ -441,6 +462,16 @@ def refresh_live(now=None, bars_by_ticker=None):
                 summary["sell"].append(p["ticker"])
             elif ev["alert_state"] == "below_ma21":
                 summary["warn"].append(p["ticker"])
+
+        # current price on every active signal (shown next to the buy level in the tab)
+        for s in armed + watching + triggered:
+            bars = bars_by_ticker.get(s["ticker"])
+            if bars:
+                last = bars[-1]
+                conn.execute(
+                    "UPDATE surge_signals SET last_price=?, price_asof=?, price_is_live=?, last_checked=? WHERE id=?",
+                    (last["close"], last["date"],
+                     1 if (last["date"] == clock["today"] and not clock["is_final"]) else 0, stamp, s["id"]))
 
         for s in armed:
             bars = bars_by_ticker.get(s["ticker"])

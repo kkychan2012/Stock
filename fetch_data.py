@@ -9,7 +9,8 @@ Run:  python fetch_data.py
 import argparse
 import math
 import sys
-from datetime import datetime, timezone
+import time
+from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
@@ -305,11 +306,14 @@ def _safe_date(val):
 # Cross-ticker RS Rank + Trend Template post-pass
 # ---------------------------------------------------------------------------
 
-def _compute_rs_rank(conn, emit, table="stocks_daily"):
-    """Cross-sectional percentile rank (1-99) of RS_raw per trading date."""
+def _compute_rs_rank(conn, emit, table="stocks_daily", since=None):
+    """Cross-sectional percentile rank (1-99) of RS_raw per trading date.
+    `since` (YYYY-MM-DD) limits it to those dates — exact, since each date is ranked on its own."""
     emit(f"RS Rank ({table}): loading RS_raw data...")
     raw = conn.execute(
-        f"SELECT ticker, date, rs_raw FROM {table} WHERE rs_raw IS NOT NULL ORDER BY date"
+        f"SELECT ticker, date, rs_raw FROM {table} WHERE rs_raw IS NOT NULL"
+        + (" AND date >= ?" if since else "") + " ORDER BY date",
+        (since,) if since else (),
     ).fetchall()
 
     by_date = {}
@@ -335,7 +339,7 @@ def _compute_rs_rank(conn, emit, table="stocks_daily"):
     emit(f"RS Rank ({table}): updated {len(updates)} rows across {len(by_date)} dates.")
 
 
-def _compute_trend_template(conn, emit, table="stocks_daily"):
+def _compute_trend_template(conn, emit, table="stocks_daily", since=None):
     """Compute C7 and trend_score for every row via SQL.
 
     C7 baseline is the self-relative rs_rank (>=70) among currently-tracked
@@ -348,6 +352,9 @@ def _compute_trend_template(conn, emit, table="stocks_daily"):
     `table` is always an internal literal ("stocks_daily" or
     "universe_prices"), never user input, so f-string interpolation is safe.
     """
+    w_where = " WHERE date >= ?" if since else ""          # for the statements without a WHERE
+    w_and = f" AND {table}.date >= ?" if since else ""     # for the one that already has a WHERE
+    args = (since,) if since else ()
     conn.execute(f"""
         UPDATE {table} SET
             c7 = CASE
@@ -355,7 +362,8 @@ def _compute_trend_template(conn, emit, table="stocks_daily"):
                     WHEN rs_rank >= 70    THEN 1
                     ELSE 0
                  END
-    """)
+        {w_where}
+    """, args)
     conn.execute(f"""
         UPDATE {table}
         SET c7 = (
@@ -366,8 +374,8 @@ def _compute_trend_template(conn, emit, table="stocks_daily"):
         WHERE EXISTS (
             SELECT 1 FROM rs_ratings r
             WHERE r.ticker = {table}.ticker AND r.date = {table}.date
-        )
-    """)
+        ){w_and}
+    """, args)
     conn.execute(f"""
         UPDATE {table} SET
             trend_score = (
@@ -375,11 +383,12 @@ def _compute_trend_template(conn, emit, table="stocks_daily"):
                 COALESCE(c4,0) + COALESCE(c5,0) + COALESCE(c6,0) +
                 COALESCE(c7,0) + COALESCE(c8,0)
             )
-    """)
+        {w_where}
+    """, args)
     emit(f"Trend Template ({table}): C7 and scores updated.")
 
 
-def _compute_universe_indicators(conn, tickers: list[str], emit):
+def _compute_universe_indicators(conn, tickers: list[str], emit, since=None):
     """Compute MAs / 52wk hi-lo / Trend Template C1-C6,C8 for every universe
     ticker's stored OHLCV history in universe_prices, mirroring what
     _upsert_daily_rows does for stocks_daily. Reuses _calculate_indicators()
@@ -402,8 +411,10 @@ def _compute_universe_indicators(conn, tickers: list[str], emit):
             "close": "Close", "volume": "Volume",
         })
         df.index = pd.to_datetime(df.pop("date"))
-        calc = _calculate_indicators(df)
-        for date, row in calc.iterrows():
+        calc = _calculate_indicators(df)          # always on the FULL stored history ...
+        if since:                                  # ... but only the recent rows are written back
+            calc = calc.loc[calc.index >= pd.Timestamp(since)]
+        for date_, row in calc.iterrows():
             updates.append((
                 _safe(row.get("MA6")), _safe(row.get("MA10")), _safe(row.get("MA30")),
                 _safe(row.get("MA50")), _safe(row.get("MA150")), _safe(row.get("MA200")),
@@ -417,7 +428,7 @@ def _compute_universe_indicators(conn, tickers: list[str], emit):
                 _safe_int(row.get("C1")), _safe_int(row.get("C2")), _safe_int(row.get("C3")),
                 _safe_int(row.get("C4")), _safe_int(row.get("C5")), _safe_int(row.get("C6")),
                 _safe_int(row.get("C8")),
-                ticker, date.strftime("%Y-%m-%d"),
+                ticker, date_.strftime("%Y-%m-%d"),
             ))
         processed += 1
 
@@ -529,6 +540,101 @@ def fetch_all(tickers: list[str], period: str = "2y", progress_cb=None, skip_uni
 # Ticker resolution
 # ---------------------------------------------------------------------------
 
+def quick_update(progress_cb=None, days: int = 20, chunk: int = 200) -> dict:
+    """FAST US update for the Surge Strategy (and everything else that reads recent prices).
+
+    Downloads only the last `days` calendar days, in batches of `chunk` tickers, for every tracked
+    ticker + the active S&P 500 / Russell 1000 universe + the RS benchmark; splices the new days
+    onto the stored history (so MA200/52wk/RS keep their full history), recomputes the indicators
+    for the recent rows only, then refreshes RS Rating, RS Rank and the Trend Template for those
+    dates. Same result as the full Fetch for the recent dates, without the per-ticker requests and
+    without rewriting two years of rows. Tracked tickers with no stored history are skipped (they
+    need one full Fetch first). Returns a summary dict."""
+    def _emit(msg: str):
+        (progress_cb or (lambda m: print(m, flush=True)))(msg)
+
+    setup_database()
+    t0 = time.time()
+    fetched_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    since = (date.today() - timedelta(days=days)).isoformat()
+    bench = rs_calculator.RS_BENCHMARK
+
+    with get_connection() as conn:
+        tracked = [r["ticker"] for r in conn.execute("SELECT ticker FROM extraction_tickers ORDER BY ticker")]
+        active = universe.get_active_universe(conn)
+        have_hist = {r["ticker"] for r in conn.execute("SELECT DISTINCT ticker FROM stocks_daily")}
+        prev_uni_max = conn.execute("SELECT MAX(date) FROM universe_prices").fetchone()[0]
+        prev_max = conn.execute("SELECT MAX(date) FROM stocks_daily").fetchone()[0]
+    uni_write = set(active) | {bench}
+    tracked_set = set(tracked)
+    symbols = list(dict.fromkeys(tracked + active + [bench]))
+    _emit(f"Quick US update: {len(symbols)} tickers ({len(tracked)} tracked + {len(active)} universe), "
+          f"last {days} days (from {since}); stored data currently runs through {prev_max}")
+
+    stats = {"tickers": len(symbols), "tracked_updated": 0, "no_history": [], "universe_rows": 0}
+    frames = {}
+    with get_connection() as conn:
+        for i in range(0, len(symbols), chunk):
+            part = symbols[i:i + chunk]
+            try:
+                df = yf.download(part, start=since, interval="1d", group_by="ticker",
+                                 auto_adjust=True, progress=False, threads=True)
+            except Exception as exc:
+                _emit(f"  batch {i // chunk + 1} failed: {exc}")
+                continue
+            stats["universe_rows"] += rs_calculator._upsert_prices_from_download(
+                conn, df, [t for t in part if t in uni_write], fetched_at)
+            multi = isinstance(df.columns, pd.MultiIndex)
+            for t in part:
+                if t not in tracked_set:
+                    continue
+                try:
+                    sub = (df[t] if multi else df).dropna(subset=["Close"])[["Open", "High", "Low", "Close", "Volume"]]
+                except Exception:
+                    continue
+                if not sub.empty:
+                    frames[t] = sub
+            conn.commit()
+            _emit(f"  downloaded {min(i + chunk, len(symbols))}/{len(symbols)} tickers ({time.time() - t0:.0f}s)")
+
+        _emit(f"Tracked tickers: recomputing indicators for {len(frames)} tickers...")
+        for t, sub in frames.items():
+            if t not in have_hist:
+                stats["no_history"].append(t)
+                continue
+            combined, first_new = _splice_stored_history(conn, t, sub)
+            calc = _calculate_indicators(combined)
+            _upsert_daily_rows(conn, t, calc.loc[calc.index >= first_new], fetched_at)
+            stats["tracked_updated"] += 1
+        conn.commit()
+        if stats["no_history"]:
+            _emit(f"  skipped {len(stats['no_history'])} tracked ticker(s) with no stored history "
+                  f"(run the full Fetch once): {', '.join(stats['no_history'][:10])}")
+
+        _compute_universe_indicators(conn, active, _emit, since=since)
+        conn.commit()
+
+        new_dates = [r[0] for r in conn.execute(
+            "SELECT DISTINCT date FROM universe_prices WHERE date >= ? ORDER BY date", (prev_uni_max or since,))]
+        if new_dates:
+            _emit(f"RS Rating for {len(new_dates)} date(s): {new_dates[0]} .. {new_dates[-1]}")
+            rs_calculator.compute_rs_ratings(conn, dates=new_dates, progress_cb=_emit)
+            conn.commit()
+        _compute_rs_rank(conn, _emit, table="stocks_daily", since=since)
+        _compute_rs_rank(conn, _emit, table="universe_prices", since=since)
+        conn.commit()
+        _compute_trend_template(conn, _emit, table="universe_prices", since=since)
+        _compute_trend_template(conn, _emit, table="stocks_daily", since=since)
+        conn.commit()
+        stats["data_through"] = conn.execute("SELECT MAX(date) FROM stocks_daily").fetchone()[0]
+        stats["universe_through"] = conn.execute("SELECT MAX(date) FROM universe_prices").fetchone()[0]
+
+    stats["seconds"] = round(time.time() - t0, 1)
+    _emit(f"Quick US update done in {stats['seconds']}s — tracked data through {stats['data_through']}, "
+          f"universe through {stats['universe_through']}.")
+    return stats
+
+
 def recalculate_indicators(tickers=None, progress_cb=None, commit_every: int = 25):
     """Recompute every indicator for the tracked tickers from the OHLCV ALREADY STORED in
     stocks_daily (no network), then refresh RS Rank and the Trend Template. Use it to repair
@@ -580,9 +686,15 @@ if __name__ == "__main__":
                         help="yfinance history period (default: 2y)")
     parser.add_argument("--skip-universe", action="store_true",
                         help="Skip the S&P500+Russell1000 universe refresh for this run")
+    parser.add_argument("--quick", action="store_true",
+                        help="Fast update: last 20 days for all tracked + universe tickers (batched), then RS refresh")
     parser.add_argument("--recalculate", action="store_true",
                         help="No download: recompute all indicators for the tracked tickers from the stored history")
     args = parser.parse_args()
+
+    if args.quick:
+        quick_update()
+        sys.exit(0)
 
     if args.recalculate:
         recalculate_indicators([t.upper() for t in args.tickers] if args.tickers else None)
