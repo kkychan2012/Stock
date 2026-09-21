@@ -118,7 +118,7 @@ def main():
     ap.add_argument("--from", dest="start", default="2024-01", help="first surge month YYYY-MM")
     ap.add_argument("--vol-mult", type=float, default=study.VOL_MULT)
     ap.add_argument("--target", type=float, default=study.PARTIAL_TARGET_PCT, help="partial-sell target, e.g. 0.15")
-    ap.add_argument("--entry-mode", choices=["optimistic", "stop", "limit"], default="optimistic",
+    ap.add_argument("--entry-mode", choices=["touch", "optimistic", "stop", "limit"], default="touch",
                     help="how the buy at the surge-day close is filled (see study_volume_surge_2026_04.ENTRY_MODE)")
     ap.add_argument("--data-through", help="ignore price data after this date YYYY-MM-DD (e.g. drop an unfinished day)")
     ap.add_argument("--min-mcap", type=float, default=0.0, help="min market cap in HKD at the time of the surge (0 = no filter)")

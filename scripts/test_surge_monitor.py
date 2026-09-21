@@ -225,5 +225,33 @@ data = {"THC": _series("2026-09-21")}
 n = ss.drop_forming_bars(data, {"weekday": False, "is_final": False, "today": "2026-09-21"})
 check("weekend: nothing dropped", n == 0 and len(data["THC"]) == 2)
 
+# 16. the "touch" rule: within 5 trading days of the drop day a day counts only if its range [Low, High]
+#     includes the surge close; otherwise the deal is closed
+def _touch_series(after_drop):
+    """surge day (close 100) + a red drop day + the given (open, high, low, close) days."""
+    rows = [{"date": "s", "open": 95.0, "high": 101.0, "low": 94.0, "close": 100.0},
+            {"date": "drop", "open": 110.0, "high": 111.0, "low": 104.0, "close": 106.0}]      # red, closes above the level
+    for n, (o, h, lo, c) in enumerate(after_drop, 1):
+        rows.append({"date": f"d{n}", "open": o, "high": h, "low": lo, "close": c})
+    return rows
+
+
+NOCAP = {"MAX_DAYS_TO_DROP": None, "STALE_AFTER_TRIGGER_DAYS": None}
+above = [(110, 112, 105, 111), (108, 109, 103, 104), (105, 110, 102, 108), (106, 108, 101, 107), (107, 109, 100.5, 108)]
+r = ss.evaluate_signal(_touch_series(above), 0, NOCAP)
+check("DELL case: price stays above the level for all 5 days -> deal closed", r["status"] == "expired"
+      and "never touched" in (r["note"] or ""), r)
+r = ss.evaluate_signal(_touch_series(above), 0, {**NOCAP, "ENTRY_RULE": "high"})
+check("the old High rule would have bought it on day 1", r["status"] == "triggered" and r["trigger_date"] == "d1", r)
+r = ss.evaluate_signal(_touch_series([(110, 112, 105, 111), (108, 109, 103, 104), (104, 105, 99.5, 102)]), 0, NOCAP)
+check("price dips down to the level on day 3 -> triggered that day", r["status"] == "triggered" and r["trigger_date"] == "d3", r)
+r = ss.evaluate_signal(_touch_series([(97, 98, 94, 95), (96, 101, 94, 100)]), 0, NOCAP)
+check("price below the level rises up through it -> triggered", r["status"] == "triggered" and r["trigger_date"] == "d2", r)
+below = [(97, 99, 94, 95), (96, 99.5, 93, 94), (95, 98, 92, 93), (94, 97, 90, 91), (92, 96, 89, 90)]
+r = ss.evaluate_signal(_touch_series(below), 0, NOCAP)
+check("price stays entirely below the level -> deal closed", r["status"] == "expired", r)
+r = ss.evaluate_signal(_touch_series(above[:2]), 0, NOCAP)
+check("2 days used, no touch yet -> still armed with 3 days left", r["status"] == "armed" and r["window_days_left"] == 3, r)
+
 print(f"\n{'ALL PASSED' if not fails else str(fails) + ' FAILED'}")
 sys.exit(1 if fails else 0)

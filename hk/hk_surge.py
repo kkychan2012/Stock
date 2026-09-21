@@ -202,7 +202,7 @@ def scan_signals(as_of=None, config=None):
             idxs = set(new_idx) | {date_idx[d] for d in active.get(ticker, ()) if d in date_idx}
             for i in sorted(idxs):
                 sdate = series[i]["date"]
-                row = conn.execute("SELECT id, status FROM hk_surge_signals WHERE ticker=? AND surge_date=?",
+                row = conn.execute("SELECT id, status, note FROM hk_surge_signals WHERE ticker=? AND surge_date=?",
                                    (ticker, sdate)).fetchone()
                 ev = ss.evaluate_signal(series, i, cfg)
                 if row is None:
@@ -223,8 +223,9 @@ def scan_signals(as_of=None, config=None):
                          ev["status"], ev["drop_date"], ev["buy_level"], ev["window_days_left"], ev["trigger_date"],
                          ev["note"], now, now))
                     summary["new"].append((ticker, sdate, ev["status"]))
-                elif row["status"] == "triggered" and ev["status"] in ("armed", "watching"):
-                    continue          # triggered live by the monitor before its daily bar was stored — never downgrade
+                elif (row["status"] == "triggered" and ev["status"] in ("armed", "watching")
+                      and row["note"] == ss.LIVE_TRIGGER_NOTE):
+                    continue          # triggered live by the monitor before its daily bar was stored — keep it
                 elif row["status"] in ACTIVE_STATUSES:
                     conn.execute(
                         """UPDATE hk_surge_signals SET status=?, drop_date=?, buy_level=?, window_days_left=?,
@@ -327,7 +328,7 @@ def refresh_live(now=None, bars_by_ticker=None):
                 conn.execute(
                     """UPDATE hk_surge_signals SET status='triggered', trigger_date=?, window_days_left=NULL,
                            note=?, updated_at=? WHERE id=? AND status='armed'""",
-                    (ev["trigger_date"], "triggered live by the monitor", stamp, s["id"]))
+                    (ev["trigger_date"], ss.LIVE_TRIGGER_NOTE, stamp, s["id"]))
                 summary["triggered"].append(s["ticker"])
 
         # Drop Day detection: a "watching" signal whose first red candle (close < open) has now CLOSED becomes
