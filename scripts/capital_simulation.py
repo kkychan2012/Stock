@@ -262,7 +262,8 @@ def run_simulation(starting_capital, position_size, out_path, skip_if_held=False
     print(f"Executed: {df_summary.iloc[0]['trades_executed']}  Skipped: {len(skipped_rows)}")
     print(f"Ending value: ${ending_total:,.2f}  (P/L ${ending_total-starting_capital:,.2f}, {100*(ending_total-starting_capital)/starting_capital:.2f}%)")
     print(f"Wrote {out_path}")
-    return {"summary": df_summary.iloc[0].to_dict(), "trades": df_trades, "skipped": df_skipped}
+    return {"summary": df_summary.iloc[0].to_dict(), "trades": df_trades, "skipped": df_skipped,
+            "log": df_log, "open": df_open}
 
 
 if __name__ == "__main__":
