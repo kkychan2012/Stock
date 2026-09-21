@@ -228,6 +228,20 @@ def _positions_view(conn):
     return [_position_view(r, daily, c) for r in rows]
 
 
+def _attach_signal_price(s, last):
+    """Current price for a signal: the live monitor's price when it is at least as recent as the stored
+    daily close, otherwise the stored close. Adds distance from the buy level / surge close in %."""
+    live = (s.get("last_price") is not None and s.get("price_asof")
+            and (not last or s["price_asof"] >= last["date"]))
+    price = s["last_price"] if live else (last["close"] if last else None)
+    s["current_price"] = price
+    s["price_date"] = s["price_asof"] if live else (last["date"] if last else None)
+    s["price_is_live"] = bool(live and s.get("price_is_live"))
+    lvl, sc = s.get("buy_level"), s.get("surge_close")
+    s["vs_level_pct"] = round((price / lvl - 1) * 100, 2) if price and lvl else None
+    s["vs_surge_pct"] = round((price / sc - 1) * 100, 2) if price and sc else None
+
+
 def _signals_with_age(conn):
     cfg = hs.CONFIG
     tdates = _trading_dates(conn)
@@ -243,6 +257,9 @@ def _signals_with_age(conn):
             s["days_since_trigger"] = since
             stale = cfg["STALE_AFTER_TRIGGER_DAYS"]
             s["expires_in"] = (stale - since) if stale is not None else None
+    daily = _latest_daily(conn, {s["ticker"] for s in signals})
+    for s in signals:
+        _attach_signal_price(s, daily.get(s["ticker"]))
     return signals
 
 

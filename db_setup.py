@@ -270,6 +270,10 @@ def setup_database():
                 window_days_left  INTEGER,         -- trading days left in the 5-day buy window
                 trigger_date      TEXT,            -- first day High reached buy_level
                 note              TEXT,
+                last_price        REAL,            -- latest price seen by the live monitor
+                price_asof        TEXT,            -- bar date that price belongs to
+                price_is_live     INTEGER DEFAULT 0,  -- 1 = today's still-forming bar
+                last_checked      TEXT,
                 first_seen        TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at        TEXT DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(ticker, surge_date)
@@ -431,6 +435,12 @@ def _migrate(conn):
                      ("price_asof", "TEXT"), ("price_is_live", "INTEGER DEFAULT 0")):
         if surge_pos_cols and col not in surge_pos_cols:
             conn.execute(f"ALTER TABLE surge_positions ADD COLUMN {col} {typ}")
+
+    surge_sig_cols = {row[1] for row in conn.execute("PRAGMA table_info(surge_signals)")}
+    for col, typ in (("last_price", "REAL"), ("price_asof", "TEXT"),
+                     ("price_is_live", "INTEGER DEFAULT 0"), ("last_checked", "TEXT")):
+        if surge_sig_cols and col not in surge_sig_cols:
+            conn.execute(f"ALTER TABLE surge_signals ADD COLUMN {col} {typ}")
 
     pattern_cols = {row[1] for row in conn.execute("PRAGMA table_info(pattern_scan_results)")}
     if "mom_15d_start" not in pattern_cols:

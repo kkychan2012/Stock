@@ -176,5 +176,54 @@ sigs = [{"id": 1, "status": "armed", "days_since_drop": 0, "drop_date": "2026-02
 al = api_server._surge_alerts(sigs, [])
 check("drop-day alert only for the fresh one", [a["key"] for a in al] == ["sig1:drop"] and al[0]["level"] == "drop", al)
 
+# 14. current price on every active signal
+db = sqlite3.connect(tmp)
+db.execute("INSERT INTO surge_signals (ticker, surge_date, surge_close, status, drop_date, buy_level, trigger_date) "
+           "VALUES ('TRG','2026-02-02',100,'triggered','2026-02-03',100,'2026-02-04')")
+db.commit()
+db.close()
+tbars = mk([100.0] * 28 + [100.0, 98.0, 103.0, 104.5])              # last bar 2026-02-05, close 104.5
+ss.refresh_live(now=et(2026, 3, 1, 12, 0), bars_by_ticker={"TRG": tbars, "WCH": wbars})
+db = sqlite3.connect(tmp)
+db.row_factory = sqlite3.Row
+t = db.execute("SELECT * FROM surge_signals WHERE ticker='TRG'").fetchone()
+check("triggered signal gets its current price", t["last_price"] == 104.5 and t["price_asof"] == tbars[-1]["date"]
+      and t["price_is_live"] == 0, dict(t))
+w = db.execute("SELECT * FROM surge_signals WHERE ticker='WCH'").fetchone()
+check("armed / watching signals get a price too", w["last_price"] == 99.0, dict(w))
+ss.refresh_live(now=et(2026, 2, 5, 12, 0), bars_by_ticker={"TRG": tbars})            # same day, market open -> still forming
+t = db.execute("SELECT * FROM surge_signals WHERE ticker='TRG'").fetchone()
+check("today's forming bar is flagged live", t["price_is_live"] == 1, dict(t))
+db.close()
+
+last = {"date": "2026-02-05", "close": 104.5}
+s1 = {"last_price": 106.0, "price_asof": "2026-02-06", "price_is_live": 1, "buy_level": 100.0, "surge_close": 100.0}
+api_server._attach_signal_price(s1, last)
+check("live price newer than the stored close wins; +6% vs the level", s1["current_price"] == 106.0 and s1["vs_level_pct"] == 6.0
+      and s1["price_is_live"] is True, s1)
+s2 = {"last_price": 90.0, "price_asof": "2026-02-01", "price_is_live": 0, "buy_level": 100.0, "surge_close": 100.0}
+api_server._attach_signal_price(s2, last)
+check("stale live price loses to the newer stored close", s2["current_price"] == 104.5 and s2["price_date"] == "2026-02-05", s2)
+s3 = {"buy_level": None, "surge_close": 50.0}
+api_server._attach_signal_price(s3, last)
+check("watching signal: distance from the surge close, no level", s3["vs_level_pct"] is None and s3["vs_surge_pct"] == 109.0, s3)
+
+# 15. a scan must not treat today's still-forming bar as a closed candle
+def _series(last_date):
+    return [{"date": "2026-09-18", "open": 10, "close": 11}, {"date": last_date, "open": 11, "close": 10}]
+
+
+forming_clock = {"weekday": True, "is_final": False, "today": "2026-09-21"}
+data = {"THC": _series("2026-09-21"), "OLD": _series("2026-09-18"), "2800.HK": _series("2026-09-21")}
+n = ss.drop_forming_bars(data, forming_clock, skip_suffix=".HK")
+check("market open: today's partial bar is dropped (US ticker only)", n == 1 and len(data["THC"]) == 1
+      and len(data["OLD"]) == 2 and len(data["2800.HK"]) == 2, {k: len(v) for k, v in data.items()})
+data = {"THC": _series("2026-09-21")}
+n = ss.drop_forming_bars(data, {"weekday": True, "is_final": True, "today": "2026-09-21"})
+check("after the close the bar is kept", n == 0 and len(data["THC"]) == 2)
+data = {"THC": _series("2026-09-21")}
+n = ss.drop_forming_bars(data, {"weekday": False, "is_final": False, "today": "2026-09-21"})
+check("weekend: nothing dropped", n == 0 and len(data["THC"]) == 2)
+
 print(f"\n{'ALL PASSED' if not fails else str(fails) + ' FAILED'}")
 sys.exit(1 if fails else 0)

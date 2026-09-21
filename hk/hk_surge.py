@@ -61,6 +61,10 @@ CREATE TABLE IF NOT EXISTS hk_surge_signals (
     window_days_left  INTEGER,
     trigger_date      TEXT,
     note              TEXT,
+    last_price        REAL,
+    price_asof        TEXT,
+    price_is_live     INTEGER DEFAULT 0,
+    last_checked      TEXT,
     first_seen        TEXT,
     updated_at        TEXT,
     UNIQUE(ticker, surge_date)
@@ -105,7 +109,18 @@ def connect():
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout = 30000")
+    _ensure_columns(conn)
     return conn
+
+
+def _ensure_columns(conn):
+    """Add columns introduced after the table first shipped (no-op when the table doesn't exist yet)."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(hk_surge_signals)")}
+    if cols:
+        for col, typ in (("last_price", "REAL"), ("price_asof", "TEXT"),
+                         ("price_is_live", "INTEGER DEFAULT 0"), ("last_checked", "TEXT")):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE hk_surge_signals ADD COLUMN {col} {typ}")
 
 
 def setup_db(conn=None):
@@ -170,6 +185,7 @@ def scan_signals(as_of=None, config=None):
         ref = min(as_of, latest) if as_of else latest
         since = (datetime.strptime(ref, "%Y-%m-%d") - timedelta(days=90)).strftime("%Y-%m-%d")
         by_ticker = load_series(conn, as_of=ref, since=since)
+        forming = 0 if as_of else ss.drop_forming_bars(by_ticker, hk_clock())     # today's bar is partial until the close
         info = {r["ticker"]: (r["shares"], r["name"]) for r in conn.execute("SELECT ticker, shares, name FROM hk_securities")}
 
         active = {}
@@ -178,7 +194,7 @@ def scan_signals(as_of=None, config=None):
 
         now = datetime.now(HKT).strftime("%Y-%m-%d %H:%M:%S")
         summary = {"as_of": ref, "tickers_scanned": len(by_ticker), "new": [], "changed": [],
-                   "dead_on_arrival": 0, "filtered_out": 0}
+                   "dead_on_arrival": 0, "filtered_out": 0, "forming_bars_ignored": forming}
         for ticker, series in by_ticker.items():
             shares, name = info.get(ticker, (None, None))
             date_idx = {r["date"]: i for i, r in enumerate(series)}
@@ -258,9 +274,11 @@ def refresh_live(now=None, bars_by_ticker=None):
         positions = [dict(r) for r in conn.execute("SELECT * FROM hk_surge_positions WHERE status IN ('holding','partial_sold')")]
         armed = [dict(r) for r in conn.execute("SELECT * FROM hk_surge_signals WHERE status='armed'")]
         watching = [dict(r) for r in conn.execute("SELECT * FROM hk_surge_signals WHERE status='watching'")]
+        triggered = [dict(r) for r in conn.execute("SELECT * FROM hk_surge_signals WHERE status='triggered'")]
     finally:
         conn.close()
-    tickers = sorted({p["ticker"] for p in positions} | {s["ticker"] for s in armed} | {s["ticker"] for s in watching})
+    tickers = sorted({p["ticker"] for p in positions} | {s["ticker"] for s in armed}
+                     | {s["ticker"] for s in watching} | {s["ticker"] for s in triggered})
     if not tickers:
         return summary
     if bars_by_ticker is None:
@@ -285,6 +303,16 @@ def refresh_live(now=None, bars_by_ticker=None):
                 summary["sell"].append(p["ticker"])
             elif ev["alert_state"] == "below_ma21":
                 summary["warn"].append(p["ticker"])
+        # current price on every active signal (shown next to the buy level in the tab)
+        for s in armed + watching + triggered:
+            bars = bars_by_ticker.get(s["ticker"])
+            if bars:
+                last = bars[-1]
+                conn.execute(
+                    "UPDATE hk_surge_signals SET last_price=?, price_asof=?, price_is_live=?, last_checked=? WHERE id=?",
+                    (last["close"], last["date"],
+                     1 if (last["date"] == clock["today"] and not clock["is_final"]) else 0, stamp, s["id"]))
+
         for s in armed:
             bars = bars_by_ticker.get(s["ticker"])
             if not bars:

@@ -1653,6 +1653,7 @@
   <!-- ════════════ SURGE STRATEGY TAB ════════════ -->
   <div id="tab-surge" class="tab-pane">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+      <button id="surge-fetch-quick" class="btn btn-fetch" onclick="runSurgeQuickFetch()" title="Downloads only the last ~20 days for every tracked + S&P 500/Russell 1000 ticker in batches, refreshes RS, then scans (about a minute). The header Fetch US Data does the full 2-year refresh.">&#8659; Quick US update</button>
       <button class="btn btn-primary" onclick="runSurgeScan()">&#8635; Scan Now</button>
       <button class="btn btn-primary" onclick="runSurgeLive()" title="Fetch live prices for your positions and armed signals now">&#9889; Live Refresh</button>
       <button class="btn btn-ghost" onclick="loadSurge()">Reload</button>
@@ -1660,6 +1661,7 @@
       <span id="surge-status" style="font-size:12px;font-weight:600"></span>
       <span id="surge-meta" style="font-size:12px;color:var(--muted)"></span>
     </div>
+    <div id="surge-fetch-log" class="hk-log" style="display:none"></div>
     <div id="surge-monitor-line" style="font-size:11.5px;color:var(--muted);margin-bottom:8px"></div>
     <div id="surge-alerts"></div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
@@ -1676,7 +1678,7 @@
     <div class="table-wrap"><table>
       <thead><tr>
         <th class="left">Ticker</th><th class="left">Surge day</th><th>Vol&times;</th>
-        <th>Limit price</th><th class="left">Drop day</th><th class="left">Triggered</th>
+        <th>Limit price</th><th>Price now</th><th>vs limit</th><th class="left">Drop day</th><th class="left">Triggered</th>
         <th>Expires in</th><th class="left">Action</th>
       </tr></thead>
       <tbody id="surge-buy-body"></tbody>
@@ -1687,7 +1689,7 @@
     <div class="table-wrap"><table>
       <thead><tr>
         <th class="left">Ticker</th><th class="left">Surge day</th><th>Vol&times;</th>
-        <th class="left">Drop day</th><th>Days since</th><th>Buy level</th><th>Window days left</th>
+        <th class="left">Drop day</th><th>Days since</th><th>Buy level</th><th>Price now</th><th>vs level</th><th>Window days left</th>
         <th class="left">Action</th>
       </tr></thead>
       <tbody id="surge-armed-body"></tbody>
@@ -1698,7 +1700,7 @@
     <div class="table-wrap"><table>
       <thead><tr>
         <th class="left">Ticker</th><th class="left">Surge day</th><th>Vol&times;</th>
-        <th>Surge close</th><th>Days since surge</th><th class="left">Action</th>
+        <th>Surge close</th><th>Price now</th><th>vs surge close</th><th>Days since surge</th><th class="left">Action</th>
       </tr></thead>
       <tbody id="surge-watch-body"></tbody>
     </table></div>
@@ -1757,7 +1759,7 @@
     <div class="table-wrap"><table>
       <thead><tr>
         <th class="left">Stock</th><th class="left">Surge day</th><th>Vol&times;</th><th>Mkt cap</th>
-        <th>Limit price</th><th class="left">Triggered</th><th>Expires in</th>
+        <th>Limit price</th><th>Price now</th><th>vs limit</th><th class="left">Triggered</th><th>Expires in</th>
         <th class="left">Suggested buy</th><th class="left">Action</th>
       </tr></thead>
       <tbody id="hk-buy-body"></tbody>
@@ -1768,7 +1770,7 @@
     <div class="table-wrap"><table>
       <thead><tr>
         <th class="left">Stock</th><th class="left">Surge day</th><th>Vol&times;</th><th class="left">Drop day</th>
-        <th>Days since</th><th>Buy level</th><th>Window days left</th><th class="left">Suggested buy</th><th class="left">Action</th>
+        <th>Days since</th><th>Buy level</th><th>Price now</th><th>vs level</th><th>Window days left</th><th class="left">Suggested buy</th><th class="left">Action</th>
       </tr></thead>
       <tbody id="hk-armed-body"></tbody>
     </table></div>
@@ -1778,7 +1780,7 @@
     <div class="table-wrap"><table>
       <thead><tr>
         <th class="left">Stock</th><th class="left">Surge day</th><th>Vol&times;</th><th>Mkt cap</th>
-        <th>Surge close</th><th>Days since surge</th><th class="left">Action</th>
+        <th>Surge close</th><th>Price now</th><th>vs surge close</th><th>Days since surge</th><th class="left">Action</th>
       </tr></thead>
       <tbody id="hk-watch-body"></tbody>
     </table></div>
@@ -2032,6 +2034,47 @@ async function runSurgeScan() {
   }
 }
 
+let _surgeFetchTimer = null, _surgeLogPos = 0;
+
+async function runSurgeQuickFetch() {
+  const st = document.getElementById('surge-status');
+  try {
+    await apiFetch('/api/us/quick-update', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                            body: JSON.stringify({scan: true})});
+  } catch (e) {
+    st.style.color = 'var(--red)';
+    st.textContent = /409/.test(e.message) ? '⚠ A US fetch is already running — wait for it to finish.' : '⚠ ' + e.message;
+    return;
+  }
+  const box = document.getElementById('surge-fetch-log');
+  box.style.display = 'block';
+  box.textContent = '';
+  _surgeLogPos = 0;
+  document.getElementById('surge-fetch-quick').disabled = true;
+  st.style.color = 'var(--muted)';
+  st.textContent = 'Quick US update running…';
+  clearInterval(_surgeFetchTimer);
+  _surgeFetchTimer = setInterval(async () => {
+    try {
+      const r = await apiFetch('/api/fetch/status');
+      if (r.log.length > _surgeLogPos) {
+        box.textContent += r.log.slice(_surgeLogPos).join('\n') + '\n';
+        box.scrollTop = box.scrollHeight;
+        _surgeLogPos = r.log.length;
+      }
+      if (!r.running) {
+        clearInterval(_surgeFetchTimer);
+        _surgeFetchTimer = null;
+        document.getElementById('surge-fetch-quick').disabled = false;
+        st.style.color = r.error ? 'var(--red)' : 'var(--green)';
+        st.textContent = r.error ? '⚠ Quick US update failed: ' + r.error
+          : `Quick US update finished in ${r.summary ? r.summary.seconds : '?'}s — data through ${r.summary ? r.summary.data_through : '?'}`;
+        loadSurge();
+      }
+    } catch (e) { /* server busy — keep polling */ }
+  }, 2000);
+}
+
 async function runSurgeLive() {
   const st = document.getElementById('surge-status');
   st.style.color = 'var(--muted)';
@@ -2126,6 +2169,15 @@ function _surgeRows(id, cols, rows, msg) {
 }
 const _surgeBtn = (label, js, cls = 'btn-ghost') =>
   `<button class="btn ${cls}" style="padding:2px 9px;font-size:11px;margin-right:4px" onclick="${js}">${label}</button>`;
+const _sigNow = (s, money) => s.current_price == null ? '<span class="dim">—</span>'
+  : `<b>${money(s.current_price)}</b><div class="dim" style="font-size:10px">${s.price_is_live ? '● live · ' : ''}${s.price_date || ''}</div>`;
+// vs the buy level: above it (amber) means a buy order at the level would not fill right now
+const _vsLevel = v => v == null ? '<span class="dim">—</span>'
+  : `<span style="color:${v > 0.5 ? '#d97706' : 'var(--green)'};font-weight:600" title="${v > 0.5
+      ? 'Price is ABOVE the buy level - an order at the level would not fill right now'
+      : 'Price is at or below the buy level'}">${v >= 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
+const _vsSurge = v => v == null ? '<span class="dim">—</span>'
+  : `<span class="${v >= 0 ? 'green' : 'red'}">${v >= 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
 const _surgeVol = s => s.surge_vol_ratio != null ? s.surge_vol_ratio + '×' : '<span class="dim">—</span>';
 const _surgeMoney = v => v == null ? '<span class="dim">—</span>' : '$' + Number(v).toFixed(2);
 
@@ -2157,29 +2209,31 @@ function renderSurge() {
     <div class="card"><div class="card-label">Below MA21</div><div class="card-value ${warn ? 'red' : ''}">${warn}</div></div>
     <div class="card"><div class="card-label">Closed Avg P/L</div><div class="card-value ${avgCl == null ? '' : avgCl >= 0 ? 'green' : 'red'}">${avgCl == null ? '—' : (avgCl >= 0 ? '+' : '') + avgCl.toFixed(2) + '%'}</div></div>`;
 
-  _surgeRows('surge-buy-body', 8, buyAll.map(s => {
+  _surgeRows('surge-buy-body', 10, buyAll.map(s => {
     const stale = isStale(s);
     const exp = s.expires_in == null ? '—' : stale ? '<span class="dim">stale — press Scan Now</span>'
               : s.expires_in === 0 ? '<span class="red">last day</span>' : s.expires_in + ' day(s)';
     return `<tr class="${stale ? '' : 'surge-buy'}" style="${stale ? 'opacity:.55' : ''}">
       <td class="left ticker-cell">${s.ticker}</td><td class="left">${fmtDate(s.surge_date)}</td>
       <td>${_surgeVol(s)}</td><td><b>${_surgeMoney(s.buy_level)}</b></td>
+      <td>${_sigNow(s, _surgeMoney)}</td><td>${_vsLevel(s.vs_level_pct)}</td>
       <td class="left">${fmtDate(s.drop_date)}</td><td class="left">${fmtDate(s.trigger_date)}</td>
       <td>${exp}</td>
       <td class="left">${_surgeBtn('I bought', `openSurgeModal('bought',${s.id})`, 'btn-fetch')}${_surgeBtn('Dismiss', `surgeDismiss(${s.id})`)}</td></tr>`;
   }), 'No buy signals right now.');
 
   const _isNewDrop = s => s.days_since_drop != null && s.days_since_drop <= 1;
-  _surgeRows('surge-armed-body', 8, armed.map(s => `<tr class="${_isNewDrop(s) ? 'surge-drop' : ''}">
+  _surgeRows('surge-armed-body', 10, armed.map(s => `<tr class="${_isNewDrop(s) ? 'surge-drop' : ''}">
       <td class="left ticker-cell">${s.ticker}</td><td class="left">${fmtDate(s.surge_date)}</td>
       <td>${_surgeVol(s)}</td><td class="left">${fmtDate(s.drop_date)}${_isNewDrop(s) ? ' <span class="pill amber">NEW</span>' : ''}</td>
       <td>${s.days_since_drop ?? '—'}</td>
-      <td><b>${_surgeMoney(s.buy_level)}</b></td><td>${s.window_days_left ?? '—'}</td>
+      <td><b>${_surgeMoney(s.buy_level)}</b></td><td>${_sigNow(s, _surgeMoney)}</td><td>${_vsLevel(s.vs_level_pct)}</td><td>${s.window_days_left ?? '—'}</td>
       <td class="left">${_surgeBtn('Dismiss', `surgeDismiss(${s.id})`)}</td></tr>`), 'No drop days waiting.');
 
-  _surgeRows('surge-watch-body', 6, watch.map(s => `<tr>
+  _surgeRows('surge-watch-body', 8, watch.map(s => `<tr>
       <td class="left ticker-cell">${s.ticker}</td><td class="left">${fmtDate(s.surge_date)}</td>
       <td>${_surgeVol(s)}</td><td>${_surgeMoney(s.surge_close)}</td>
+      <td>${_sigNow(s, _surgeMoney)}</td><td>${_vsSurge(s.vs_surge_pct)}</td>
       <td>${s.days_since_surge} / ${cfg.MAX_DAYS_TO_DROP}</td>
       <td class="left">${_surgeBtn('Dismiss', `surgeDismiss(${s.id})`)}</td></tr>`), 'Nothing being watched.');
 
@@ -2442,27 +2496,27 @@ function renderHkSurge() {
     <div class="card"><div class="card-label">Alerts on positions</div><div class="card-value ${warn ? 'red' : ''}">${warn}</div></div>
     <div class="card"><div class="card-label">Closed avg (net)</div><div class="card-value ${avgCl == null ? '' : avgCl >= 0 ? 'green' : 'red'}">${avgCl == null ? '—' : (avgCl >= 0 ? '+' : '') + avgCl.toFixed(2) + '%'}</div></div>`;
 
-  _hkRows('hk-buy-body', 9, buyAll.map(s => {
+  _hkRows('hk-buy-body', 11, buyAll.map(s => {
     const stale = isStale(s);
     const exp = s.expires_in == null ? '—' : stale ? '<span class="dim">stale — press Scan Now</span>'
               : s.expires_in === 0 ? '<span class="red">last day</span>' : s.expires_in + ' day(s)';
     return `<tr class="${stale ? '' : 'surge-buy'}" style="${stale ? 'opacity:.55' : ''}">
       <td class="left">${_hkStock(s)}</td><td class="left">${fmtDate(s.surge_date)}</td><td>${_hkVol(s)}</td><td>${_hkCap(s.mcap)}</td>
-      <td><b>${_hkMoney(s.buy_level)}</b></td><td class="left">${fmtDate(s.trigger_date)}</td><td>${exp}</td>
+      <td><b>${_hkMoney(s.buy_level)}</b></td><td>${_sigNow(s, _hkMoney)}</td><td>${_vsLevel(s.vs_level_pct)}</td><td class="left">${fmtDate(s.trigger_date)}</td><td>${exp}</td>
       <td class="left">${_hkSuggest(s)}</td>
       <td class="left">${_hkBtn('I bought', `openHkModal('bought',${s.id})`, 'btn-fetch')}${_hkBtn('Dismiss', `hkDismiss(${s.id})`)}</td></tr>`;
   }), 'No buy signals right now.');
 
   const _isNewHkDrop = s => s.days_since_drop != null && s.days_since_drop <= 1;
-  _hkRows('hk-armed-body', 9, armed.map(s => `<tr class="${_isNewHkDrop(s) ? 'surge-drop' : ''}">
+  _hkRows('hk-armed-body', 11, armed.map(s => `<tr class="${_isNewHkDrop(s) ? 'surge-drop' : ''}">
       <td class="left">${_hkStock(s)}</td><td class="left">${fmtDate(s.surge_date)}</td><td>${_hkVol(s)}</td>
       <td class="left">${fmtDate(s.drop_date)}${_isNewHkDrop(s) ? ' <span class="pill amber">NEW</span>' : ''}</td>
-      <td>${s.days_since_drop ?? '—'}</td><td><b>${_hkMoney(s.buy_level)}</b></td><td>${s.window_days_left ?? '—'}</td>
+      <td>${s.days_since_drop ?? '—'}</td><td><b>${_hkMoney(s.buy_level)}</b></td><td>${_sigNow(s, _hkMoney)}</td><td>${_vsLevel(s.vs_level_pct)}</td><td>${s.window_days_left ?? '—'}</td>
       <td class="left">${_hkSuggest(s)}</td><td class="left">${_hkBtn('Dismiss', `hkDismiss(${s.id})`)}</td></tr>`), 'No drop days waiting.');
 
-  _hkRows('hk-watch-body', 7, watch.map(s => `<tr>
+  _hkRows('hk-watch-body', 9, watch.map(s => `<tr>
       <td class="left">${_hkStock(s)}</td><td class="left">${fmtDate(s.surge_date)}</td><td>${_hkVol(s)}</td><td>${_hkCap(s.mcap)}</td>
-      <td>${_hkMoney(s.surge_close)}</td><td>${s.days_since_surge} / ${cfg.MAX_DAYS_TO_DROP}</td>
+      <td>${_hkMoney(s.surge_close)}</td><td>${_sigNow(s, _hkMoney)}</td><td>${_vsSurge(s.vs_surge_pct)}</td><td>${s.days_since_surge} / ${cfg.MAX_DAYS_TO_DROP}</td>
       <td class="left">${_hkBtn('Dismiss', `hkDismiss(${s.id})`)}</td></tr>`), 'Nothing being watched.');
 
   _hkRows('hk-pos-body', 13, d.positions.map(p => {
