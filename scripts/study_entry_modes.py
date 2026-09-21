@@ -9,12 +9,13 @@ the same signals with realistic fills (see ENTRY_MODE in study_volume_surge_2026
     stop        buy on the way up: pay max(open, level)
     limit       true buy limit: only when Low <= level, pay min(open, level)
 
-Each mode gets its own folder us_entry_runs/<mode>/strategies/ (monthly JSONs in the study format) and an
-Excel capital simulation (compounding, 20 slots, HK-style "base + shared profit" sizing).
+Each (volume multiple, mode) gets its own folder us_entry_runs/vm<X>/<mode>/strategies/ (monthly JSONs in the
+study format) and an Excel capital simulation (compounding, 20 slots, "base + shared profit" sizing).
 
 Run from the project root:
     python scripts/study_entry_modes.py
     python scripts/study_entry_modes.py --data-through 2026-09-18 --capital 20000 --position 1000 --slots 20
+    python scripts/study_entry_modes.py --modes stop limit --vol-mults 2 2.5 3 3.5 4 5 6
 """
 import argparse
 import contextlib
@@ -43,9 +44,10 @@ def months(first, last):
             y, m = y + 1, 1
 
 
-def run_mode(mode, by_ticker, first, last, capital, position, slots):
+def run_mode(mode, vm, by_ticker, first, last, capital, position, slots):
     study.ENTRY_MODE = mode
-    out_dir = os.path.join(OUT_ROOT, mode, "strategies")
+    study.VOL_MULT = vm
+    out_dir = os.path.join(OUT_ROOT, f"vm{vm:g}", mode, "strategies")
     os.makedirs(out_dir, exist_ok=True)
     for f in os.listdir(out_dir):
         if f.startswith("study_volume_surge_") and f.endswith(".json"):
@@ -70,7 +72,7 @@ def run_mode(mode, by_ticker, first, last, capital, position, slots):
             json.dump({"trades": trades}, f, indent=2)
         trades_all += trades
     cwd = os.getcwd()
-    os.chdir(os.path.join(OUT_ROOT, mode))                     # capital_simulation reads ./strategies/
+    os.chdir(os.path.join(OUT_ROOT, f"vm{vm:g}", mode))        # capital_simulation reads ./strategies/
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             res = capsim.run_simulation(capital, position, "strategies/capital_simulation_us.xlsx", compound_slots=slots)
@@ -82,6 +84,8 @@ def run_mode(mode, by_ticker, first, last, capital, position, slots):
 def main():
     ap = argparse.ArgumentParser(description="US backtest under different buy-fill assumptions")
     ap.add_argument("--modes", nargs="+", default=["optimistic", "stop", "limit"])
+    ap.add_argument("--vol-mults", nargs="+", type=float, default=[study.VOL_MULT],
+                    help="surge volume multiples to test (default: the study's 3.5)")
     ap.add_argument("--from", dest="first", default="2024-11")
     ap.add_argument("--to", dest="last", default="2026-09")
     ap.add_argument("--data-through", default="2026-09-18", help="ignore data after this date (drops an unfinished day)")
@@ -98,13 +102,17 @@ def main():
         study.add_ma21(by_ticker[t])
     print(f"US universe: {len(by_ticker)} tickers, data through {args.data_through}, months {args.first}..{args.last}")
 
-    print(f"\n{'mode':11s} {'trades':>6s} {'avg %':>7s} {'median %':>9s} {'win %':>6s} | {'sim exec':>8s} {'skipped':>7s} {'P/L':>10s} {'return %':>9s}")
-    for mode in args.modes:
-        trades, s = run_mode(mode, by_ticker, args.first, args.last, args.capital, args.position, args.slots)
-        r = sorted(t["blended_return_pct"] for t in trades)
-        n = len(r)
-        print(f"{mode:11s} {n:6d} {sum(r) / n:7.2f} {r[n // 2]:9.2f} {100 * sum(x > 0 for x in r) / n:6.1f} | "
-              f"{int(s['trades_executed']):8d} {int(s['trades_skipped']):7d} {s['total_pnl']:10,.0f} {s['total_return_pct']:9.1f}")
+    print(f"\n{'vol x':>5s} {'mode':11s} {'trades':>6s} {'avg %':>7s} {'median %':>9s} {'win %':>6s} | {'sim exec':>8s} {'skipped':>7s} {'P/L':>10s} {'return %':>9s}")
+    for vm in args.vol_mults:
+        for mode in args.modes:
+            trades, s = run_mode(mode, vm, by_ticker, args.first, args.last, args.capital, args.position, args.slots)
+            r = sorted(t["blended_return_pct"] for t in trades)
+            n = len(r)
+            if not n:
+                print(f"{vm:5g} {mode:11s} {0:6d}")
+                continue
+            print(f"{vm:5g} {mode:11s} {n:6d} {sum(r) / n:7.2f} {r[n // 2]:9.2f} {100 * sum(x > 0 for x in r) / n:6.1f} | "
+                  f"{int(s['trades_executed']):8d} {int(s['trades_skipped']):7d} {s['total_pnl']:10,.0f} {s['total_return_pct']:9.1f}")
 
 
 if __name__ == "__main__":
