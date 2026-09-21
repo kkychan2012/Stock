@@ -42,3 +42,6 @@ hk/*.log
 
 # Entry-fill comparison runs (generated)
 us_entry_runs/
+
+# US backtest Excel reports (generated)
+us_backtest_reports/
