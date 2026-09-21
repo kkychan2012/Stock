@@ -1665,27 +1665,27 @@
     <div id="surge-monitor-line" style="font-size:11.5px;color:var(--muted);margin-bottom:8px"></div>
     <div id="surge-alerts"></div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
-      Volume-surge day &rarr; wait for a <b>red candle</b> (drop day) &rarr; limit-buy at the
-      <b>surge-day close</b> for 5 days &rarr; when the High reaches it you get a <b>Buy Signal</b>
+      Volume-surge day &rarr; wait for a <b>red candle</b> (drop day) &rarr; buy only if the price
+      <b>touches the surge-day close</b> within 5 days (otherwise the deal is closed) &rarr; you then get a <b>Buy Signal</b>
       (kept 3 trading days) &rarr; click <b>I bought</b> &rarr; watch it here: sell half at
       <b>+15%</b>, sell the rest when a close is below <b>MA21</b> and the next open is still below it.
     </div>
 
     <div class="summary-row" id="surge-cards"></div>
 
-    <div class="surge-title" style="color:var(--green)">&#9679; Buy Signals — limit price was reached
+    <div class="surge-title" style="color:var(--green)">&#9679; Buy Signals — price touched the buy level
       <span class="surge-sub">place/confirm the buy, then click &ldquo;I bought&rdquo;</span></div>
     <div class="table-wrap"><table>
       <thead><tr>
         <th class="left">Ticker</th><th class="left">Surge day</th><th>Vol&times;</th>
-        <th>Limit price</th><th>Price now</th><th>vs limit</th><th class="left">Drop day</th><th class="left">Triggered</th>
+        <th>Buy level</th><th>Price now</th><th>vs level</th><th class="left">Drop day</th><th class="left">Triggered</th>
         <th>Expires in</th><th class="left">Action</th>
       </tr></thead>
       <tbody id="surge-buy-body"></tbody>
     </table></div>
 
     <div class="surge-title" style="color:#2563eb">&#9679; Drop Day — buy level armed
-      <span class="surge-sub">first red candle after the surge; the surge-day close is now the buy level for 5 trading days — a Buy Signal follows when the High reaches it</span></div>
+      <span class="surge-sub">first red candle after the surge; the surge-day close is now the buy level for 5 trading days — a Buy Signal follows when the price touches it; if it never does within those days the deal is closed</span></div>
     <div class="table-wrap"><table>
       <thead><tr>
         <th class="left">Ticker</th><th class="left">Surge day</th><th>Vol&times;</th>
@@ -1746,7 +1746,7 @@
     <div id="hk-alerts"></div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
       Same strategy as the US tab, on Hong Kong stocks only: surge day (3.5&times; volume) &rarr; red-candle drop day &rarr;
-      limit-buy at the <b>surge-day close</b> for 5 days &rarr; <b>Buy Signal</b> (kept 3 trading days) &rarr; <b>I bought</b> &rarr;
+      buy only if the price <b>touches the surge-day close</b> within 5 days (otherwise the deal is closed) &rarr; <b>Buy Signal</b> (kept 3 trading days) &rarr; <b>I bought</b> &rarr;
       sell half at <b>+15%</b>, the rest when a close is below <b>MA21</b> and the next open is still below.
       Only stocks with market cap &ge; HK$1B and turnover &ge; HK$5M/day. Sizing: HK$10,000 per slot, max 20 slots,
       profit shared evenly over free slots, one position &le; 10% of equity, ~0.32% round-trip costs.
@@ -1754,19 +1754,19 @@
 
     <div class="summary-row" id="hk-cards"></div>
 
-    <div class="surge-title" style="color:var(--green)">&#9679; Buy Signals &mdash; limit price was reached
+    <div class="surge-title" style="color:var(--green)">&#9679; Buy Signals &mdash; price touched the buy level
       <span class="surge-sub">suggested size follows your slot / profit-sharing rule and rounds down to whole board lots</span></div>
     <div class="table-wrap"><table>
       <thead><tr>
         <th class="left">Stock</th><th class="left">Surge day</th><th>Vol&times;</th><th>Mkt cap</th>
-        <th>Limit price</th><th>Price now</th><th>vs limit</th><th class="left">Triggered</th><th>Expires in</th>
+        <th>Buy level</th><th>Price now</th><th>vs level</th><th class="left">Triggered</th><th>Expires in</th>
         <th class="left">Suggested buy</th><th class="left">Action</th>
       </tr></thead>
       <tbody id="hk-buy-body"></tbody>
     </table></div>
 
     <div class="surge-title" style="color:#2563eb">&#9679; Drop Day &mdash; buy level armed
-      <span class="surge-sub">first red candle after the surge; the surge-day close is now the buy level for 5 trading days &mdash; a Buy Signal follows when the High reaches it</span></div>
+      <span class="surge-sub">first red candle after the surge; the surge-day close is now the buy level for 5 trading days &mdash; a Buy Signal follows when the price touches it; if it never does within those days the deal is closed</span></div>
     <div class="table-wrap"><table>
       <thead><tr>
         <th class="left">Stock</th><th class="left">Surge day</th><th>Vol&times;</th><th class="left">Drop day</th>
@@ -2171,11 +2171,11 @@ const _surgeBtn = (label, js, cls = 'btn-ghost') =>
   `<button class="btn ${cls}" style="padding:2px 9px;font-size:11px;margin-right:4px" onclick="${js}">${label}</button>`;
 const _sigNow = (s, money) => s.current_price == null ? '<span class="dim">—</span>'
   : `<b>${money(s.current_price)}</b><div class="dim" style="font-size:10px">${s.price_is_live ? '● live · ' : ''}${s.price_date || ''}</div>`;
-// vs the buy level: above it (amber) means a buy order at the level would not fill right now
+// vs the buy level: above it (amber) = the price must come back DOWN to touch the level (or the deal closes)
 const _vsLevel = v => v == null ? '<span class="dim">—</span>'
   : `<span style="color:${v > 0.5 ? '#d97706' : 'var(--green)'};font-weight:600" title="${v > 0.5
-      ? 'Price is ABOVE the buy level - an order at the level would not fill right now'
-      : 'Price is at or below the buy level'}">${v >= 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
+      ? 'Price is above the buy level - the deal only happens if it comes back down and touches the level within the window'
+      : 'Price is at or below the buy level - the deal only happens if it rises back up and touches the level'}">${v >= 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
 const _vsSurge = v => v == null ? '<span class="dim">—</span>'
   : `<span class="${v >= 0 ? 'green' : 'red'}">${v >= 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
 const _surgeVol = s => s.surge_vol_ratio != null ? s.surge_vol_ratio + '×' : '<span class="dim">—</span>';
@@ -2278,7 +2278,7 @@ function openSurgeModal(mode, id) {
   if (mode === 'bought') {
     const s = d.signals.find(x => x.id === id);
     title = `I bought ${s.ticker}`;
-    info  = `Limit price was <b>${_surgeMoney(s.buy_level)}</b>. Enter your actual fill.`;
+    info  = `Buy level was <b>${_surgeMoney(s.buy_level)}</b>. Enter your actual fill.`;
     price = s.buy_level;
   } else {
     const p = d.positions.find(x => x.id === id);
@@ -2573,7 +2573,7 @@ function openHkModal(mode, id) {
   if (mode === 'bought') {
     const s = d.signals.find(x => x.id === id), g = s.suggest || {};
     title = `I bought ${s.ticker} ${s.name || ''}`;
-    info = `Limit price was <b>${_hkMoney(s.buy_level)}</b>. ` +
+    info = `Buy level was <b>${_hkMoney(s.buy_level)}</b>. ` +
            (g.shares > 0 ? `Suggested: <b>${g.shares.toLocaleString()} shares</b> (${_hkHkd(g.amount)}). ` : (g.note ? g.note + '. ' : '')) +
            `Enter your actual fill — shares <i>or</i> amount is enough.`;
     price = s.buy_level; shares = g.shares > 0 ? g.shares : ''; amount = g.shares > 0 ? g.amount : '';

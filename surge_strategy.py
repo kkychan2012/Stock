@@ -4,9 +4,9 @@ logic studied in scripts/study_volume_surge_2026_04.py.
 
 Workflow states for a signal (table `surge_signals`):
   watching   surge day found, waiting for the first red candle (drop day)
-  armed      drop day found; a limit-buy at the surge-day close is live for
-             BUY_WINDOW_DAYS trading days after the drop day
-  triggered  a day's High reached the limit price inside that window ("Buy Signal")
+  armed      drop day found; the surge-day close is the buy level for BUY_WINDOW_DAYS
+             trading days after the drop day
+  triggered  a day's range touched the buy level inside that window ("Buy Signal")
   expired    no drop day within MAX_DAYS_TO_DROP days, or the buy window ran out
   bought     user marked it as actually bought (phase 2)
   dismissed  user dismissed it (phase 2)
@@ -16,8 +16,9 @@ Rules (all on daily bars):
   Drop day   first SOLID red candle (close < open) strictly after the surge day,
              within MAX_DAYS_TO_DROP trading days (the backtest had no such cap —
              set it to None for exact backtest parity)
-  Buy        first day after the drop day, within BUY_WINDOW_DAYS trading days,
-             whose intraday High >= surge-day close (fills at the surge close)
+  Buy        first day after the drop day, within BUY_WINDOW_DAYS trading days, whose range
+             [Low, High] TOUCHES the surge-day close (fills at that price). If no day touches it
+             within the window the deal is closed (signal expires)
 
 Scanning is automatic: each run looks at the last LOOKBACK_DAYS trading days for
 new surge days and re-evaluates every signal still watching/armed. Universe =
@@ -38,12 +39,16 @@ CONFIG = {
     "VOL_MULT": 3.5,
     "LOOKBACK_DAYS": 20,        # trading days back to look for new surge days
     "MAX_DAYS_TO_DROP": 10,     # max trading days from surge to drop day (None = unlimited)
-    "BUY_WINDOW_DAYS": 5,       # trading days after the drop day the limit-buy stays live
+    "BUY_WINDOW_DAYS": 5,       # trading days after the drop day the buy level stays live
+    "ENTRY_RULE": "touch",      # 'touch': a day counts only if its range [Low, High] includes the surge close
+                                # (price came down/up to the level); 'high': old rule, High >= level
     "STALE_AFTER_TRIGGER_DAYS": 3,  # a triggered signal not marked bought this many trading days
                                     # after its trigger day expires (None = never)
     "PARTIAL_TARGET_PCT": 0.15,  # used by the position monitor (phase 3)
     "MA21_WINDOW": 21,
 }
+
+LIVE_TRIGGER_NOTE = "triggered live by the monitor"      # marks a trigger set before its daily bar was stored
 
 ACTIVE_STATUSES = ("watching", "armed", "triggered")   # auto-managed; re-evaluated every scan
 
@@ -148,9 +153,14 @@ def evaluate_signal(series, surge_idx, config=None):
     out["buy_level"] = round(surge_close, 4)
     window = cfg["BUY_WINDOW_DAYS"]
     w0 = drop_idx + 1
+    touch = cfg["ENTRY_RULE"] == "touch"
     for i in range(w0, min(w0 + window, len(series))):
-        h = series[i]["high"]
-        if h is not None and h >= surge_close:
+        h, lo = series[i]["high"], series[i]["low"]
+        if touch:
+            hit = h is not None and lo is not None and lo <= surge_close <= h
+        else:
+            hit = h is not None and h >= surge_close
+        if hit:
             out["status"] = "triggered"
             out["trigger_date"] = series[i]["date"]
             stale = cfg["STALE_AFTER_TRIGGER_DAYS"]
@@ -161,7 +171,8 @@ def evaluate_signal(series, surge_idx, config=None):
 
     if len(series) >= w0 + window:
         out["status"] = "expired"
-        out["note"] = f"High never reached the surge close within {window} trading days of the drop day"
+        out["note"] = (f"price never touched the surge close within {window} trading days of the drop day - deal closed"
+                       if touch else f"High never reached the surge close within {window} trading days of the drop day")
     else:
         out["status"] = "armed"
         out["window_days_left"] = drop_idx + window - last
@@ -257,7 +268,7 @@ def scan_signals(as_of=None, config=None):
                 sdate = series[i]["date"]
                 ev = evaluate_signal(series, i, cfg)
                 row = conn.execute(
-                    "SELECT id, status FROM surge_signals WHERE ticker=? AND surge_date=?",
+                    "SELECT id, status, note FROM surge_signals WHERE ticker=? AND surge_date=?",
                     (ticker, sdate)).fetchone()
                 if row is None:
                     if ev["status"] == "expired":
@@ -273,8 +284,10 @@ def scan_signals(as_of=None, config=None):
                          ev["status"], ev["drop_date"], ev["buy_level"], ev["window_days_left"],
                          ev["trigger_date"], ev["note"], now, now))
                     summary["new"].append((ticker, sdate, ev["status"]))
-                elif row["status"] == "triggered" and ev["status"] in ("armed", "watching"):
-                    continue   # triggered live by the monitor before the daily bar was stored — never downgrade
+                elif (row["status"] == "triggered" and ev["status"] in ("armed", "watching")
+                      and row["note"] == LIVE_TRIGGER_NOTE):
+                    continue   # triggered live by the monitor before the daily bar was stored — keep it
+                    # (a trigger set by an earlier scan / an older rule IS re-checked and can be demoted)
                 elif row["status"] in ACTIVE_STATUSES:
                     conn.execute(
                         """UPDATE surge_signals SET status=?, drop_date=?, buy_level=?,
@@ -489,7 +502,7 @@ def refresh_live(now=None, bars_by_ticker=None):
                 conn.execute(
                     """UPDATE surge_signals SET status='triggered', trigger_date=?, window_days_left=NULL,
                            note=?, updated_at=? WHERE id=? AND status='armed'""",
-                    (ev["trigger_date"], "triggered live by the monitor", stamp, s["id"]))
+                    (ev["trigger_date"], LIVE_TRIGGER_NOTE, stamp, s["id"]))
                 summary["triggered"].append(s["ticker"])
 
         # Drop Day detection: a "watching" signal whose first red candle (close < open) has now CLOSED becomes

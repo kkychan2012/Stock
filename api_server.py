@@ -2484,7 +2484,7 @@ def _surge_alerts(signals, positions):
                                    f"armed for {s['window_days_left']} more trading day(s)"})
         if s["status"] == "triggered" and (s.get("expires_in") is None or s["expires_in"] >= 0):
             out.append({"key": f"sig{s['id']}:buy", "level": "buy", "ticker": s["ticker"],
-                        "message": f"Buy Signal — limit ${s['buy_level']:.2f} reached ({s['trigger_date']})"})
+                        "message": f"Buy Signal — price touched the buy level ${s['buy_level']:.2f} ({s['trigger_date']})"})
     return out
 
 

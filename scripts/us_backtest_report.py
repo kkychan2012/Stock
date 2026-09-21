@@ -9,8 +9,10 @@ Runs the Scenario A strategy on the US universe (tracked tickers + S&P 500 / Rus
 then replays the signals through a capital account (start capital, N slots, each buy = base stake plus an
 even share of the profit made so far) so only the trades that account could actually afford are "taken".
 
-Buy fills are realistic (see ENTRY_MODE in study_volume_surge_2026_04.py):
-    stop   (default) buy on the way up: pay max(open, level) on the first day High >= level
+Buy rule (see ENTRY_MODE in study_volume_surge_2026_04.py):
+    touch  (default, same as the dashboard) buy only if a day's range [Low, High] TOUCHES the surge-day close within
+           5 trading days of the drop day, at that price; no touch -> the deal is closed
+    stop   buy on the way up: pay max(open, level) on the first day High >= level
     limit  true buy limit: needs Low <= level, pay min(open, level)
     optimistic  the old, over-generous rule (fill at the level even if the stock never traded there)
 
@@ -197,7 +199,7 @@ def autosize(ws, widths=None):
 
 def main():
     ap = argparse.ArgumentParser(description="US surge backtest -> Excel report grouped by ticker")
-    ap.add_argument("--entry-mode", choices=["stop", "limit", "optimistic"], default="stop")
+    ap.add_argument("--entry-mode", choices=["touch", "stop", "limit", "optimistic"], default="touch")
     ap.add_argument("--vol-mult", type=float, default=3.5)
     ap.add_argument("--capital", type=float, default=20000.0)
     ap.add_argument("--position", type=float, default=1000.0, help="base stake per slot")

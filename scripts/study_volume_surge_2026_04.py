@@ -131,13 +131,16 @@ def find_drop_day(series, surge_idx):
 SCENARIO_A_MAX_DAYS = 5  # trading days, counted starting the day AFTER the Drop Day
 
 # How the Scenario A buy at the surge-day close is FILLED:
+#   "touch"      (DEFAULT - the rule the dashboard uses): the deal happens only if, within the window, a day's
+#                range [Low, High] includes the level, i.e. the price actually touched the surge close (coming
+#                down to it or up to it). Fill exactly at the level. No touch in the window -> deal closed.
 #   "optimistic" (original): trigger = the day's High reaches the level; fill exactly at the level even if
 #                the stock never traded down to it (it gapped/ran above). Overstates results.
 #   "stop"       buy on the way up: same trigger (High >= level) but you pay what the market charges -
 #                the level if the day trades up through it, the OPEN if it gapped above it.
 #   "limit"      a true buy limit at the level: only fills if the day's Low trades down to it; fill at
 #                the level, or at the open if it gapped below it.
-ENTRY_MODE = "optimistic"
+ENTRY_MODE = "touch"
 
 
 def find_scenario_a(series, surge_idx, drop_idx):
@@ -149,7 +152,11 @@ def find_scenario_a(series, surge_idx, drop_idx):
     window_start = drop_idx + 1
     window_end = min(window_start + SCENARIO_A_MAX_DAYS, len(series))
     for i in range(window_start, window_end):
-        if ENTRY_MODE == "limit":
+        if ENTRY_MODE == "touch":
+            lo, h = series[i]["low"], series[i]["high"]
+            if lo is not None and h is not None and lo <= surge_close <= h:
+                return i
+        elif ENTRY_MODE == "limit":
             lo = series[i]["low"]
             if lo is not None and lo <= surge_close:
                 return i
@@ -164,7 +171,7 @@ def entry_fill(series, idx, level, mode=None):
     """Price actually paid on trigger day `idx` for a buy at `level` (see ENTRY_MODE)."""
     mode = mode or ENTRY_MODE
     o = series[idx]["open"]
-    if mode == "optimistic" or o is None:
+    if mode in ("optimistic", "touch") or o is None:
         return level
     if mode == "stop":
         return max(o, level)       # gapped above the level -> pay the open; traded up through it -> the level

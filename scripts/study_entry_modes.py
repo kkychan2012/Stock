@@ -83,7 +83,7 @@ def run_mode(mode, vm, by_ticker, first, last, capital, position, slots):
 
 def main():
     ap = argparse.ArgumentParser(description="US backtest under different buy-fill assumptions")
-    ap.add_argument("--modes", nargs="+", default=["optimistic", "stop", "limit"])
+    ap.add_argument("--modes", nargs="+", default=["touch", "optimistic", "stop", "limit"])
     ap.add_argument("--vol-mults", nargs="+", type=float, default=[study.VOL_MULT],
                     help="surge volume multiples to test (default: the study's 3.5)")
     ap.add_argument("--from", dest="first", default="2024-11")
