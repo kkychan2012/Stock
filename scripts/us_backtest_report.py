@@ -14,8 +14,9 @@ Buy fills are realistic (see ENTRY_MODE in study_volume_surge_2026_04.py):
     limit  true buy limit: needs Low <= level, pay min(open, level)
     optimistic  the old, over-generous rule (fill at the level even if the stock never traded there)
 
-Sheets: Summary | By Ticker (collapsible groups, one block per ticker with each buy/sell) | Ticker Summary |
-        Trades (one row per trade) | Transactions (chronological) | Skipped Signals | Still Open
+Sheets: Summary | By Ticker (collapsible groups, one block per ticker with each buy/sell) |
+        By Buy Date (the same detail, one block per trade in the order you bought) | Ticker Summary |
+        Trades (one row per trade, sorted by buy date) | Transactions (chronological) | Skipped Signals | Still Open
 
 Run from the project root:
     python scripts/us_backtest_report.py
@@ -131,6 +132,60 @@ def write_by_ticker(ws, trades):
         row[7].number_format = "0.00"
 
 
+def write_by_buy_date(ws, trades):
+    """One collapsible block per trade, in buy-date order: a bold header (buy date, ticker, trade result, running
+    total of trade P/L) followed by that trade's BUY / SELL rows."""
+    headers = ["Buy date / trade", "Ticker", "Action", "Date", "Price", "Shares", "Amount ($)", "Trade P/L ($)",
+               "Trade P/L (%)", "Days held", "Running total P/L ($)", "Note"]
+    ws.append(headers)
+    for c in ws[1]:
+        c.font, c.fill = HEAD_FONT, HEAD_FILL
+        c.alignment = Alignment(horizontal="center", wrap_text=True)
+    ws.freeze_panes = "A2"
+    ws.sheet_properties.outlinePr.summaryBelow = False
+    running = 0.0
+    for n, t in enumerate(trades.sort_values(["buy_date", "ticker"]).itertuples(), 1):
+        running += t.total_pnl
+        days = (pd.to_datetime(t.final_sell_date) - pd.to_datetime(t.buy_date)).days
+        state = "still open" if t.status != "closed" else ("win" if t.total_pnl > 0 else "loss")
+        ws.append([t.buy_date, t.ticker, f"trade #{n} ({state})", None, None, None, None, round(t.total_pnl, 2),
+                   round(t.total_pnl_pct, 2), days, round(running, 2), f"invested ${t.invested:,.2f}"])
+        r = ws.max_row
+        for c in ws[r]:
+            c.font, c.fill = BOLD, TICKER_FILL
+        col = "15803D" if t.total_pnl >= 0 else "B91C1C"
+        for i in (8, 9):
+            ws.cell(r, i).font = Font(bold=True, color=col)
+        rows = transaction_rows(t)
+        for row in rows:
+            ws.append([None, None, row["action"], row["date"], row["price"], row["shares"], round(row["amount"], 2),
+                       None, None, None, None, row["note"]])
+            ws.row_dimensions[ws.max_row].outlineLevel = 1
+    for col, w in zip("ABCDEFGHIJKL", (14, 10, 34, 12, 10, 12, 13, 14, 13, 10, 20, 44)):
+        ws.column_dimensions[col].width = w
+    for row in ws.iter_rows(min_row=2):
+        row[4].number_format = "0.0000"
+        row[5].number_format = "#,##0.0000"
+        for i in (6, 7, 10):
+            row[i].number_format = "#,##0.00;[Red]-#,##0.00"
+        row[8].number_format = "0.00"
+
+
+def writable_path(path):
+    """Excel locks a workbook that is open, and Windows then refuses to overwrite it. If `path` is locked,
+    return path_2.xlsx, path_3.xlsx, ... instead of failing."""
+    base, ext = os.path.splitext(path)
+    cand, n = path, 1
+    while os.path.exists(cand):
+        try:
+            with open(cand, "ab"):
+                break
+        except PermissionError:
+            n += 1
+            cand = f"{base}_{n}{ext}"
+    return cand
+
+
 def autosize(ws, widths=None):
     for i, col in enumerate(ws.columns, 1):
         w = max((len(str(c.value)) if c.value is not None else 0) for c in col[:80])
@@ -222,12 +277,17 @@ def main():
         ("", ""),
         ("HOW TO READ", ""),
         ("By Ticker", "one block per ticker: a bold header with the ticker total, then each trade's BUY / SELL rows. Click the +/- (or the outline 1/2 buttons top-left) to collapse or expand."),
+        ("By Buy Date", "the same buy / sell detail with one block per trade, in the order the trades were bought; the header shows the running total of trade P/L."),
         ("Amount ($)", "negative = cash paid for a buy, positive = cash received from a sale"),
         ("Trade P/L", "shown on the last row of each trade: proceeds from all sells minus the amount paid"),
         ("Caveat", "daily bars only (intraday order of highs/lows unknown); no slippage or partial fills; backtest, not a forecast"),
     ]
 
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    wanted = out
+    out = writable_path(out)
+    if out != wanted:
+        print(f"note: {os.path.basename(wanted)} is open in Excel, so this run was saved as {os.path.basename(out)}")
     with pd.ExcelWriter(out, engine="openpyxl") as w:
         wb = w.book
         ws = wb.create_sheet("Summary")
@@ -253,11 +313,12 @@ def main():
         for col in "CDEF":
             ws.column_dimensions[col].width = 12
         write_by_ticker(wb.create_sheet("By Ticker"), trades)
+        write_by_buy_date(wb.create_sheet("By Buy Date"), trades)
         tsum.to_excel(w, sheet_name="Ticker Summary", index=False)
         cols = ["ticker", "surge_date", "drop_date", "buy_date", "buy_price", "shares_bought", "invested",
                 "partial_sell_date", "partial_sell_price", "partial_sell_proceeds", "final_sell_date", "final_sell_price",
                 "final_sell_proceeds", "exit_type", "status", "days_held", "total_proceeds", "total_pnl", "total_pnl_pct"]
-        trades[cols].sort_values(["ticker", "buy_date"]).to_excel(w, sheet_name="Trades", index=False)
+        trades[cols].sort_values(["buy_date", "ticker"]).to_excel(w, sheet_name="Trades", index=False)
         log.to_excel(w, sheet_name="Transactions (chrono)", index=False)
         skipped.to_excel(w, sheet_name="Skipped Signals", index=False)
         open_pos.to_excel(w, sheet_name="Still Open", index=False)
