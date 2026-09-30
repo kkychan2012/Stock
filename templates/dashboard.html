@@ -387,6 +387,7 @@
   <button class="tab-btn"        onclick="showTab('dataview')">Data</button>
   <button class="tab-btn"        onclick="showTab('surge')">Surge Strategy<span id="surge-badge" style="margin-left:5px;color:var(--green);font-weight:700"></span></button>
   <button class="tab-btn"        onclick="showTab('hk')">HK Surge<span id="hk-badge" style="margin-left:5px;color:var(--green);font-weight:700"></span></button>
+  <button class="tab-btn"        onclick="showTab('weekly')">Weekly</button>
 </nav>
 
 <!-- ════════════ MAIN ════════════ -->
@@ -1806,6 +1807,29 @@
     </table></div>
   </div>
 
+  <!-- ── WEEKLY UP/DOWN COUNTER (weekly_stats.py, /api/weekly-stats) ── -->
+  <div id="tab-weekly" class="tab-pane">
+    <div class="toolbar">
+      <input id="wk-ticker" class="ticker-add-input"
+             style="width:100px;font-size:12px;text-transform:uppercase"
+             placeholder="Ticker" oninput="this.value=this.value.toUpperCase()"
+             onkeydown="if(event.key==='Enter')runWeeklyStats()">
+      <input id="wk-from" type="text" class="ticker-add-input" maxlength="10"
+             placeholder="YYYY-MM-DD" style="font-size:12px;font-family:monospace;width:110px"
+             onblur="normaliseDateInput(this)">
+      <input id="wk-to"   type="text" class="ticker-add-input" maxlength="10"
+             placeholder="YYYY-MM-DD" style="font-size:12px;font-family:monospace;width:110px"
+             onblur="normaliseDateInput(this)">
+      <button id="wk-run-btn" class="btn btn-primary" onclick="runWeeklyStats()">Analyze</button>
+      <span style="font-size:11px;color:var(--muted);margin-left:6px">
+        Up week = weekly Close &gt; Open &middot; Down = Close &lt; Open &middot; Flat = equal &middot; live Yahoo weekly bars
+      </span>
+    </div>
+    <div id="wk-result">
+      <div class="state-msg" style="padding:24px">Enter a ticker and date range, then click Analyze.</div>
+    </div>
+  </div>
+
   <!-- Congress trading activity popup — opened via the badge next to a ticker
        on the Signals / Pattern Scanner / Monitor tabs -->
   <div id="congress-ticker-overlay" style="display:none;position:fixed;inset:0;z-index:2000;
@@ -1959,7 +1983,7 @@ let _pollTimer        = null;
 let _lastLogLen       = 0;
 let _fetchRunning     = false;
 
-const TABS = ['holdings', 'signals', 'sold', 'monitor', 'patterns', 'tickers', 'backtester', 'insider', 'congress', 'market', 'dataview', 'surge', 'hk'];
+const TABS = ['holdings', 'signals', 'sold', 'monitor', 'patterns', 'tickers', 'backtester', 'insider', 'congress', 'market', 'dataview', 'surge', 'hk', 'weekly'];
 
 // ═══════════════════════════════════════
 //  Formatting
@@ -2703,7 +2727,7 @@ function showTab(name) {
   ({holdings: loadHoldings, signals: loadSignals, sold: loadSold,
     monitor: loadMonitor, patterns: loadPatterns, tickers: loadTickerList,
     backtester: loadBacktester, insider: loadInsider, congress: loadCongress,
-    market: loadMarket, dataview: loadDataView, surge: loadSurge, hk: loadHkSurge})[name]();
+    market: loadMarket, dataview: loadDataView, surge: loadSurge, hk: loadHkSurge, weekly: loadWeekly})[name]();
 }
 
 // ═══════════════════════════════════════
@@ -5826,6 +5850,117 @@ async function openDvHistory(ticker) {
 
 function closeDvHistory() {
   document.getElementById('dv-history-overlay').style.display = 'none';
+}
+
+// ═══════════════════════════════════════
+//  Weekly up/down counter (tab 14) — /api/weekly-stats, see weekly_stats.py
+// ═══════════════════════════════════════
+function loadWeekly() {
+  const from = document.getElementById('wk-from'), to = document.getElementById('wk-to');
+  if (!to.value)   to.value = new Date().toISOString().slice(0, 10);
+  if (!from.value) {
+    const d = new Date(); d.setFullYear(d.getFullYear() - 1);
+    from.value = d.toISOString().slice(0, 10);
+  }
+}
+
+function _wkVol(v) {
+  if (v == null) return '—';
+  if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+  if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+  if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+  return String(Math.round(v));
+}
+
+function _wkDir(d) {
+  const c = d === 'up' ? 'var(--green)' : d === 'down' ? 'var(--red)' : 'var(--muted)';
+  const label = d === 'up' ? '&#9650; Up' : d === 'down' ? '&#9660; Down' : '&#9644; Flat';
+  return `<span style="color:${c};font-weight:600">${label}</span>`;
+}
+
+async function runWeeklyStats() {
+  const ticker = document.getElementById('wk-ticker').value.trim().toUpperCase();
+  const fromEl = document.getElementById('wk-from'), toEl = document.getElementById('wk-to');
+  normaliseDateInput(fromEl); normaliseDateInput(toEl);
+  const el = document.getElementById('wk-result');
+  if (!ticker || !fromEl.value) {
+    el.innerHTML = '<div class="state-msg" style="padding:24px;color:var(--red)">Ticker and start date are required.</div>';
+    return;
+  }
+  const btn = document.getElementById('wk-run-btn');
+  btn.disabled = true;
+  el.innerHTML = '<div class="state-msg" style="padding:24px"><span class="spinner"></span>Fetching weekly bars…</div>';
+  try {
+    const q = `ticker=${encodeURIComponent(ticker)}&from=${fromEl.value}&to=${toEl.value}`;
+    const d = await apiFetch('/api/weekly-stats?' + q);
+    const s = d.summary, hv = s.highest_volume_week;
+    const pct = v => v != null ? v.toFixed(0) + '%' : '—';
+    const ratio = s.avg_volume_ratio;
+    const ratioColor = ratio == null ? 'var(--muted)' : ratio >= 1 ? 'var(--green)' : 'var(--red)';
+    const verdict = ratio == null ? ''
+      : ratio >= 1 ? 'Up weeks traded heavier than down weeks on average — buying volume dominated.'
+                   : 'Down weeks traded heavier than up weeks on average — selling volume dominated.';
+    const chg = s.first_close && s.last_close ? (s.last_close / s.first_close - 1) * 100 : null;
+    const updown = (v, c) => `<span style="color:${c};font-weight:600">${v}</span>`;
+
+    const metrics = [
+      ['Total weeks', s.total_weeks],
+      ['Up weeks', `${updown(s.up_weeks, 'var(--green)')} (${pct(s.up_pct)})`],
+      ['Down weeks', `${updown(s.down_weeks, 'var(--red)')} (${pct(s.down_pct)})`],
+      ['Flat weeks', s.flat_weeks],
+      ['Avg volume (up weeks)', _wkVol(s.avg_volume_up)],
+      ['Avg volume (down weeks)', _wkVol(s.avg_volume_down)],
+      ['Volume ratio (up/down avg)', ratio != null ? updown(ratio.toFixed(2) + 'x', ratioColor) : '—'],
+      ['Total volume (up weeks)', _wkVol(s.total_volume_up)],
+      ['Total volume (down weeks)', _wkVol(s.total_volume_down)],
+      ['Volume ratio (up/down total)', s.total_volume_ratio != null ? s.total_volume_ratio.toFixed(2) + 'x' : '—'],
+      ['Highest volume week', hv ? `${hv.date} (${_wkDir(hv.direction)}), ${_wkVol(hv.volume)}` : '—'],
+      ['Close: first → last week', chg != null
+        ? `${s.first_close.toFixed(2)} → ${s.last_close.toFixed(2)} ` +
+          updown(`(${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%)`, chg >= 0 ? 'var(--green)' : 'var(--red)')
+        : '—'],
+    ];
+
+    const weekRow = w => {
+      const top = hv && w.date === hv.date;
+      const chgColor = w.change_pct >= 0 ? 'var(--green)' : 'var(--red)';
+      const partial = w.partial ? ' <span style="color:var(--muted)" title="Partial week">*</span>' : '';
+      return `<tr${top ? ' style="background:rgba(240,180,40,.15)" title="Highest-volume week"' : ''}>
+        <td class="left" style="font-family:monospace">${w.date}${partial}</td>
+        <td class="right">${w.open.toFixed(2)}</td>
+        <td class="right">${w.close.toFixed(2)}</td>
+        <td class="right" style="color:${chgColor}">${w.change_pct != null ? w.change_pct.toFixed(1) + '%' : '—'}</td>
+        <td>${_wkDir(w.direction)}</td>
+        <td class="right">${_wkVol(w.volume)}</td></tr>`;
+    };
+
+    let html = `<div style="font-size:14px;font-weight:600;margin:4px 0 10px">
+        Ticker: ${d.ticker} <span style="color:var(--muted);font-weight:400">|</span>
+        Range: ${d.start_date} to ${d.end_date}</div>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
+      <div style="flex:0 1 460px;min-width:300px">
+        <div class="table-wrap"><table>
+          <thead><tr><th class="left">Metric</th><th class="left">Value</th></tr></thead>
+          <tbody>${metrics.map(([k, v]) => `<tr><td class="left">${k}</td><td class="left">${v}</td></tr>`).join('')}</tbody>
+        </table></div>`;
+    if (verdict) html += `<div style="margin-top:8px;font-size:12px;color:${ratioColor}">${verdict}</div>`;
+    if (d.notes && d.notes.length)
+      html += `<div style="margin-top:8px;font-size:11px;color:var(--muted)">${d.notes.map(n => '&#9432; ' + n).join('<br>')}</div>`;
+    html += `</div>
+      <div style="flex:1 1 520px;min-width:320px">
+        <div style="font-weight:600;margin-bottom:6px">Week by week <span style="font-weight:400;color:var(--muted);font-size:12px">(newest first, labelled by the week's Monday)</span></div>
+        <div class="table-wrap" style="max-height:70vh;overflow-y:auto"><table>
+          <thead><tr><th class="left">Week</th><th class="right">Open</th><th class="right">Close</th>
+            <th class="right">Chg %</th><th>Direction</th><th class="right">Volume</th></tr></thead>
+          <tbody>${d.weeks.slice().reverse().map(weekRow).join('')}</tbody>
+        </table></div>
+      </div></div>`;
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = `<div class="state-msg" style="padding:24px;color:var(--red)">Error: ${e.message}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function loadVolumeProfile() {
