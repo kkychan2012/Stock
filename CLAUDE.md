@@ -29,6 +29,7 @@ Optional flags:
 | `scan_patterns.py` | All 9 pattern scanners (incl. VCP, MA Squeeze) + `scan_date_range()` + `get_scan_results_range()` |
 | `vcp_detector.py` | VCP (Volatility Contraction Pattern) detector — `detect_vcp(ticker, rows, config=None)`, called from `scan_patterns.py` |
 | `volume_profile.py` | Volume Profile — volume-by-price histogram (POC + top-N support/resistance levels) cross-referenced against pivot-clustered "S/R channel" levels; `analyze(ticker, rows, config=None)`, called from `/api/volume-profile` |
+| `weekly_stats.py` | Weekly up/down counter — `weekly_up_down(ticker, start, end)` pulls live Yahoo `1wk` bars, classifies each week up (Close > Open) / down (Close < Open) / flat, compares avg + total volume on up vs down weeks, finds the highest-volume week, flags partial edge weeks; pure `summarize_weeks(weeks)` does the math. Backs `/api/weekly-stats` and the Weekly tab (tab 14). CLI: `python weekly_stats.py VKTX 2025-04-07 [END]` |
 | `surge_strategy.py` | Volume Surge strategy engine (Scenario A) — surge day → red-candle drop day → limit-buy at surge close → 15% partial + MA21 cut-loss. `scan_signals()` writes `surge_signals` (workflow states watching/armed/triggered/expired/bought/dismissed). Backs the "Surge Strategy" tab (tab 12). Also holds the **live monitor**: `start_monitor_thread()` (started by `api_server.py` on launch) runs `refresh_live()` every 30 min on US market hours (Mon-Fri 09:35-16:20 ET, plus one post-close pass at 16:20 and one startup pass), pulling Yahoo daily bars (~15 min delayed) for open positions + armed signals only. `evaluate_position()` applies the exit rule statelessly over the bars since the buy date (close < MA21, next open still < that MA21 -> SELL; +15% close -> sell half) — a small live-safe difference from the backtest: MA21 is taken as of the break day, not the confirmation day. Armed signals can trigger live (never downgraded by a later scan). Verified with `scripts/verify_surge_engine.py` (entries = backtest), `scripts/verify_surge_exit.py` (sell dates 93% identical, partial-target dates 100%) and `scripts/test_surge_monitor.py` (synthetic-bar + schedule tests). CLI: `python surge_strategy.py [--as-of DATE]` |
 | `backtest_engine.py` | Pure-Python 3-stage exit strategy simulator (no GUI), used by `/api/backtest/*` |
 | `market_health.py` | IBD-style Distribution Day / Follow-Through Day market health tracker (Nasdaq + S&P 500) |
@@ -159,6 +160,9 @@ GET /api/debug/trend-template?ticker=    last 5 rows with Trend Template criteri
 GET /api/volume-profile?ticker=&lookback=60&top_n=5   POC, top-N high-volume support/resistance
     levels, pivot-clustered "S/R channel" levels, and confirmed_levels (both agree — highest confidence)
 
+# Weekly up/down counter (tab 14) — live Yahoo 1wk bars, not stored data
+GET /api/weekly-stats?ticker=&from=&to=   summary (up/down/flat counts, up- vs down-week avg/total volume, highest-volume week) + per-week list
+
 # Universe admin (S&P 500 + Russell 1000 universe)
 GET  /api/screener/meta                 universe admin info (active count, last refresh, source breakdown)
 POST /api/universe/refresh              manual re-scrape (weekly auto-refresh piggybacks on /api/fetch)
@@ -213,7 +217,9 @@ POST   /api/surge/monitor/refresh       run one live pass now (Yahoo) — the "L
 
 13. **HK Surge** — the same Volume Surge workflow for Hong Kong stocks, fully separate from tab 12: its own data (`hk/hk_stocks.db`), its own fetch buttons (**Fetch HK Data (quick)** ≈ 40 s for the ~800 stocks passing the size/liquidity screen, **Full refresh** ≈ 5 min for all ~2,800 HKEX equities, **Refresh shares**), its own positions and its own live monitor on Hong Kong hours (09:45-16:20 HKT, lunch skipped, every 30 min). Signals are filtered to market cap >= HK$1B and turnover >= HK$5M/day (both measured the day before the surge). Same Drop Day stage, alert and Price now / vs level columns as the US tab (promoted after 16:20 HKT). Buy Signals show a suggested size from the account model: 20 slots x HK$10,000, profit shared evenly over free slots, one position <= 10% of equity, ~0.32% round-trip costs, rounded down to whole board lots. Positions take an HK$ amount or shares so the account (cash, free slots, next stake, realized P/L) can be tracked.
 
-`TABS` array in `dashboard.html` (`['holdings','signals','sold','monitor','patterns','tickers','backtester','insider','congress','market','dataview','surge','hk']`) order must match the HTML tab-btn order. There is no standalone RSI Signals tab — it was merged into Signals.
+14. **Weekly** — weekly up/down counter: ticker + date range (defaults to the last year) → Metric/Value summary (up/down/flat weeks, avg + total volume on up vs down weeks and their ratio, highest-volume week, first→last close) plus a week-by-week table (newest first, highest-volume week highlighted, partial edge weeks marked `*`). Pulls weekly bars live from Yahoo via `weekly_stats.py` — independent of `stocks_daily`, so any Yahoo ticker works. A range starting mid-week gets a first bar trimmed to the start date (Yahoo behaviour); the current week's bar is still forming.
+
+`TABS` array in `dashboard.html` (`['holdings','signals','sold','monitor','patterns','tickers','backtester','insider','congress','market','dataview','surge','hk','weekly']`) order must match the HTML tab-btn order. There is no standalone RSI Signals tab — it was merged into Signals.
 
 ## Holdings — Cut Off Price column
 Calculated per row, shown in red:
@@ -411,7 +417,7 @@ calculate_metrics(transactions)
 
 ## Frontend notes
 - All JS/CSS is inline in `templates/dashboard.html` (no build step)
-- Tab switching: `showTab(name)` — `TABS` array (13 items) order must match HTML tab-btn order
+- Tab switching: `showTab(name)` — `TABS` array (14 items) order must match HTML tab-btn order
 - Signal "Add to Monitor" and Pattern "Add to Monitor" both call POST `/api/monitor`
 - Pattern rows are colour-coded per pattern type
 - Nav tabs use `overflow-x: auto; scrollbar-width: none` to handle many tabs on narrow screens
