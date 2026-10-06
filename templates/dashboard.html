@@ -1832,6 +1832,32 @@
 
   <!-- Congress trading activity popup — opened via the badge next to a ticker
        on the Signals / Pattern Scanner / Monitor tabs -->
+
+    <!-- Ranking: top tickers by up/down volume ratio (/api/weekly-stats/ranking) -->
+    <div style="font-weight:600;font-size:14px;margin:22px 0 6px">Top tickers by volume ratio (up/down avg)</div>
+    <div class="toolbar">
+      <input id="wkr-from" type="text" class="ticker-add-input" maxlength="10"
+             placeholder="YYYY-MM-DD" style="font-size:12px;font-family:monospace;width:110px"
+             onblur="normaliseDateInput(this)">
+      <input id="wkr-to"   type="text" class="ticker-add-input" maxlength="10"
+             placeholder="YYYY-MM-DD" style="font-size:12px;font-family:monospace;width:110px"
+             onblur="normaliseDateInput(this)">
+      <label style="font-size:12px;color:var(--muted)">Price rise &gt;
+        <input id="wkr-min" type="number" class="ticker-add-input" value="10" step="1"
+               style="width:60px;font-size:12px"> %</label>
+      <select id="wkr-basis" class="ticker-add-input" style="font-size:12px">
+        <option value="range">over the whole range</option>
+        <option value="week">in one week (vs previous week)</option>
+      </select>
+      <label style="font-size:12px;color:var(--muted)">Top
+        <input id="wkr-top" type="number" class="ticker-add-input" value="30" min="1" max="500"
+               style="width:60px;font-size:12px"></label>
+      <button id="wkr-run-btn" class="btn btn-primary" onclick="runWeeklyRanking()">Rank</button>
+      <span style="font-size:11px;color:var(--muted);margin-left:6px">
+        Stored daily data (Ticker List + S&amp;P 500 / Russell 1000), whole weeks only &middot; click a ticker for its week-by-week analysis
+      </span>
+    </div>
+    <div id="wkr-result"></div>
   <div id="congress-ticker-overlay" style="display:none;position:fixed;inset:0;z-index:2000;
        background:rgba(0,0,0,.45)" onclick="if(event.target===this)closeCongressPopup()">
     <div style="background:var(--surface);border-radius:12px;padding:24px;
@@ -5988,6 +6014,79 @@ async function loadVolumeProfile() {
         <th>Price</th><th>Vol&nbsp;%</th><th>Type</th><th>Confirmed</th>
       </tr></thead><tbody>`;
     html += (data.volume_levels && data.volume_levels.length)
+  const rFrom = document.getElementById('wkr-from'), rTo = document.getElementById('wkr-to');
+  if (!rTo.value) rTo.value = new Date().toISOString().slice(0, 10);
+  if (!rFrom.value) {
+    const d = new Date(); d.setMonth(d.getMonth() - 4);
+    rFrom.value = d.toISOString().slice(0, 10);
+  }
+  if (!_wkRankLoaded) { _wkRankLoaded = true; runWeeklyRanking(); }
+}
+
+let _wkRankLoaded = false;
+
+// Ranking row click -> run the single-ticker analysis over the same range
+function wkAnalyzeTicker(ticker) {
+  document.getElementById('wk-ticker').value = ticker;
+  document.getElementById('wk-from').value = document.getElementById('wkr-from').value;
+  document.getElementById('wk-to').value = document.getElementById('wkr-to').value;
+  document.getElementById('wk-ticker').scrollIntoView({behavior: 'smooth', block: 'center'});
+  runWeeklyStats();
+}
+
+async function runWeeklyRanking() {
+  const fromEl = document.getElementById('wkr-from'), toEl = document.getElementById('wkr-to');
+  normaliseDateInput(fromEl); normaliseDateInput(toEl);
+  const el = document.getElementById('wkr-result');
+  const btn = document.getElementById('wkr-run-btn');
+  btn.disabled = true;
+  el.innerHTML = '<div class="state-msg" style="padding:24px"><span class="spinner"></span>Ranking…</div>';
+  try {
+    const q = `from=${fromEl.value}&to=${toEl.value}` +
+      `&min_change=${encodeURIComponent(document.getElementById('wkr-min').value || 0)}` +
+      `&basis=${document.getElementById('wkr-basis').value}` +
+      `&top=${encodeURIComponent(document.getElementById('wkr-top').value || 30)}`;
+    const d = await apiFetch('/api/weekly-stats/ranking?' + q);
+    const pct = v => v == null ? '—'
+      : `<span style="color:${v >= 0 ? 'var(--green)' : 'var(--red)'}">${v >= 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
+    const row = r => `<tr>
+        <td class="right">${r.rank}</td>
+        <td class="left"><a href="#" onclick="wkAnalyzeTicker('${r.ticker}');return false"
+            style="font-weight:600">${r.ticker}</a>${r.tracked
+            ? ' <span style="color:var(--green)" title="On the Ticker List">&#9679;</span>' : ''}</td>
+        <td class="right" style="color:var(--green);font-weight:600">${r.avg_volume_ratio.toFixed(2)}x</td>
+        <td class="right"><span style="color:var(--green)">${r.up_weeks}</span> / <span style="color:var(--red)">${r.down_weeks}</span></td>
+        <td class="right">${_wkVol(r.avg_volume_up)}</td>
+        <td class="right">${_wkVol(r.avg_volume_down)}</td>
+        <td class="right">${r.start_price.toFixed(2)}</td>
+        <td class="right">${r.last_close.toFixed(2)}</td>
+        <td class="right">${pct(r.range_change_pct)}</td>
+        <td class="right">${r.best_week ? pct(r.best_week.change_pct) : '—'}</td>
+        <td class="left" style="font-family:monospace">${r.best_week ? r.best_week.date : '—'}</td>
+        <td class="left">${r.highest_volume_week
+          ? `<span style="font-family:monospace">${r.highest_volume_week.date}</span> (${_wkDir(r.highest_volume_week.direction)})` : '—'}</td></tr>`;
+    const basisTxt = d.basis === 'week' ? 'in at least one week vs the previous week' : 'over the whole range';
+    let html = `<div style="font-size:12px;color:var(--muted);margin:4px 0 8px">
+        Weeks ${d.start_date} to ${d.end_date} &middot; ${d.scanned} tickers scanned &middot;
+        ${d.qualified} with ratio &gt; 1 and price up more than ${d.min_change_pct}% ${basisTxt} &middot; showing top ${d.rows.length}
+        &middot; data through ${d.data_through || '—'}${d.excluded_partial_week
+          ? ` (week of ${d.excluded_partial_week} still forming — left out)` : ''}</div>`;
+    if (!d.rows.length) {
+      html += '<div class="state-msg" style="padding:24px">No ticker matches these filters.</div>';
+    } else {
+      html += `<div class="table-wrap"><table>
+        <thead><tr><th class="right">#</th><th class="left">Ticker</th><th class="right">Vol ratio</th>
+          <th class="right">Up / Down wks</th><th class="right">Avg vol up</th><th class="right">Avg vol down</th>
+          <th class="right">Start</th><th class="right">Last close</th><th class="right">Range chg</th>
+          <th class="right">Best week</th><th class="left">Best week of</th><th class="left">Highest-vol week</th></tr></thead>
+        <tbody>${d.rows.map(row).join('')}</tbody></table></div>`;
+    }
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = `<div class="state-msg" style="padding:24px;color:var(--red)">Error: ${e.message}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
       ? data.volume_levels.map(l => `<tr style="${l.confirmed_by_pivot ? 'background:rgba(240,180,40,.15)' : ''}">
           <td>${fmt(l.price)}${l.is_poc ? ' <span title="Point of Control">&#9733;</span>' : ''}</td>
           <td>${fmt(l.pct_of_total_volume)}%</td>

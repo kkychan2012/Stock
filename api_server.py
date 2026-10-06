@@ -51,6 +51,8 @@ GET  /api/volume-profile?ticker=&lookback=60&top_n=5   POC, top-N volume levels
 -- Weekly up/down counter (see weekly_stats.py) --
 GET  /api/weekly-stats?ticker=&from=&to=   up/down/flat week counts, up- vs down-week
      volume (avg + total), highest-volume week, and the per-week list (live Yahoo 1wk bars)
+GET  /api/weekly-stats/ranking?from=&to=&top=30&min_change=10&basis=range|week
+     top tickers by up/down avg weekly volume ratio (stored daily data, tracked + universe)
 """
 
 import argparse
@@ -75,7 +77,7 @@ from rs_calculator import RS_LINE_TREND_LOOKBACK
 from congress_trades import fetch_congress_trades
 from volume_profile import analyze as analyze_volume_profile, VP_LOOKBACK_DAYS, VP_TOP_N, VP_PIVOT_LOOKBACK_DAYS, VP_PIVOT_WINDOW
 import surge_strategy
-from weekly_stats import weekly_up_down
+from weekly_stats import weekly_up_down, rank_volume_ratio, RANK_TOP_N, RANK_MIN_CHANGE_PCT
 
 # Hong Kong Surge Strategy: separate blueprint + database (hk/hk_stocks.db); the US code paths are untouched.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "hk"))
@@ -2455,6 +2457,24 @@ def _attach_signal_price(s, last):
     """Current price for a signal: the live monitor's price when it is at least as recent as the stored
     daily close, otherwise the stored close. Adds distance from the buy level / surge close in %."""
     live = (s.get("last_price") is not None and s.get("price_asof")
+@app.route("/api/weekly-stats/ranking")
+def weekly_stats_ranking():
+    """Top tickers by up/down weekly volume ratio (up side) over a date range,
+    limited to tickers whose price rose more than min_change % — computed from
+    the stored daily data (tracked + universe), see weekly_stats.py."""
+    try:
+        result = rank_volume_ratio(
+            request.args.get("from", "").strip() or None,
+            request.args.get("to", "").strip() or None,
+            top_n=min(max(int(request.args.get("top", RANK_TOP_N)), 1), 500),
+            min_change_pct=float(request.args.get("min_change", RANK_MIN_CHANGE_PCT)),
+            basis=request.args.get("basis", "range").strip() or "range",
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(result)
+
+
             and (not last or s["price_asof"] >= last["date"]))
     price = s["last_price"] if live else (last["close"] if last else None)
     s["current_price"] = price
