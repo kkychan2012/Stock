@@ -68,6 +68,7 @@ def run_pipeline(
     tickers: list = None,
     progress_cb=None,   # callable(done: int, total: int)
     stop_event=None,    # threading.Event — set to request cancellation
+    store_all=False,    # also save EVERY parsed Form 4 row to insider_trades_all
 ):
     """
     Run the full pipeline.  Two modes:
@@ -223,8 +224,13 @@ def run_pipeline(
 
     # Merge any Form 6-K records collected during Step 1
     all_records.extend(form6k_records_prefetch)
-    logger.info("  Parsed %d raw purchase transactions (incl. %d from Form 6-K)",
+    logger.info("  Parsed %d raw transactions (incl. %d from Form 6-K)",
                 len(all_records), len(form6k_records_prefetch))
+
+    if store_all:
+        from db_writer import write_all_trades
+        n_all = write_all_trades(all_records)
+        print(f"  Full store: {n_all:,} new rows saved to insider_trades_all")
 
     if stop_event and stop_event.is_set():
         logger.info("Scan cancelled — exporting partial results.")
@@ -271,6 +277,8 @@ def parse_args():
     p.add_argument("--ticker", type=str, default=None,
                    help="Comma-separated tickers, e.g. AAPL,MSFT")
     p.add_argument("--schedule", action="store_true")
+    p.add_argument("--store-all", action="store_true",
+                   help="Also save every parsed Form 4 transaction to insider_trades_all")
     p.add_argument("--gui", action="store_true", help="Launch GUI")
     return p.parse_args()
 
@@ -303,7 +311,7 @@ def main():
 
     if args.schedule:
         logger.info("Scheduler mode: running now, then daily at 18:00 ...")
-        run_pipeline(date_from, date_to, tickers=tickers)
+        run_pipeline(date_from, date_to, tickers=tickers, store_all=args.store_all)
 
         def daily_job():
             t = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -314,7 +322,7 @@ def main():
             schedule.run_pending()
             time.sleep(30)
     else:
-        run_pipeline(date_from, date_to, tickers=tickers)
+        run_pipeline(date_from, date_to, tickers=tickers, store_all=args.store_all)
 
 
 if __name__ == "__main__":

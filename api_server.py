@@ -49,10 +49,11 @@ GET  /api/volume-profile?ticker=&lookback=60&top_n=5   POC, top-N volume levels
      (support/resistance), pivot-based S/R "channels", and the levels confirmed by BOTH
 
 -- Weekly up/down counter (see weekly_stats.py) --
-GET  /api/weekly-stats?ticker=&from=&to=   up/down/flat week counts, up- vs down-week
-     volume (avg + total), highest-volume week, and the per-week list (live Yahoo 1wk bars)
-GET  /api/weekly-stats/ranking?from=&to=&top=30&min_change=10&basis=range|week
+GET  /api/weekly-stats?ticker=&from=&to=&interval=week|day   up/down/flat week counts, up- vs
+     down-week volume (avg + total), highest-volume week, and the per-week list (live Yahoo bars)
+GET  /api/weekly-stats/ranking?from=&to=&top=30&min_change=10&basis=range|week&interval=week|day
      top tickers by up/down avg weekly volume ratio (stored daily data, tracked + universe)
+     interval=day runs either one per trading day instead of per week
 """
 
 import argparse
@@ -77,6 +78,7 @@ from rs_calculator import RS_LINE_TREND_LOOKBACK
 from congress_trades import fetch_congress_trades
 from volume_profile import analyze as analyze_volume_profile, VP_LOOKBACK_DAYS, VP_TOP_N, VP_PIVOT_LOOKBACK_DAYS, VP_PIVOT_WINDOW
 import surge_strategy
+import intraday_monitor
 from weekly_stats import weekly_up_down, rank_volume_ratio, RANK_TOP_N, RANK_MIN_CHANGE_PCT
 
 # Hong Kong Surge Strategy: separate blueprint + database (hk/hk_stocks.db); the US code paths are untouched.
@@ -187,6 +189,45 @@ VALID_PERIODS = {"1mo", "3mo", "6mo", "1y", "2y"}
 @app.get("/")
 def index():
     return render_template("dashboard.html")
+
+
+# ---------------------------------------------------------------------------
+# Morning Brief reports (daily_brief.py writes reports/daily/<YYYY-MM-DD>.html)
+# ---------------------------------------------------------------------------
+
+_REPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports", "daily")
+
+
+def _report_dates():
+    try:
+        return sorted((f[:-5] for f in os.listdir(_REPORT_DIR)
+                       if re.fullmatch(r"\d{4}-\d{2}-\d{2}\.html", f)), reverse=True)
+    except OSError:
+        return []
+
+
+@app.get("/report")
+@app.get("/report/<report_date>")
+def morning_brief(report_date=None):
+    dates = _report_dates()
+    if report_date is None:
+        if not dates:
+            return ("No Morning Brief yet — the first one is generated after tonight's US close "
+                    "(scheduled task 'StockDashboard Daily Brief').", 404)
+        report_date = dates[0]
+    if report_date not in dates:
+        return ("Report not found", 404)
+    return send_file(os.path.join(_REPORT_DIR, f"{report_date}.html"), mimetype="text/html")
+
+
+@app.get("/reports")
+def morning_brief_list():
+    items = "".join(f"<li><a href='/report/{d}'>{d}</a></li>" for d in _report_dates())
+    return ("<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,"
+            "initial-scale=1'><title>Morning Brief archive</title><body style='font:15px Segoe UI,"
+            "Arial,sans-serif;max-width:640px;margin:24px auto;padding:0 16px'>"
+            "<h2 style='color:#0b2545'>Morning Brief — archive</h2>"
+            f"<ul>{items or '<li>No reports yet.</li>'}</ul><p><a href='/'>← dashboard</a></p></body>")
 
 
 # ---------------------------------------------------------------------------
@@ -1087,6 +1128,7 @@ def get_monitor():
         SELECT
             m.id, m.watchlist_id, m.ticker, m.stock_name, m.reason, m.comment,
             m.signal_date, m.signal_price, m.added_at,
+            m.range_low, m.range_high, m.range_hit, m.range_hit_at, m.last_price, m.last_checked,
             w.name           AS watchlist_name,
             sd.close         AS current_price,
             sd.date          AS price_date,
@@ -1187,6 +1229,89 @@ def update_monitor(rec_id):
     if cur.rowcount == 0:
         return jsonify({"error": "record not found"}), 404
     return jsonify({"updated": rec_id})
+
+
+def _parse_opt_float(v):
+    if v in (None, ""):
+        return None, None
+    try:
+        return float(v), None
+    except (TypeError, ValueError):
+        return None, "must be a number"
+
+
+@app.put("/api/monitor/<int:rec_id>/range")
+def set_monitor_range(rec_id):
+    """Set/clear this row's target price range. Changing the range re-arms the alert (clears any
+    previous hit, since a new range hasn't been checked yet) — use POST .../reset-range instead to
+    just re-arm the SAME range without changing it."""
+    body = request.get_json(silent=True) or {}
+    low, err1  = _parse_opt_float(body.get("range_low"))
+    high, err2 = _parse_opt_float(body.get("range_high"))
+    if err1 or err2:
+        return jsonify({"error": f"range_low/range_high {err1 or err2}"}), 400
+    if low is not None and high is not None and low > high:
+        return jsonify({"error": "range_low must be <= range_high"}), 400
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE monitor_list SET range_low=?, range_high=?, range_hit=0, range_hit_at=NULL WHERE id=?",
+            (low, high, rec_id))
+    if cur.rowcount == 0:
+        return jsonify({"error": "record not found"}), 404
+    return jsonify({"updated": rec_id, "range_low": low, "range_high": high})
+
+
+@app.post("/api/monitor/<int:rec_id>/reset-range")
+def reset_monitor_range(rec_id):
+    """Re-arm the alert (clear range_hit) without touching the range itself or the last price."""
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE monitor_list SET range_hit=0, range_hit_at=NULL WHERE id=?", (rec_id,))
+    if cur.rowcount == 0:
+        return jsonify({"error": "record not found"}), 404
+    return jsonify({"reset": rec_id})
+
+
+@app.post("/api/monitor/refresh")
+def refresh_monitor_prices():
+    """On-demand live price refresh for the Monitor tab (Yahoo, ~15 min delayed) — separate from the
+    Surge Strategy tabs' own monitors. Updates last_price/last_checked on every matching row (across all
+    watchlists that ticker appears in), and sets range_hit the first time a live price lands inside
+    [range_low, range_high]; once hit, later out-of-range refreshes do NOT clear it (see .../reset-range).
+    Body: {watchlist_id?: int} — omit/null to refresh every ticker on the Monitor list; otherwise only
+    the tickers in that one list are fetched from Yahoo (rows for that ticker in OTHER lists are still
+    updated too, since the live price just fetched is the same regardless of which list shows it).
+    """
+    body = request.get_json(silent=True) or {}
+    watchlist_id = body.get("watchlist_id")
+    with get_connection() as conn:
+        if watchlist_id:
+            tickers = [r[0] for r in conn.execute(
+                "SELECT DISTINCT ticker FROM monitor_list WHERE watchlist_id=?", (watchlist_id,))]
+        else:
+            tickers = [r[0] for r in conn.execute("SELECT DISTINCT ticker FROM monitor_list")]
+    if not tickers:
+        return jsonify({"checked": 0, "rows_updated": 0, "newly_hit": [], "errors": []})
+
+    try:
+        bars_by_ticker = surge_strategy.fetch_live_bars(tickers, period="5d")
+    except Exception as exc:
+        return jsonify({"error": f"live price fetch failed: {exc}"}), 502
+
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    errors, prices = [], {}
+    for ticker in tickers:
+        bars = bars_by_ticker.get(ticker)
+        price = bars[-1]["close"] if bars else None
+        if price is None:
+            errors.append(f"{ticker}: no price data")
+        else:
+            prices[ticker] = price
+    with get_connection() as conn:     # same range rule as the hourly intraday monitor
+        rows_updated, newly_hit = intraday_monitor.apply_monitor_ranges(conn, prices, stamp)
+        conn.commit()
+    return jsonify({"checked": len(tickers), "rows_updated": rows_updated,
+                    "newly_hit": newly_hit, "errors": errors, "at": stamp})
 
 
 @app.delete("/api/monitor/<int:rec_id>")
@@ -1331,6 +1456,71 @@ def insider_scan_status():
 # GET /api/congress   — Congress (House + Senate) trade disclosures
 # POST /api/congress/fetch   GET /api/congress/fetch/status
 # ---------------------------------------------------------------------------
+
+@app.get("/api/insider/tickers")
+def get_insider_tickers():
+    """Per-ticker insider open-market activity summary for the badge shown next to a
+    ticker (Monitor / Signals / Pattern Scanner) — like /api/congress/tickers.
+    ?days=180. Purchases (code P) and sales (code S) only — awards, option exercises,
+    tax withholding and gifts are not trading decisions. Source: insider_trades_all
+    (nightly whole-market Form 4), plus insider_signals for tickers missing there
+    (Nordic sources / older manual scans).
+    Returns {days, tickers: {T: [buys, buy_value, sells, sell_value, last_date]}}."""
+    try:
+        days = max(1, min(int(request.args.get("days", 180)), 3650))
+    except ValueError:
+        days = 180
+    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    out = {}
+    with get_connection() as conn:
+        for r in conn.execute(
+                """SELECT ticker,
+                          SUM(transaction_code='P'), SUM(CASE WHEN transaction_code='P' THEN total_value END),
+                          SUM(transaction_code='S'), SUM(CASE WHEN transaction_code='S' THEN total_value END),
+                          MAX(transaction_date)
+                   FROM insider_trades_all
+                   WHERE ticker IS NOT NULL AND transaction_code IN ('P','S') AND transaction_date >= ?
+                   GROUP BY ticker""", (since,)):
+            out[r[0]] = [r[1] or 0, round(r[2] or 0), r[3] or 0, round(r[4] or 0), r[5]]
+        for r in conn.execute(
+                """SELECT ticker,
+                          SUM(transaction_type='Purchase'), SUM(CASE WHEN transaction_type='Purchase' THEN total_value END),
+                          SUM(transaction_type='Sale'), SUM(CASE WHEN transaction_type='Sale' THEN total_value END),
+                          MAX(transaction_date)
+                   FROM insider_signals WHERE ticker IS NOT NULL AND transaction_date >= ?
+                   GROUP BY ticker""", (since,)):
+            if r[0] not in out:
+                out[r[0]] = [r[1] or 0, round(r[2] or 0), r[3] or 0, round(r[4] or 0), r[5]]
+    return jsonify({"days": days, "tickers": out})
+
+
+@app.get("/api/insider/ticker/<ticker>")
+def get_insider_for_ticker(ticker):
+    """All insider Form 4 transactions for one ticker (badge popup). ?days=365&all=1
+    (all=1 adds awards / option exercises / tax withholding / gifts; default P + S)."""
+    t = ticker.strip().upper()
+    try:
+        days = max(1, min(int(request.args.get("days", 365)), 3650))
+    except ValueError:
+        days = 365
+    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    code_sql = "" if request.args.get("all") == "1" else " AND transaction_code IN ('P','S')"
+    with get_connection() as conn:
+        rows = _rows(conn, f"""
+            SELECT transaction_date, filed_date, insider_name, role, transaction_code, transaction_type,
+                   shares, price, total_value, shares_owned_after, direct_indirect, flag_10b51,
+                   filing_url, source
+            FROM insider_trades_all WHERE ticker = ? AND transaction_date >= ? {code_sql}
+            ORDER BY transaction_date DESC, total_value DESC""", (t, since))
+        if not rows:      # Nordic / older manual scans
+            rows = _rows(conn, """
+                SELECT transaction_date, filed_date, insider_name, role, NULL AS transaction_code,
+                       transaction_type, shares, price, total_value, NULL AS shares_owned_after,
+                       NULL AS direct_indirect, flag_10b51, filing_url, source
+                FROM insider_signals WHERE ticker = ? AND transaction_date >= ?
+                ORDER BY transaction_date DESC""", (t, since))
+    return jsonify({"ticker": t, "days": days, "data": rows})
+
 
 @app.get("/api/congress/tickers")
 def get_congress_tickers():
@@ -2350,13 +2540,33 @@ def weekly_stats():
     if not ticker or not start:
         return jsonify({"error": "ticker and from date required"}), 400
     try:
-        result = weekly_up_down(ticker, start, end)
+        result = weekly_up_down(ticker, start, end,
+                                interval=request.args.get("interval", "week").strip() or "week")
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": f"Yahoo fetch failed: {e}"}), 502
     if not result["weeks"]:
-        return jsonify({"error": f"No weekly data for {ticker} in that range"}), 404
+        return jsonify({"error": f"No price data for {ticker} in that range"}), 404
+    return jsonify(result)
+
+
+@app.route("/api/weekly-stats/ranking")
+def weekly_stats_ranking():
+    """Top tickers by up/down weekly volume ratio (up side) over a date range,
+    limited to tickers whose price rose more than min_change % — computed from
+    the stored daily data (tracked + universe), see weekly_stats.py."""
+    try:
+        result = rank_volume_ratio(
+            request.args.get("from", "").strip() or None,
+            request.args.get("to", "").strip() or None,
+            top_n=min(max(int(request.args.get("top", RANK_TOP_N)), 1), 500),
+            min_change_pct=float(request.args.get("min_change", RANK_MIN_CHANGE_PCT)),
+            basis=request.args.get("basis", "range").strip() or "range",
+            interval=request.args.get("interval", "week").strip() or "week",
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     return jsonify(result)
 
 
@@ -2457,24 +2667,6 @@ def _attach_signal_price(s, last):
     """Current price for a signal: the live monitor's price when it is at least as recent as the stored
     daily close, otherwise the stored close. Adds distance from the buy level / surge close in %."""
     live = (s.get("last_price") is not None and s.get("price_asof")
-@app.route("/api/weekly-stats/ranking")
-def weekly_stats_ranking():
-    """Top tickers by up/down weekly volume ratio (up side) over a date range,
-    limited to tickers whose price rose more than min_change % — computed from
-    the stored daily data (tracked + universe), see weekly_stats.py."""
-    try:
-        result = rank_volume_ratio(
-            request.args.get("from", "").strip() or None,
-            request.args.get("to", "").strip() or None,
-            top_n=min(max(int(request.args.get("top", RANK_TOP_N)), 1), 500),
-            min_change_pct=float(request.args.get("min_change", RANK_MIN_CHANGE_PCT)),
-            basis=request.args.get("basis", "range").strip() or "range",
-        )
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-    return jsonify(result)
-
-
             and (not last or s["price_asof"] >= last["date"]))
     price = s["last_price"] if live else (last["close"] if last else None)
     s["current_price"] = price
@@ -2582,6 +2774,26 @@ def surge_alerts():
         signals = _surge_signals_with_age(conn)
         positions = _surge_positions_view(conn)
     return jsonify({"alerts": _surge_alerts(signals, positions), "monitor": _surge_monitor_status()})
+
+
+# ── Intraday monitor (hourly, US hours) — see intraday_monitor.py ──────────────
+@app.route("/api/intraday/alerts")
+def intraday_alerts():
+    """?date=YYYY-MM-DD (default: latest day with alerts) &scope=focus|market"""
+    d, rows = intraday_monitor.get_alerts(request.args.get("date") or None, request.args.get("scope") or None)
+    return jsonify({"trade_date": d, "alerts": rows, "monitor": intraday_monitor.status()})
+
+
+@app.route("/api/intraday/refresh", methods=["POST"])
+def intraday_refresh():
+    """Run one pass now (focus list + whole-market quotes). ~10-20 s, needs Yahoo."""
+    try:
+        summary = intraday_monitor.run_refresh("manual")
+    except Exception as exc:
+        return jsonify({"error": f"intraday pass failed: {exc}"}), 502
+    if summary is None:
+        return jsonify({"error": "An intraday pass is already running"}), 409
+    return jsonify(summary)
 
 
 @app.route("/api/surge/monitor/status")
@@ -2778,6 +2990,8 @@ if __name__ == "__main__":
     if not args.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
         if surge_strategy.start_monitor_thread():
             print("  Surge Strategy live monitor started (every 30 min, US market hours)")
+        if intraday_monitor.start_monitor_thread():
+            print("  Intraday monitor started (hourly from 10:00 ET: focus list + whole-market quotes)")
         if hk_surge.start_monitor_thread():
             print("  HK Surge live monitor started (every 30 min, Hong Kong market hours)")
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)

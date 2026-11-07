@@ -45,3 +45,25 @@ us_entry_runs/
 
 # US backtest Excel reports (generated)
 us_backtest_reports/
+
+# 10-year US surge backtest data (generated)
+us_backtest_10y/
+
+# Tailscale launcher login (start_remote.bat)
+remote_login.bat
+
+# Nightly collector run log + lock (nightly_collect.py)
+logs/
+
+# Morning Brief output (daily_brief.py)
+reports/
+
+# Manual DB backups (stock_dashboard.db.bak-YYYYMMDD-*)
+*.db.bak-*
+
+# Generated study / pipeline spreadsheets
+strategies/
+Insider Trading/insider_pipeline/insider_trading_report.xlsx
+
+# Throwaway scripts
+_tmp_*.py

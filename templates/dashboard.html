@@ -333,6 +333,12 @@
        Signals / Pattern Scanner / Monitor tabs; click opens the detail popup. */
     .congress-badge { cursor: pointer; margin-left: 4px; font-size: 12px; opacity: .85; }
     .congress-badge:hover { opacity: 1; }
+    /* Insider (Form 4 open-market buys/sells) badge — same places as the Congress badge */
+    .insider-badge { cursor: pointer; margin-left: 4px; font-size: 11px; font-weight: 700; opacity: .9;
+                     white-space: nowrap; }
+    .insider-badge:hover { opacity: 1; }
+    .insider-badge.buy { color: var(--green); }
+    .insider-badge.sell { color: var(--red); opacity: .75; }
     .sig-gt-ma1030 { background: #eff6ff; } .sig-gt-ma1030:hover { background: #dbeafe; }
     .sig-lt-ma200  { background: #fff1f2; } .sig-lt-ma200:hover  { background: #ffe4e6; }
     .sig-lt-ma1030 { background: #fff7ed; } .sig-lt-ma1030:hover { background: #ffedd5; }
@@ -361,6 +367,7 @@
   <span class="sep"></span>
   <span class="subtitle">Yahoo Finance · SQLite</span>
   <span id="last-updated"></span>
+  <a href="/report" target="_blank" class="btn btn-primary" style="text-decoration:none" title="Tonight's 10 stock ideas (generated after the US close)">&#128240; Morning Brief</a>
   <button class="btn btn-fetch"   onclick="openFetchModal()">&#8659; Fetch US Data</button>
   <button class="btn btn-primary" onclick="refreshCurrent()">&#8635; Refresh</button>
   <a href="/api/backup/download" download>
@@ -383,11 +390,11 @@
   <button class="tab-btn"        onclick="showTab('backtester')">Backtester</button>
   <button class="tab-btn"        onclick="showTab('insider')">Insider</button>
   <button class="tab-btn"        onclick="showTab('congress')">Congress</button>
-  <button class="tab-btn"        onclick="showTab('market')">Market</button>
+  <button class="tab-btn"        onclick="showTab('market')">Market <span id="market-badge" style="font-weight:700"></span></button>
   <button class="tab-btn"        onclick="showTab('dataview')">Data</button>
   <button class="tab-btn"        onclick="showTab('surge')">Surge Strategy<span id="surge-badge" style="margin-left:5px;color:var(--green);font-weight:700"></span></button>
   <button class="tab-btn"        onclick="showTab('hk')">HK Surge<span id="hk-badge" style="margin-left:5px;color:var(--green);font-weight:700"></span></button>
-  <button class="tab-btn"        onclick="showTab('weekly')">Weekly</button>
+  <button class="tab-btn"        onclick="showTab('weekly')">Weekly / Daily</button>
 </nav>
 
 <!-- ════════════ MAIN ════════════ -->
@@ -638,7 +645,10 @@
       <a id="monitor-download-link" href="/api/monitor/download" download="monitor_list.csv">
         <button class="btn btn-ghost">&#8681; Download CSV</button>
       </a>
+      <button id="monitor-refresh-btn" class="btn btn-primary" onclick="refreshMonitorPrices()"
+              title="Fetch live prices (Yahoo, ~15 min delayed) for the tickers shown below and check each one's target price range">&#9889; Refresh Prices</button>
       <span id="monitor-upload-status" style="font-size:12px;min-height:18px"></span>
+      <span id="monitor-refresh-status" style="font-size:12px;min-height:18px;color:var(--muted)"></span>
     </div>
     <div class="table-wrap">
       <table>
@@ -647,11 +657,12 @@
           <th class="left">Reason</th><th class="left">Comment</th>
           <th>Signal Date</th><th>Signal Price</th><th>Since Signal</th>
           <th>Current Price</th><th>Day %</th>
+          <th>Target Range</th><th>Live Price</th><th>Alert</th>
           <th>MA10</th><th>MA30</th><th>MA50</th><th>MA200</th><th>RSI</th>
           <th>High 30D</th><th>Low 30D</th><th>52wk High</th><th>52wk Low</th><th>Added Date</th><th>Backtest</th><th>Action</th>
         </tr></thead>
         <tbody id="monitor-body">
-          <tr><td colspan="21" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
+          <tr><td colspan="24" class="state-msg"><span class="spinner"></span>Loading…</td></tr>
         </tbody>
       </table>
     </div>
@@ -1307,6 +1318,30 @@
 
   <!-- ── MARKET HEALTH (Distribution Day / FTD) ── -->
   <div id="tab-market" class="tab-pane">
+    <!-- Intraday monitor (hourly, intraday_monitor.py) -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+        <span style="font-size:14px;font-weight:700">&#9201; Intraday Monitor</span>
+        <span id="intra-date" class="dim" style="font-size:12px"></span>
+        <select id="intra-scope" onchange="renderIntraday()" style="margin-left:auto">
+          <option value="focus">My list (watchlists / brief picks / holdings)</option>
+          <option value="all">All alerts</option>
+          <option value="market">Whole market only</option>
+        </select>
+        <button class="btn btn-ghost" id="intra-run-btn" onclick="runIntradayNow()">&#8635; Run now</button>
+      </div>
+      <div id="intra-status" style="font-size:12px;color:var(--muted);margin-bottom:8px"></div>
+      <div class="table-wrap" style="max-height:420px;overflow:auto">
+        <table>
+          <thead><tr>
+            <th class="left">First seen (ET)</th><th class="left">Ticker</th><th class="left">Alert</th>
+            <th>Price</th><th>Chg %</th><th>Vol pace</th><th class="left">Detail</th>
+          </tr></thead>
+          <tbody id="intra-body"><tr><td colspan="7" class="state-msg">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
       <button class="btn btn-primary" onclick="loadMarket(true)">&#8635; Refresh</button>
       <span id="market-computed-at" style="font-size:12px;color:var(--muted)"></span>
@@ -1667,7 +1702,7 @@
     <div id="surge-alerts"></div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
       Volume-surge day &rarr; wait for a <b>red candle</b> (drop day) &rarr; buy only if the price
-      <b>touches the surge-day close</b> within 5 days (otherwise the deal is closed) &rarr; you then get a <b>Buy Signal</b>
+      <b>touches the surge-day close</b> within 5 days at or above that day's MA21 (otherwise the deal is closed) &rarr; you then get a <b>Buy Signal</b>
       (kept 3 trading days) &rarr; click <b>I bought</b> &rarr; watch it here: sell half at
       <b>+15%</b>, sell the rest when a close is below <b>MA21</b> and the next open is still below it.
     </div>
@@ -1747,7 +1782,7 @@
     <div id="hk-alerts"></div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6">
       Same strategy as the US tab, on Hong Kong stocks only: surge day (3.5&times; volume) &rarr; red-candle drop day &rarr;
-      buy only if the price <b>touches the surge-day close</b> within 5 days (otherwise the deal is closed) &rarr; <b>Buy Signal</b> (kept 3 trading days) &rarr; <b>I bought</b> &rarr;
+      buy only if the price <b>touches the surge-day close</b> within 5 days at or above that day's MA21 (otherwise the deal is closed) &rarr; <b>Buy Signal</b> (kept 3 trading days) &rarr; <b>I bought</b> &rarr;
       sell half at <b>+15%</b>, the rest when a close is below <b>MA21</b> and the next open is still below.
       Only stocks with market cap &ge; HK$1B and turnover &ge; HK$5M/day. Sizing: HK$10,000 per slot, max 20 slots,
       profit shared evenly over free slots, one position &le; 10% of equity, ~0.32% round-trip costs.
@@ -1810,6 +1845,12 @@
   <!-- ── WEEKLY UP/DOWN COUNTER (weekly_stats.py, /api/weekly-stats) ── -->
   <div id="tab-weekly" class="tab-pane">
     <div class="toolbar">
+      <label style="font-size:12px;color:var(--muted)">Bars
+        <select id="wk-interval" class="ticker-add-input" style="font-size:12px" onchange="wkSetInterval()">
+          <option value="both">Weekly + Daily (side by side)</option>
+          <option value="week">Weekly only</option>
+          <option value="day">Daily only</option>
+        </select></label>
       <input id="wk-ticker" class="ticker-add-input"
              style="width:100px;font-size:12px;text-transform:uppercase"
              placeholder="Ticker" oninput="this.value=this.value.toUpperCase()"
@@ -1821,17 +1862,13 @@
              placeholder="YYYY-MM-DD" style="font-size:12px;font-family:monospace;width:110px"
              onblur="normaliseDateInput(this)">
       <button id="wk-run-btn" class="btn btn-primary" onclick="runWeeklyStats()">Analyze</button>
-      <span style="font-size:11px;color:var(--muted);margin-left:6px">
-        Up week = weekly Close &gt; Open &middot; Down = Close &lt; Open &middot; Flat = equal &middot; live Yahoo weekly bars
+      <span id="wk-hint" style="font-size:11px;color:var(--muted);margin-left:6px">
+        Up week / day = Close &gt; Open &middot; Down = Close &lt; Open &middot; Flat = equal &middot; live Yahoo bars
       </span>
     </div>
     <div id="wk-result">
       <div class="state-msg" style="padding:24px">Enter a ticker and date range, then click Analyze.</div>
     </div>
-  </div>
-
-  <!-- Congress trading activity popup — opened via the badge next to a ticker
-       on the Signals / Pattern Scanner / Monitor tabs -->
 
     <!-- Ranking: top tickers by up/down volume ratio (/api/weekly-stats/ranking) -->
     <div style="font-weight:600;font-size:14px;margin:22px 0 6px">Top tickers by volume ratio (up/down avg)</div>
@@ -1847,17 +1884,21 @@
                style="width:60px;font-size:12px"> %</label>
       <select id="wkr-basis" class="ticker-add-input" style="font-size:12px">
         <option value="range">over the whole range</option>
-        <option value="week">in one week (vs previous week)</option>
+        <option id="wkr-basis-one" value="week">in one week / day (vs the previous one)</option>
       </select>
       <label style="font-size:12px;color:var(--muted)">Top
         <input id="wkr-top" type="number" class="ticker-add-input" value="30" min="1" max="500"
                style="width:60px;font-size:12px"></label>
       <button id="wkr-run-btn" class="btn btn-primary" onclick="runWeeklyRanking()">Rank</button>
-      <span style="font-size:11px;color:var(--muted);margin-left:6px">
-        Stored daily data (Ticker List + S&amp;P 500 / Russell 1000), whole weeks only &middot; click a ticker for its week-by-week analysis
+      <span id="wkr-hint" style="font-size:11px;color:var(--muted);margin-left:6px">
+        Stored daily data (Ticker List + S&amp;P 500 / Russell 1000), weekly list = whole weeks only &middot; click a ticker for its analysis
       </span>
     </div>
     <div id="wkr-result"></div>
+  </div>
+
+  <!-- Congress trading activity popup — opened via the badge next to a ticker
+       on the Signals / Pattern Scanner / Monitor tabs -->
   <div id="congress-ticker-overlay" style="display:none;position:fixed;inset:0;z-index:2000;
        background:rgba(0,0,0,.45)" onclick="if(event.target===this)closeCongressPopup()">
     <div style="background:var(--surface);border-radius:12px;padding:24px;
@@ -1875,6 +1916,36 @@
             <th class="left">Amount Range</th><th class="left">Source</th><th class="left">Filing</th>
           </tr></thead>
           <tbody id="congress-pop-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Insider trading activity popup — opened via the insider badge next to a ticker -->
+  <div id="insider-ticker-overlay" style="display:none;position:fixed;inset:0;z-index:2000;
+       background:rgba(0,0,0,.45)" onclick="if(event.target===this)closeInsiderPopup()">
+    <div style="background:var(--surface);border-radius:12px;padding:24px;
+                max-width:1100px;width:95%;max-height:85vh;overflow-y:auto;
+                margin:5vh auto;position:relative">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap">
+        <span id="insider-pop-title" style="font-size:16px;font-weight:700"></span>
+        <span style="display:flex;gap:12px;align-items:center;font-size:12px">
+          <select id="insider-pop-days" onchange="openInsiderPopup()" class="ticker-add-input" style="width:auto;font-size:12px">
+            <option value="90">Last 90 days</option><option value="180">Last 180 days</option>
+            <option value="365" selected>Last 12 months</option><option value="3650">All stored</option>
+          </select>
+          <label><input type="checkbox" id="insider-pop-all" onchange="openInsiderPopup()"> Include awards / option exercises / tax / gifts</label>
+          <button class="btn btn-ghost" onclick="closeInsiderPopup()">&#x2715; Close</button>
+        </span>
+      </div>
+      <div id="insider-pop-summary" style="font-size:12px;color:var(--muted);margin-bottom:10px"></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>Tx Date</th><th>Filed</th><th class="left">Insider</th><th class="left">Role</th><th>Type</th>
+            <th>Shares</th><th>Price</th><th>Value</th><th>Owned After</th><th>10b5-1</th><th class="left">Filing</th>
+          </tr></thead>
+          <tbody id="insider-pop-body"></tbody>
         </table>
       </div>
     </div>
@@ -2217,6 +2288,12 @@ function _surgeRows(id, cols, rows, msg) {
     ? rows.join('')
     : `<tr><td colspan="${cols}" class="state-msg">${msg}</td></tr>`;
 }
+function _surgeWatchBtn(ticker, date, price, reason) {
+  if (_monitorTickers.has(ticker)) return '<span class="pill green" style="margin-right:4px">&#10003; Watching</span>';
+  const r = reason.replace(/'/g, "\\u0027");
+  return `<button class="btn btn-ghost" style="padding:2px 9px;font-size:11px;margin-right:4px" `
+       + `onclick="surgeAddToMonitor('${ticker}','${date || ''}',${price != null ? price : 0},'${r}',this)">+ Watch</button>`;
+}
 const _surgeBtn = (label, js, cls = 'btn-ghost') =>
   `<button class="btn ${cls}" style="padding:2px 9px;font-size:11px;margin-right:4px" onclick="${js}">${label}</button>`;
 const _sigNow = (s, money) => s.current_price == null ? '<span class="dim">—</span>'
@@ -2264,28 +2341,28 @@ function renderSurge() {
     const exp = s.expires_in == null ? '—' : stale ? '<span class="dim">stale — press Scan Now</span>'
               : s.expires_in === 0 ? '<span class="red">last day</span>' : s.expires_in + ' day(s)';
     return `<tr class="${stale ? '' : 'surge-buy'}" style="${stale ? 'opacity:.55' : ''}">
-      <td class="left ticker-cell">${s.ticker}</td><td class="left">${fmtDate(s.surge_date)}</td>
+      <td class="left ticker-cell">${s.ticker}${_actBadges(s.ticker)}</td><td class="left">${fmtDate(s.surge_date)}</td>
       <td>${_surgeVol(s)}</td><td><b>${_surgeMoney(s.buy_level)}</b></td>
       <td>${_sigNow(s, _surgeMoney)}</td><td>${_vsLevel(s.vs_level_pct)}</td>
       <td class="left">${fmtDate(s.drop_date)}</td><td class="left">${fmtDate(s.trigger_date)}</td>
       <td>${exp}</td>
-      <td class="left">${_surgeBtn('I bought', `openSurgeModal('bought',${s.id})`, 'btn-fetch')}${_surgeBtn('Dismiss', `surgeDismiss(${s.id})`)}</td></tr>`;
+      <td class="left">${_surgeBtn('I bought', `openSurgeModal('bought',${s.id})`, 'btn-fetch')}${_surgeWatchBtn(s.ticker, s.trigger_date, s.buy_level, 'Surge Buy Signal')}${_surgeBtn('Dismiss', `surgeDismiss(${s.id})`)}</td></tr>`;
   }), 'No buy signals right now.');
 
   const _isNewDrop = s => s.days_since_drop != null && s.days_since_drop <= 1;
   _surgeRows('surge-armed-body', 10, armed.map(s => `<tr class="${_isNewDrop(s) ? 'surge-drop' : ''}">
-      <td class="left ticker-cell">${s.ticker}</td><td class="left">${fmtDate(s.surge_date)}</td>
+      <td class="left ticker-cell">${s.ticker}${_actBadges(s.ticker)}</td><td class="left">${fmtDate(s.surge_date)}</td>
       <td>${_surgeVol(s)}</td><td class="left">${fmtDate(s.drop_date)}${_isNewDrop(s) ? ' <span class="pill amber">NEW</span>' : ''}</td>
       <td>${s.days_since_drop ?? '—'}</td>
       <td><b>${_surgeMoney(s.buy_level)}</b></td><td>${_sigNow(s, _surgeMoney)}</td><td>${_vsLevel(s.vs_level_pct)}</td><td>${s.window_days_left ?? '—'}</td>
-      <td class="left">${_surgeBtn('Dismiss', `surgeDismiss(${s.id})`)}</td></tr>`), 'No drop days waiting.');
+      <td class="left">${_surgeWatchBtn(s.ticker, s.drop_date, s.buy_level, 'Surge Drop Day')}${_surgeBtn('Dismiss', `surgeDismiss(${s.id})`)}</td></tr>`), 'No drop days waiting.');
 
   _surgeRows('surge-watch-body', 8, watch.map(s => `<tr>
-      <td class="left ticker-cell">${s.ticker}</td><td class="left">${fmtDate(s.surge_date)}</td>
+      <td class="left ticker-cell">${s.ticker}${_actBadges(s.ticker)}</td><td class="left">${fmtDate(s.surge_date)}</td>
       <td>${_surgeVol(s)}</td><td>${_surgeMoney(s.surge_close)}</td>
       <td>${_sigNow(s, _surgeMoney)}</td><td>${_vsSurge(s.vs_surge_pct)}</td>
       <td>${s.days_since_surge} / ${cfg.MAX_DAYS_TO_DROP}</td>
-      <td class="left">${_surgeBtn('Dismiss', `surgeDismiss(${s.id})`)}</td></tr>`), 'Nothing being watched.');
+      <td class="left">${_surgeWatchBtn(s.ticker, s.surge_date, s.surge_close, 'Surge Watching')}${_surgeBtn('Dismiss', `surgeDismiss(${s.id})`)}</td></tr>`), 'Nothing being watched.');
 
   _surgeRows('surge-pos-body', 12, d.positions.map(p => {
     const half = p.status === 'partial_sold';
@@ -2299,7 +2376,7 @@ function renderSurge() {
       alert += `<div><span class="pill green">🎯 +15% reached</span></div>`;
     if (!alert) alert = '<span class="dim">—</span>';
     return `<tr class="${p.alert_state === 'sell' ? 'surge-sell' : (p.alert_state === 'below_ma21' || p.below_ma21) ? 'surge-hot' : ''}">
-      <td class="left ticker-cell">${p.ticker}</td><td class="left">${fmtDate(p.buy_date)}</td>
+      <td class="left ticker-cell">${p.ticker}${_actBadges(p.ticker)}</td><td class="left">${fmtDate(p.buy_date)}</td>
       <td>${_surgeMoney(p.buy_price)}</td><td>${p.shares != null ? fmtInt(p.shares) : '<span class="dim">—</span>'}</td>
       <td>${_surgeMoney(p.partial_target)}</td>
       <td class="left">${half ? `Half sold @ ${_surgeMoney(p.partial_price)}` : 'Holding'}</td>
@@ -2311,7 +2388,7 @@ function renderSurge() {
   }), 'No open positions. Mark a Buy Signal as bought to track it here.');
 
   _surgeRows('surge-closed-body', 8, d.closed.map(p => `<tr>
-      <td class="left ticker-cell">${p.ticker}</td><td class="left">${fmtDate(p.buy_date)}</td>
+      <td class="left ticker-cell">${p.ticker}${_actBadges(p.ticker)}</td><td class="left">${fmtDate(p.buy_date)}</td>
       <td>${_surgeMoney(p.buy_price)}</td>
       <td class="left">${p.partial_price ? `${fmtDate(p.partial_date)} @ ${_surgeMoney(p.partial_price)}` : '<span class="dim">—</span>'}</td>
       <td class="left">${fmtDate(p.exit_date)} @ ${_surgeMoney(p.exit_price)}</td>
@@ -2554,7 +2631,7 @@ function renderHkSurge() {
       <td class="left">${_hkStock(s)}</td><td class="left">${fmtDate(s.surge_date)}</td><td>${_hkVol(s)}</td><td>${_hkCap(s.mcap)}</td>
       <td><b>${_hkMoney(s.buy_level)}</b></td><td>${_sigNow(s, _hkMoney)}</td><td>${_vsLevel(s.vs_level_pct)}</td><td class="left">${fmtDate(s.trigger_date)}</td><td>${exp}</td>
       <td class="left">${_hkSuggest(s)}</td>
-      <td class="left">${_hkBtn('I bought', `openHkModal('bought',${s.id})`, 'btn-fetch')}${_hkBtn('Dismiss', `hkDismiss(${s.id})`)}</td></tr>`;
+      <td class="left">${_hkBtn('I bought', `openHkModal('bought',${s.id})`, 'btn-fetch')}${_surgeWatchBtn(s.ticker, s.trigger_date, s.buy_level, 'HK Surge Buy Signal')}${_hkBtn('Dismiss', `hkDismiss(${s.id})`)}</td></tr>`;
   }), 'No buy signals right now.');
 
   const _isNewHkDrop = s => s.days_since_drop != null && s.days_since_drop <= 1;
@@ -2562,12 +2639,12 @@ function renderHkSurge() {
       <td class="left">${_hkStock(s)}</td><td class="left">${fmtDate(s.surge_date)}</td><td>${_hkVol(s)}</td>
       <td class="left">${fmtDate(s.drop_date)}${_isNewHkDrop(s) ? ' <span class="pill amber">NEW</span>' : ''}</td>
       <td>${s.days_since_drop ?? '—'}</td><td><b>${_hkMoney(s.buy_level)}</b></td><td>${_sigNow(s, _hkMoney)}</td><td>${_vsLevel(s.vs_level_pct)}</td><td>${s.window_days_left ?? '—'}</td>
-      <td class="left">${_hkSuggest(s)}</td><td class="left">${_hkBtn('Dismiss', `hkDismiss(${s.id})`)}</td></tr>`), 'No drop days waiting.');
+      <td class="left">${_hkSuggest(s)}</td><td class="left">${_surgeWatchBtn(s.ticker, s.drop_date, s.buy_level, 'HK Surge Drop Day')}${_hkBtn('Dismiss', `hkDismiss(${s.id})`)}</td></tr>`), 'No drop days waiting.');
 
   _hkRows('hk-watch-body', 9, watch.map(s => `<tr>
       <td class="left">${_hkStock(s)}</td><td class="left">${fmtDate(s.surge_date)}</td><td>${_hkVol(s)}</td><td>${_hkCap(s.mcap)}</td>
       <td>${_hkMoney(s.surge_close)}</td><td>${_sigNow(s, _hkMoney)}</td><td>${_vsSurge(s.vs_surge_pct)}</td><td>${s.days_since_surge} / ${cfg.MAX_DAYS_TO_DROP}</td>
-      <td class="left">${_hkBtn('Dismiss', `hkDismiss(${s.id})`)}</td></tr>`), 'Nothing being watched.');
+      <td class="left">${_surgeWatchBtn(s.ticker, s.surge_date, s.surge_close, 'HK Surge Watching')}${_hkBtn('Dismiss', `hkDismiss(${s.id})`)}</td></tr>`), 'Nothing being watched.');
 
   _hkRows('hk-pos-body', 13, d.positions.map(p => {
     const half = p.status === 'partial_sold';
@@ -2809,7 +2886,7 @@ function renderHoldings(rows) {
       ? `<td style="color:var(--red);font-weight:600">$${fmt(cutOff)}</td>`
       : `<td><span class="dim">—</span></td>`;
     return `<tr>
-      <td class="left ticker-cell">${r.ticker}</td>
+      <td class="left ticker-cell">${r.ticker}${_actBadges(r.ticker)}</td>
       <td class="left name-cell">${r.stock_name || '—'}</td>
       <td>${fmtDate(r.buy_date)}</td>
       <td>$${fmt(r.avg_buy_price)}</td><td>${fmtInt(r.qty)}</td>
@@ -2905,6 +2982,110 @@ async function openCongressPopup(ticker) {
 
 function closeCongressPopup() {
   document.getElementById('congress-ticker-overlay').style.display = 'none';
+}
+
+// Insider activity (SEC Form 4 open-market purchases P / sales S, last 180 days) —
+// {ticker: [buys, buy_value, sells, sell_value, last_date]} from /api/insider/tickers.
+let _insiderActivity = {};
+const INSIDER_BADGE_DAYS = 180;
+
+async function _refreshInsiderTickerSet() {
+  try {
+    const r = await apiFetch(`/api/insider/tickers?days=${INSIDER_BADGE_DAYS}`);
+    _insiderActivity = r.tickers || {};
+  } catch { /* non-fatal */ }
+}
+
+function _fmtMoneyShort(v) {
+  if (v == null) return '—';
+  const a = Math.abs(v);
+  return a >= 1e9 ? `$${(v / 1e9).toFixed(1)}B` : a >= 1e6 ? `$${(v / 1e6).toFixed(1)}M`
+       : a >= 1e3 ? `$${(v / 1e3).toFixed(0)}K` : `$${Math.round(v)}`;
+}
+
+// Both activity badges (Congress + Insider) — used next to every US ticker in the app.
+const _actBadges = t => _congressBadge(t) + _insiderBadge(t);
+
+function _insiderBadge(ticker) {
+  const a = ticker && _insiderActivity[ticker];
+  if (!a) return '';
+  const [b, bv, sl, sv, last] = a;
+  const tip = `Insider trading, last ${INSIDER_BADGE_DAYS} days: ${b} buy${b !== 1 ? 's' : ''} (${_fmtMoneyShort(bv)}), `
+            + `${sl} sale${sl !== 1 ? 's' : ''} (${_fmtMoneyShort(sv)}); latest ${last} — click for details`;
+  const label = b ? `&#128188;&#9650;${b}` : `&#128188;&#9660;${sl}`;
+  return ` <span class="insider-badge ${b ? 'buy' : 'sell'}" title="${tip}"
+             onclick="event.stopPropagation();openInsiderPopup('${ticker}')">${label}</span>`;
+}
+
+let _insiderPopTicker = null;
+async function openInsiderPopup(ticker) {
+  if (ticker) _insiderPopTicker = ticker;
+  ticker = _insiderPopTicker;
+  if (!ticker) return;
+  const days = document.getElementById('insider-pop-days').value;
+  const all = document.getElementById('insider-pop-all').checked ? '&all=1' : '';
+  const body = document.getElementById('insider-pop-body');
+  document.getElementById('insider-pop-title').textContent = `${ticker} — Insider Trading Activity (Form 4)`;
+  document.getElementById('insider-pop-summary').textContent = '';
+  body.innerHTML = '<tr><td colspan="11" class="state-msg"><span class="spinner"></span>Loading…</td></tr>';
+  document.getElementById('insider-ticker-overlay').style.display = 'block';
+  try {
+    const resp = await apiFetch(`/api/insider/ticker/${encodeURIComponent(ticker)}?days=${days}${all}`);
+    const rows = resp.data;
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="11" class="state-msg">No insider transactions in this period.</td></tr>';
+      return;
+    }
+    const isBuy = r => r.transaction_code === 'P' || (!r.transaction_code && r.transaction_type === 'Purchase');
+    const isSell = r => r.transaction_code === 'S' || (!r.transaction_code && r.transaction_type === 'Sale');
+    const buys = rows.filter(isBuy), sells = rows.filter(isSell);
+    const sum = xs => xs.reduce((t, r) => t + (r.total_value || 0), 0);
+    const people = new Set(buys.map(r => r.insider_name)).size;
+    document.getElementById('insider-pop-summary').innerHTML =
+      `<b style="color:var(--green)">${buys.length} open-market buy${buys.length !== 1 ? 's' : ''}</b> `
+      + `(${_fmtMoneyShort(sum(buys))}, ${people} insider${people !== 1 ? 's' : ''}) · `
+      + `<b style="color:var(--red)">${sells.length} sale${sells.length !== 1 ? 's' : ''}</b> (${_fmtMoneyShort(sum(sells))}, `
+      + `${sells.filter(r => r.flag_10b51).length} under a 10b5-1 plan) · data from the nightly SEC collection`;
+    const num = v => v == null ? '—' : Math.round(v).toLocaleString();
+    body.innerHTML = rows.map(r => {
+      const [bg, fg] = isBuy(r) ? ['#dcfce7', '#15803d'] : isSell(r) ? ['#fee2e2', '#b91c1c'] : ['#f1f5f9', '#475569'];
+      const typ = `<span style="background:${bg};color:${fg};padding:1px 6px;border-radius:999px;font-size:10px;font-weight:600">${r.transaction_type || r.transaction_code || '—'}</span>`;
+      return `<tr>
+        <td style="font-family:monospace">${fmtDate(r.transaction_date)}</td>
+        <td style="font-family:monospace;color:var(--muted)">${fmtDate(r.filed_date)}</td>
+        <td class="left">${r.insider_name || '—'}</td>
+        <td class="left" style="font-size:11px">${r.role || '—'}</td>
+        <td style="text-align:center">${typ}</td>
+        <td>${num(r.shares)}</td>
+        <td>${r.price != null ? '$' + r.price.toFixed(2) : '—'}</td>
+        <td><b>${_fmtMoneyShort(r.total_value)}</b></td>
+        <td>${num(r.shares_owned_after)}${r.direct_indirect === 'I' ? ' <span class="dim">(ind.)</span>' : ''}</td>
+        <td>${r.flag_10b51 ? '✓' : ''}</td>
+        <td class="left">${r.filing_url ? `<a href="${r.filing_url}" target="_blank" style="font-size:11px;color:var(--accent)">View ↗</a>` : '—'}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="11" class="state-msg">Error: ${e.message}</td></tr>`;
+  }
+}
+
+function closeInsiderPopup() {
+  document.getElementById('insider-ticker-overlay').style.display = 'none';
+}
+
+// Re-read both badge sets every 30 min (the nightly collector adds data at 23:00) and
+// redraw the visible tab's table if anything changed — no page reload needed.
+async function _refreshActivityBadges() {
+  const before = JSON.stringify([[..._congressTickers].length, Object.keys(_insiderActivity).length,
+                                 Object.values(_insiderActivity).reduce((t, a) => t + a[0] + a[2], 0)]);
+  await Promise.all([_refreshCongressTickerSet(), _refreshInsiderTickerSet()]);
+  const after = JSON.stringify([[..._congressTickers].length, Object.keys(_insiderActivity).length,
+                                Object.values(_insiderActivity).reduce((t, a) => t + a[0] + a[2], 0)]);
+  if (before === after) return;
+  try {
+    const reload = {monitor: loadMonitor, surge: loadSurge, holdings: loadHoldings, sold: loadSold}[currentTab];
+    if (reload) reload();
+  } catch (e) { /* table will pick the badges up on its next render */ }
 }
 
 // ── "Filter by Monitor list" — shared by the Signals and Pattern Scanner tabs ──
@@ -3184,7 +3365,7 @@ function renderSignals(rows) {
       ? `<span style="font-weight:600;color:${xLow >= 2 ? 'var(--green)' : 'var(--text)'}">${xLow.toFixed(2)}x</span>`
       : '—';
     return `<tr class="${rowCls}">
-      <td class="left ticker-cell">${r.ticker}${_congressBadge(r.ticker)}</td>
+      <td class="left ticker-cell">${r.ticker}${_actBadges(r.ticker)}</td>
       ${sigCell}
       ${trackedCell}
       <td>${fmtDate(r.signal_date)}</td><td>$${fmt(r.signal_close)}</td>
@@ -3193,6 +3374,9 @@ function renderSignals(rows) {
       <td>${rsiCell(r.rsi14)}</td>
       <td><strong>${fmtVal(r.current_price, '$')}</strong></td>
       <td>${dayPctCell(r.day_pct_change)}</td>
+      <td>${_monitorRangeCell(r)}</td>
+      <td>${_monitorLiveCell(r)}</td>
+      <td>${_monitorAlertCell(r)}</td>
       <td>${fmtVal(r.ma10)}</td><td>${fmtVal(r.ma30)}</td>
       <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma100)}</td><td>${fmtVal(r.ma200)}</td>
       <td>${fmtVal(r.high_30d)}</td><td>${fmtVal(r.low_30d)}</td>
@@ -3245,7 +3429,8 @@ async function _doAddToMonitor(ticker, signalDate, signalPrice, watchlistId, btn
     _monitorTickers.add(ticker);
     document.querySelectorAll(`${bodySelector} tr`).forEach(tr => {
       const cell = tr.querySelector('.ticker-cell');
-      if (cell && cell.textContent.trim() === ticker) {
+      // the cell also holds badges (🏛 / 💼▲n) and the tracked dot — match the ticker token
+      if (cell && cell.textContent.split(/[\s●]+/).includes(ticker)) {
         const b = tr.querySelector('.watch-btn');
         if (b) {
           b.textContent = '✓ Watching';
@@ -3259,6 +3444,40 @@ async function _doAddToMonitor(ticker, signalDate, signalPrice, watchlistId, btn
     if ((e.message || '').toLowerCase().includes('already')) {
       _monitorTickers.add(ticker);
       btn.textContent = '✓ Watching'; btn.style.color = 'var(--green)'; btn.disabled = true;
+    } else {
+      btn.disabled = false; btn.textContent = '+ Watch';
+      alert(e.message);
+    }
+  }
+}
+
+// "+ Watch" for the Surge Strategy tabs (US and HK share this — same /api/monitor, ticker is just a
+// string either way). Unlike _doAddToMonitor above, it updates the exact button passed in directly
+// instead of re-querying the DOM by ticker text, since the Surge tabs have several separate tbodies.
+function surgeAddToMonitor(ticker, signalDate, signalPrice, reason, btn) {
+  if (!_watchlists.length) { _surgeDoAddToMonitor(ticker, signalDate, signalPrice, reason, 1, btn); return; }
+  if (_watchlists.length === 1) { _surgeDoAddToMonitor(ticker, signalDate, signalPrice, reason, _watchlists[0].id, btn); return; }
+  showWlPicker(btn, wlId => _surgeDoAddToMonitor(ticker, signalDate, signalPrice, reason, wlId, btn));
+}
+
+async function _surgeDoAddToMonitor(ticker, signalDate, signalPrice, reason, watchlistId, btn) {
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    await apiFetch('/api/monitor', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        ticker, watchlist_id: watchlistId, reason,
+        signal_date:  signalDate || null,
+        signal_price: signalPrice || null,
+      }),
+    });
+    _monitorTickers.add(ticker);
+    btn.outerHTML = '<span class="pill green" style="margin-right:4px">&#10003; Watching</span>';
+    await _loadWatchlists(); // refresh counts
+  } catch(e) {
+    if ((e.message || '').toLowerCase().includes('already')) {
+      _monitorTickers.add(ticker);
+      btn.outerHTML = '<span class="pill green" style="margin-right:4px">&#10003; Watching</span>';
     } else {
       btn.disabled = false; btn.textContent = '+ Watch';
       alert(e.message);
@@ -3283,7 +3502,7 @@ function renderSold(rows) {
   if (!rows.length) { empty('sold-body', 11, 'No sold positions yet. Click + Add or upload a CSV.'); return; }
   document.getElementById('sold-body').innerHTML = rows.map(r => `
     <tr>
-      <td class="left ticker-cell">${r.ticker}</td>
+      <td class="left ticker-cell">${r.ticker}${_actBadges(r.ticker)}</td>
       <td class="left name-cell">${r.stock_name || '—'}</td>
       <td>${fmtDate(r.buy_date)}</td>
       <td>$${fmt(r.avg_buy_price)}</td><td>${fmtInt(r.qty)}</td>
@@ -3393,7 +3612,7 @@ async function loadMonitor() {
 
 function renderMonitor(rows) {
   const showListCol = _currentWlId === null && _watchlists.length > 1;
-  const cols = showListCol ? 22 : 21;
+  const cols = showListCol ? 25 : 24;
   if (!rows.length) { empty('monitor-body', cols, 'Monitor list is empty. Click + Add or upload a CSV.'); return; }
   document.getElementById('monitor-body').innerHTML = rows.map(r => {
     const inQueue = !!_btQueue.find(x => x.ticker === r.ticker);
@@ -3404,7 +3623,7 @@ function renderMonitor(rows) {
       ? `<td style="font-size:11px;color:var(--muted);white-space:nowrap">${r.watchlist_name || '—'}</td>`
       : '';
     return `<tr>
-      <td class="left ticker-cell">${r.ticker}${_congressBadge(r.ticker)}</td>
+      <td class="left ticker-cell">${r.ticker}${_actBadges(r.ticker)}</td>
       <td class="left name-cell">${r.stock_name || '—'}</td>
       <td class="left" style="color:var(--muted);max-width:160px">${r.reason || '—'}</td>
       <td class="left" style="color:var(--muted);max-width:200px;white-space:pre-wrap;word-break:break-word">${r.comment ? r.comment.replace(/</g,'&lt;') : '—'}</td>
@@ -3413,6 +3632,9 @@ function renderMonitor(rows) {
       <td>${pillCell(r.since_signal_pct)}</td>
       <td><strong>${fmtVal(r.current_price, '$')}</strong></td>
       <td>${dayPctCell(r.day_pct_change)}</td>
+      <td>${_monitorRangeCell(r)}</td>
+      <td>${_monitorLiveCell(r)}</td>
+      <td>${_monitorAlertCell(r)}</td>
       <td>${fmtVal(r.ma10)}</td><td>${fmtVal(r.ma30)}</td>
       <td>${fmtVal(r.ma50)}</td><td>${fmtVal(r.ma200)}</td><td>${rsiCell(r.rsi14)}</td>
       <td>${fmtVal(r.high_30d)}</td><td>${fmtVal(r.low_30d)}</td>
@@ -3427,6 +3649,82 @@ function renderMonitor(rows) {
       </td>
     </tr>`;
   }).join('');
+}
+
+// ═══════════════════════════════════════
+//  Monitor — target price range + live "Refresh Prices"
+// ═══════════════════════════════════════
+function _monitorRangeCell(r) {
+  return `<span id="mrange-${r.id}" style="display:flex;gap:3px;align-items:center;white-space:nowrap">
+    <input type="number" step="any" value="${r.range_low ?? ''}" placeholder="low" class="mrange-in"
+           style="width:58px;padding:2px 4px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text)"
+           onchange="saveMonitorRange(${r.id})" title="Alert when the refreshed live price is >= this">
+    <span style="color:var(--muted);font-size:11px">&ndash;</span>
+    <input type="number" step="any" value="${r.range_high ?? ''}" placeholder="high" class="mrange-in"
+           style="width:58px;padding:2px 4px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text)"
+           onchange="saveMonitorRange(${r.id})" title="Alert when the refreshed live price is <= this">
+  </span>`;
+}
+
+function _monitorLiveCell(r) {
+  if (r.last_price == null) return '<span class="dim">—</span>';
+  return `<b>$${fmt(r.last_price)}</b><div class="dim" style="font-size:10px">${(r.last_checked || '').slice(0, 16)}</div>`;
+}
+
+function _monitorAlertCell(r) {
+  if (r.range_low == null && r.range_high == null) return '<span class="dim">—</span>';
+  if (r.range_hit) {
+    return `<span class="pill green" style="margin-right:4px">&#127919; Hit ${(r.range_hit_at || '').slice(0, 16)}</span>` +
+           `<button class="del-btn" style="font-size:10px;padding:1px 6px" onclick="resetMonitorRange(${r.id},this)">Reset</button>`;
+  }
+  return '<span class="dim" style="font-size:11px">watching…</span>';
+}
+
+async function saveMonitorRange(id) {
+  const wrap = document.getElementById(`mrange-${id}`);
+  const [lowEl, highEl] = wrap.querySelectorAll('.mrange-in');
+  const low  = lowEl.value  === '' ? null : parseFloat(lowEl.value);
+  const high = highEl.value === '' ? null : parseFloat(highEl.value);
+  if (low != null && high != null && low > high) { alert('Low must be <= High.'); return; }
+  try {
+    await apiFetch(`/api/monitor/${id}/range`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ range_low: low, range_high: high }),
+    });
+    await loadMonitor(); // re-render so the Alert cell reflects the re-armed state
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function resetMonitorRange(id, btn) {
+  btn.disabled = true;
+  try {
+    await apiFetch(`/api/monitor/${id}/reset-range`, { method: 'POST' });
+    await loadMonitor();
+  } catch (e) { alert('Error: ' + e.message); btn.disabled = false; }
+}
+
+async function refreshMonitorPrices() {
+  const btn = document.getElementById('monitor-refresh-btn');
+  const st  = document.getElementById('monitor-refresh-status');
+  btn.disabled = true;
+  st.style.color = 'var(--muted)';
+  st.textContent = 'Refreshing…';
+  try {
+    const body = _currentWlId ? { watchlist_id: _currentWlId } : {};
+    const r = await apiFetch('/api/monitor/refresh', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+    });
+    st.style.color = r.errors.length ? '#d97706' : 'var(--green)';
+    st.textContent = `Refreshed ${r.checked} ticker(s)${r.at ? ' at ' + r.at.slice(11, 16) : ''}` +
+      (r.newly_hit.length ? ` · 🎯 range hit: ${r.newly_hit.map(x => x.ticker).join(', ')}` : '') +
+      (r.errors.length ? ` · ${r.errors.length} error(s): ${r.errors.slice(0, 2).join('; ')}` : '');
+    await loadMonitor();
+  } catch (e) {
+    st.style.color = 'var(--red)';
+    st.textContent = '⚠ ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function monitorAddToBacktest(ticker, p0, signalDate, btn) {
@@ -3489,7 +3787,7 @@ function renderTickerList(tickers, count) {
   }
   document.getElementById('tickers-body').innerHTML = tickers.map(r => `
     <tr id="tr-${r.ticker}">
-      <td class="left ticker-cell">${r.ticker}</td>
+      <td class="left ticker-cell">${r.ticker}${_actBadges(r.ticker)}</td>
       <td class="left" style="color:var(--muted)">${r.notes || '—'}</td>
       <td>${fmtDate(r.added_at)}</td>
       <td><button class="del-btn" onclick="deleteTicker('${r.ticker}')">&#10005;</button></td>
@@ -4515,7 +4813,7 @@ function _renderMultiPatternRows(matches) {
       ? `<span style="font-weight:600;color:${rsRank >= 70 ? 'var(--green)' : rsRank >= 50 ? 'var(--text)' : 'var(--muted)'}">${rsRank}</span>`
       : '—';
     return `<tr>
-      <td class="left ticker-cell">${m.ticker}${_congressBadge(m.ticker)}</td>
+      <td class="left ticker-cell">${m.ticker}${_actBadges(m.ticker)}</td>
       <td class="left">${badges}</td>
       <td>${fmtDate(m.first.scan_date)}</td>
       <td>${fmtDate(m.last.scan_date)}</td>
@@ -4666,7 +4964,7 @@ function _renderPatternRows(rows) {
       ? `<span style="font-weight:600;color:${vsPivot >= 0 ? 'var(--green)' : 'var(--muted)'}">${vsPivot >= 0 ? '+' : ''}${vsPivot.toFixed(1)}%</span>`
       : '—';
     return `<tr class="${rowCls}">
-      <td class="left ticker-cell">${r.ticker}${_congressBadge(r.ticker)}</td>
+      <td class="left ticker-cell">${r.ticker}${_actBadges(r.ticker)}</td>
       <td class="scan-date-col" style="font-size:11px;color:var(--muted);font-family:monospace">${fmtDate(r.scan_date)}</td>
       <td class="left"><span class="ppill ${pillCls}">${r.pattern_name}</span></td>
       <td class="left" style="color:var(--muted);font-size:11px;white-space:normal;max-width:240px">${r.signal_detail || '—'}</td>
@@ -4791,7 +5089,7 @@ function _renderBtQueue() {
 
   document.getElementById('bt-queue-body').innerHTML = _btQueue.map(item => `
     <tr>
-      <td class="left ticker-cell">${item.ticker}</td>
+      <td class="left ticker-cell">${item.ticker}${_actBadges(item.ticker)}</td>
       <td class="left" style="color:var(--muted);font-size:11px">${item.source}</td>
       <td><input class="ticker-add-input" type="number" step="0.01" min="0"
            id="btq-p0-${item.id}" value="${item.p0 || ''}"
@@ -4940,7 +5238,7 @@ function renderInsider(rows) {
     return `<tr class="${rowCls}">
       <td style="font-family:monospace">${fmtDate(r.transaction_date)}</td>
       <td style="font-family:monospace;color:var(--muted)">${fmtDate(r.filed_date)}</td>
-      <td class="left ticker-cell"><strong>${r.ticker || '—'}</strong></td>
+      <td class="left ticker-cell"><strong>${r.ticker || '—'}</strong>${_actBadges(r.ticker)}</td>
       <td class="left" style="max-width:160px;color:var(--muted)">${r.company_name || '—'}</td>
       <td class="left" style="max-width:160px">${r.insider_name || '—'}</td>
       <td class="left" style="color:var(--muted)">${r.role || '—'}</td>
@@ -5108,7 +5406,7 @@ function renderCongress(rows) {
     return `<tr class="${rowCls}">
       <td style="font-family:monospace">${fmtDate(r.tx_date)}</td>
       <td style="font-family:monospace;color:var(--muted)">${fmtDate(r.filed_date)}</td>
-      <td class="left ticker-cell"><strong>${r.ticker || '—'}</strong></td>
+      <td class="left ticker-cell"><strong>${r.ticker || '—'}</strong>${_actBadges(r.ticker)}</td>
       <td class="left" style="max-width:180px;color:var(--muted)">${r.company || '—'}</td>
       <td class="left" style="max-width:160px">${r.politician_name || '—'}</td>
       <td style="color:var(--muted)">${r.chamber || '—'}</td>
@@ -5208,7 +5506,7 @@ async function loadCongressSummary() {
     const rowsHtml = (list) => list.length
       ? list.map(r => `<tr>
           <td class="left ticker-cell" style="cursor:pointer" title="Click to filter the table below by this ticker"
-              onclick="_congressFilterByTicker('${r.ticker}')"><strong>${r.ticker}</strong></td>
+              onclick="_congressFilterByTicker('${r.ticker}')"><strong>${r.ticker}</strong>${_actBadges(r.ticker)}</td>
           <td>${r.trade_count}</td>
           <td>${r.politician_count}</td>
         </tr>`).join('')
@@ -5402,7 +5700,7 @@ function _renderBatchResult(data) {
   document.getElementById('bt-batch-body').innerHTML = rows.map((r, i) => {
     if (r.error) {
       return `<tr>
-        <td class="left ticker-cell">${r.ticker}</td>
+        <td class="left ticker-cell">${r.ticker}${_actBadges(r.ticker)}</td>
         <td>${r.start_date || '—'}</td>
         <td>$${(r.p0||0).toFixed(2)}</td>
         <td colspan="4" style="color:var(--muted);font-size:12px">${r.error}</td>
@@ -5413,7 +5711,7 @@ function _renderBatchResult(data) {
     const ps   = r.total_pnl >= 0 ? '+' : '';
     const rCls = r.roi >= 0 ? 'green' : 'red';
     return `<tr style="cursor:pointer" onclick="btShowDetail(${i})">
-      <td class="left ticker-cell">${r.ticker}</td>
+      <td class="left ticker-cell">${r.ticker}${_actBadges(r.ticker)}</td>
       <td>${r.start_date || '—'}</td>
       <td>$${(r.p0||0).toFixed(2)}</td>
       <td>$${(r.initial_cost||0).toFixed(2)}</td>
@@ -5472,7 +5770,93 @@ function refreshCurrent() {
 let _marketChart       = null;
 let _marketInitialised = false;
 
+// ---- Intraday monitor (hourly; focus list + whole-market batch quotes) ----
+let _intraData = null;
+let _intraSeen = new Set();
+try { _intraSeen = new Set(JSON.parse(localStorage.getItem('intraSeenAlerts') || '[]')); } catch (e) {}
+let _intraLastRun = null;
+const _INTRA_COLOR = {pick_stop: 'var(--red)', below_ma21: '#d97706', big_down: 'var(--red)', ma50_lost: '#d97706',
+                      range_hit: '#2563eb', pick_breakout: 'var(--green)', new_high_52wk: 'var(--green)',
+                      new_high_30d: 'var(--green)', big_up: 'var(--green)', surge_forming: '#7c3aed',
+                      ma200_reclaim: 'var(--green)', heavy_volume: '#2563eb'};
+const _INTRA_ORDER = ['pick_stop', 'range_hit', 'below_ma21', 'ma50_lost', 'big_down', 'pick_breakout',
+                      'surge_forming', 'new_high_52wk', 'new_high_30d', 'ma200_reclaim', 'big_up', 'heavy_volume'];
+const _intraKey = a => `${a.trade_date}|${a.ticker}|${a.alert_type}`;
+
+function renderIntraday() {
+  const d = _intraData;
+  if (!d) return;
+  const m = d.monitor || {};
+  const parts = [m.enabled ? `Hourly monitor <b style="color:var(--green)">on</b> (from 10:00 ET, every ${m.interval_min} min + 16:20 post-close)`
+                           : `Hourly monitor <b style="color:var(--red)">off</b>`];
+  parts.push(m.market_open ? 'market open' : 'market closed');
+  if (m.last_run) parts.push(`last pass ${m.last_run.slice(5, 16)} ET (${m.last_reason})`);
+  if (m.summary) parts.push(`${m.summary.focus_tickers} focus tickers, ${m.summary.market_quotes} market quotes`);
+  if (m.next_run) parts.push(`next ≈ ${m.next_run.slice(5).replace('-', '/')} ET`);
+  if (m.running) parts.push('<span class="spinner"></span>running…');
+  if (m.last_error) parts.push(`<span style="color:var(--red)">${m.last_error}</span>`);
+  document.getElementById('intra-status').innerHTML = parts.join(' · ');
+  document.getElementById('intra-date').textContent = d.trade_date ? `Session ${d.trade_date}` : '';
+  const scope = document.getElementById('intra-scope').value;
+  const rows = d.alerts.filter(a => scope === 'all' || a.scope === scope)
+    .sort((a, b) => (a.scope === b.scope ? 0 : a.scope === 'focus' ? -1 : 1)
+                 || _INTRA_ORDER.indexOf(a.alert_type) - _INTRA_ORDER.indexOf(b.alert_type)
+                 || Math.abs(b.change_pct || 0) - Math.abs(a.change_pct || 0));
+  const f2 = v => v == null ? '—' : v.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  const pct = v => v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+  document.getElementById('intra-body').innerHTML = rows.length ? rows.map(a => `<tr>
+      <td class="left dim">${(a.first_seen || '').slice(11, 16)}${a.last_seen && a.last_seen !== a.first_seen ? ' → ' + a.last_seen.slice(11, 16) : ''}</td>
+      <td class="left"><b>${a.ticker}</b>${_actBadges(a.ticker)}${a.scope === 'focus' ? ' <span class="pill green" style="font-size:10px">my list</span>' : ''}</td>
+      <td class="left"><span style="color:${_INTRA_COLOR[a.alert_type] || 'inherit'};font-weight:600">${a.label}</span></td>
+      <td>${f2(a.price)}</td>
+      <td style="color:${(a.change_pct || 0) >= 0 ? 'var(--green)' : 'var(--red)'}">${pct(a.change_pct)}</td>
+      <td>${a.vol_pace == null ? '—' : a.vol_pace.toFixed(1) + '×'}</td>
+      <td class="left" style="font-size:12px">${a.detail || ''}</td></tr>`).join('')
+    : `<tr><td colspan="7" class="state-msg">No ${scope === 'all' ? '' : scope === 'focus' ? 'my-list ' : 'market '}alerts${d.trade_date ? ' for ' + d.trade_date : ' yet'}.</td></tr>`;
+}
+
+function _intraApply(d, notify) {
+  _intraData = d;
+  const today = new Date().toLocaleDateString('en-CA', {timeZone: 'America/New_York'});
+  const focus = d.trade_date === today ? d.alerts.filter(a => a.scope === 'focus') : [];
+  const badge = document.getElementById('market-badge');
+  badge.textContent = focus.length ? `(${focus.length})` : '';
+  badge.style.color = focus.some(a => ['pick_stop', 'below_ma21', 'big_down', 'ma50_lost'].includes(a.alert_type)) ? '#d97706' : 'var(--green)';
+  if (currentTab === 'market') renderIntraday();
+  const fresh = focus.filter(a => !_intraSeen.has(_intraKey(a)));
+  if (notify && fresh.length && 'Notification' in window && Notification.permission === 'granted') {
+    fresh.slice(0, 8).forEach(a => { try { new Notification(`${a.ticker} — ${a.label}`, {body: a.detail, tag: 'intra-' + _intraKey(a)}); } catch (e) {} });
+  }
+  if (fresh.length) {
+    fresh.forEach(a => _intraSeen.add(_intraKey(a)));
+    try { localStorage.setItem('intraSeenAlerts', JSON.stringify([..._intraSeen].slice(-500))); } catch (e) {}
+  }
+}
+
+async function pollIntraday(firstLoad = false) {
+  try {
+    const d = await apiFetch('/api/intraday/alerts');
+    const lr = d.monitor && d.monitor.last_run;
+    _intraApply(d, !firstLoad && lr !== _intraLastRun);
+    _intraLastRun = lr || _intraLastRun;
+  } catch (e) { /* server busy — next minute */ }
+}
+
+async function runIntradayNow() {
+  const btn = document.getElementById('intra-run-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Running…';
+  try {
+    await apiFetch('/api/intraday/refresh', {method: 'POST'});
+    await pollIntraday();
+  } catch (e) {
+    document.getElementById('intra-status').innerHTML = `<span style="color:var(--red)">${e.message}</span>`;
+  } finally {
+    btn.disabled = false; btn.innerHTML = '&#8635; Run now';
+  }
+}
+
 async function loadMarket(force = false) {
+  if (_intraData) renderIntraday(); else pollIntraday(true).then(renderIntraday);
   if (_marketInitialised && !force) return;
   const tbody = document.getElementById('market-dd-body');
   tbody.innerHTML = '<tr><td colspan="5" class="state-msg"><span class="spinner"></span>Loading market health data…</td></tr>';
@@ -5788,7 +6172,7 @@ function _dvRender() {
       ? `<button class="del-btn" style="color:var(--green);border-color:var(--green);cursor:default" disabled>&#10003; Queued</button>`
       : `<button class="del-btn" onclick="dvAddToBacktest('${r.ticker}',${r.close||0},'${r.date||''}',this)">+ Backtest</button>`;
     return `<tr>
-      <td class="left ticker-cell">${trackedDot}<strong>${r.ticker}</strong></td>
+      <td class="left ticker-cell">${trackedDot}<strong>${r.ticker}</strong>${_actBadges(r.ticker)}</td>
       <td>${r.date || '—'}</td>
       <td><strong>${fmt(r.close)}</strong></td>
       <td>${pctCell}</td>
@@ -5888,6 +6272,125 @@ function loadWeekly() {
     const d = new Date(); d.setFullYear(d.getFullYear() - 1);
     from.value = d.toISOString().slice(0, 10);
   }
+  const rFrom = document.getElementById('wkr-from'), rTo = document.getElementById('wkr-to');
+  if (!rTo.value) rTo.value = new Date().toISOString().slice(0, 10);
+  if (!rFrom.value) {
+    const d = new Date(); d.setMonth(d.getMonth() - 4);
+    rFrom.value = d.toISOString().slice(0, 10);
+  }
+  if (!_wkRankLoaded) { _wkRankLoaded = true; runWeeklyRanking(); }
+}
+
+let _wkRankLoaded = false;
+
+// Weekly / Daily switch — the same analysis + ranking per week and/or per trading
+// day (interval=week|day on both endpoints; the API keeps the weekly field names).
+// "both" (default) fetches the two and shows them side by side for comparison.
+function _wkIntervals() {
+  const v = document.getElementById('wk-interval').value;
+  return v === 'week' || v === 'day' ? [v] : ['week', 'day'];
+}
+const _wkName = iv => iv === 'day' ? 'Daily' : 'Weekly';
+const _wkErr = msg => `<div class="state-msg" style="padding:24px;color:var(--red)">Error: ${msg}</div>`;
+
+function wkSetInterval() {
+  const ivs = _wkIntervals(), u = ivs.length > 1 ? 'week / day' : ivs[0];
+  document.getElementById('wk-hint').innerHTML =
+    `Up ${u} = Close &gt; Open &middot; Down = Close &lt; Open &middot; Flat = equal &middot; live Yahoo bars`;
+  document.getElementById('wkr-basis-one').textContent =
+    ivs.length > 1 ? 'in one week / day (vs the previous one)' : `in one ${u} (vs previous ${u})`;
+  document.getElementById('wkr-hint').innerHTML =
+    'Stored daily data (Ticker List + S&amp;P 500 / Russell 1000)' +
+    (ivs.length > 1 ? ', weekly list = whole weeks only' : ivs[0] === 'week' ? ', whole weeks only' : '') +
+    ' &middot; click a ticker for its analysis';
+  runWeeklyRanking();
+  if (document.getElementById('wk-ticker').value.trim()) runWeeklyStats();
+}
+
+// Ranking row click -> run the single-ticker analysis over the same range
+function wkAnalyzeTicker(ticker) {
+  document.getElementById('wk-ticker').value = ticker;
+  document.getElementById('wk-from').value = document.getElementById('wkr-from').value;
+  document.getElementById('wk-to').value = document.getElementById('wkr-to').value;
+  document.getElementById('wk-ticker').scrollIntoView({behavior: 'smooth', block: 'center'});
+  runWeeklyStats();
+}
+
+// One ranking list (weekly or daily). `other` = {ticker: rank} of the other list
+// when both are shown, so a ticker that made both lists is marked with its other rank.
+function _wkRankPanel(d, other) {
+  const u = d.interval === 'day' ? 'day' : 'week', U = u === 'day' ? 'Day' : 'Week';
+  const pct = v => v == null ? '—'
+    : `<span style="color:${v >= 0 ? 'var(--green)' : 'var(--red)'}">${v >= 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
+  const otherTag = r => other && other[r.ticker]
+    ? ` <span style="font-size:10px;color:var(--muted)" title="Also #${other[r.ticker]} in the ${u === 'day' ? 'weekly' : 'daily'} list">${u === 'day' ? 'W' : 'D'}#${other[r.ticker]}</span>` : '';
+  const row = r => `<tr${other && other[r.ticker] ? ' style="background:rgba(240,180,40,.10)"' : ''}>
+      <td class="right">${r.rank}</td>
+      <td class="left"><a href="#" onclick="wkAnalyzeTicker('${r.ticker}');return false"
+          style="font-weight:600">${r.ticker}</a>${_actBadges(r.ticker)}${r.tracked
+          ? ' <span style="color:var(--green)" title="On the Ticker List">&#9679;</span>' : ''}${otherTag(r)}</td>
+      <td class="right" style="color:var(--green);font-weight:600">${r.avg_volume_ratio.toFixed(2)}x</td>
+      <td class="right"><span style="color:var(--green)">${r.up_weeks}</span> / <span style="color:var(--red)">${r.down_weeks}</span></td>
+      <td class="right">${_wkVol(r.avg_volume_up)}</td>
+      <td class="right">${_wkVol(r.avg_volume_down)}</td>
+      <td class="right">${r.start_price.toFixed(2)}</td>
+      <td class="right">${r.last_close.toFixed(2)}</td>
+      <td class="right">${pct(r.range_change_pct)}</td>
+      <td class="right">${r.best_week ? pct(r.best_week.change_pct) : '—'}</td>
+      <td class="left" style="font-family:monospace">${r.best_week ? r.best_week.date : '—'}</td>
+      <td class="left">${r.highest_volume_week
+        ? `<span style="font-family:monospace">${r.highest_volume_week.date}</span> (${_wkDir(r.highest_volume_week.direction)})` : '—'}</td></tr>`;
+  const basisTxt = d.basis === 'week' ? `in at least one ${u} vs the previous ${u}` : 'over the whole range';
+  let html = `<div style="font-size:12px;color:var(--muted);margin:4px 0 8px">
+      ${U}s ${d.start_date} to ${d.end_date} &middot; ${d.scanned} tickers scanned &middot;
+      ${d.qualified} with ratio &gt; 1 and price up more than ${d.min_change_pct}% ${basisTxt} &middot; showing top ${d.rows.length}
+      &middot; data through ${d.data_through || '—'}${d.excluded_partial_week
+        ? ` (${u === 'week' ? 'week of ' : ''}${d.excluded_partial_week} still forming — left out)` : ''}</div>`;
+  if (!d.rows.length) return html + '<div class="state-msg" style="padding:24px">No ticker matches these filters.</div>';
+  return html + `<div class="table-wrap"><table>
+      <thead><tr><th class="right">#</th><th class="left">Ticker</th><th class="right">Vol ratio</th>
+        <th class="right">Up / Down ${u}s</th><th class="right">Avg vol up</th><th class="right">Avg vol down</th>
+        <th class="right">Start</th><th class="right">Last close</th><th class="right">Range chg</th>
+        <th class="right">Best ${u}</th><th class="left">Best ${u === 'day' ? 'day date' : 'week of'}</th><th class="left">Highest-vol ${u}</th></tr></thead>
+      <tbody>${d.rows.map(row).join('')}</tbody></table></div>`;
+}
+
+async function runWeeklyRanking() {
+  const fromEl = document.getElementById('wkr-from'), toEl = document.getElementById('wkr-to');
+  normaliseDateInput(fromEl); normaliseDateInput(toEl);
+  const el = document.getElementById('wkr-result');
+  const btn = document.getElementById('wkr-run-btn');
+  btn.disabled = true;
+  el.innerHTML = '<div class="state-msg" style="padding:24px"><span class="spinner"></span>Ranking…</div>';
+  try {
+    const ivs = _wkIntervals();
+    const q = `from=${fromEl.value}&to=${toEl.value}` +
+      `&min_change=${encodeURIComponent(document.getElementById('wkr-min').value || 0)}` +
+      `&basis=${document.getElementById('wkr-basis').value}` +
+      `&top=${encodeURIComponent(document.getElementById('wkr-top').value || 30)}`;
+    const res = await Promise.allSettled(ivs.map(iv => apiFetch(`/api/weekly-stats/ranking?${q}&interval=${iv}`)));
+    const ranks = res.map(r => r.status === 'fulfilled'
+      ? Object.fromEntries(r.value.rows.map(x => [x.ticker, x.rank])) : null);
+    const panels = res.map((r, i) => {
+      const body = r.status === 'fulfilled'
+        ? _wkRankPanel(r.value, ivs.length > 1 ? ranks[1 - i] : null) : _wkErr(r.reason.message);
+      return ivs.length > 1
+        ? `<div style="flex:1 1 620px;min-width:0"><div style="font-weight:600;margin-bottom:2px">${_wkName(ivs[i])}</div>${body}</div>`
+        : body;
+    });
+    let html = ivs.length > 1
+      ? `<div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">${panels.join('')}</div>` : panels[0];
+    if (ivs.length > 1 && ranks[0] && ranks[1]) {
+      const n = Object.keys(ranks[0]).filter(t => ranks[1][t]).length;
+      html = `<div style="font-size:12px;color:var(--muted);margin:4px 0 6px">${n} ticker${n === 1 ? '' : 's'} in both lists
+        (highlighted, with the rank in the other list: W# = weekly, D# = daily)</div>` + html;
+    }
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = _wkErr(e.message);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function _wkVol(v) {
@@ -5904,6 +6407,63 @@ function _wkDir(d) {
   return `<span style="color:${c};font-weight:600">${label}</span>`;
 }
 
+// Metric values for one interval's summary, in the row order of _WK_METRICS
+const _WK_METRICS = ['Total bars', 'Up', 'Down', 'Flat', 'Avg volume (up)', 'Avg volume (down)',
+  'Volume ratio (up/down avg)', 'Total volume (up)', 'Total volume (down)', 'Volume ratio (up/down total)',
+  'Highest volume', 'Close: first → last', 'Read'];
+
+function _wkMetricCells(d) {
+  const s = d.summary, hv = s.highest_volume_week;
+  const pct = v => v != null ? v.toFixed(0) + '%' : '—';
+  const ratio = s.avg_volume_ratio;
+  const ratioColor = ratio == null ? 'var(--muted)' : ratio >= 1 ? 'var(--green)' : 'var(--red)';
+  const chg = s.first_close && s.last_close ? (s.last_close / s.first_close - 1) * 100 : null;
+  const updown = (v, c) => `<span style="color:${c};font-weight:600">${v}</span>`;
+  return [
+    s.total_weeks,
+    `${updown(s.up_weeks, 'var(--green)')} (${pct(s.up_pct)})`,
+    `${updown(s.down_weeks, 'var(--red)')} (${pct(s.down_pct)})`,
+    s.flat_weeks,
+    _wkVol(s.avg_volume_up),
+    _wkVol(s.avg_volume_down),
+    ratio != null ? updown(ratio.toFixed(2) + 'x', ratioColor) : '—',
+    _wkVol(s.total_volume_up),
+    _wkVol(s.total_volume_down),
+    s.total_volume_ratio != null ? s.total_volume_ratio.toFixed(2) + 'x' : '—',
+    hv ? `${hv.date} (${_wkDir(hv.direction)}), ${_wkVol(hv.volume)}` : '—',
+    chg != null
+      ? `${s.first_close.toFixed(2)} → ${s.last_close.toFixed(2)} ` +
+        updown(`(${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%)`, chg >= 0 ? 'var(--green)' : 'var(--red)')
+      : '—',
+    ratio == null ? '—' : updown(ratio >= 1 ? 'Buying volume dominated' : 'Selling volume dominated', ratioColor),
+  ];
+}
+
+// Week-by-week / day-by-day table for one interval
+function _wkBarsPanel(d) {
+  const u = d.interval === 'day' ? 'day' : 'week', U = u === 'day' ? 'Day' : 'Week';
+  const hv = d.summary.highest_volume_week;
+  const barRow = w => {
+    const top = hv && w.date === hv.date;
+    const chgColor = w.change_pct >= 0 ? 'var(--green)' : 'var(--red)';
+    const partial = w.partial ? ` <span style="color:var(--muted)" title="Partial ${u}">*</span>` : '';
+    return `<tr${top ? ' style="background:rgba(240,180,40,.15)" title="Highest-volume ' + u + '"' : ''}>
+      <td class="left" style="font-family:monospace">${w.date}${partial}</td>
+      <td class="right">${w.open.toFixed(2)}</td>
+      <td class="right">${w.close.toFixed(2)}</td>
+      <td class="right" style="color:${chgColor}">${w.change_pct != null ? w.change_pct.toFixed(1) + '%' : '—'}</td>
+      <td>${_wkDir(w.direction)}</td>
+      <td class="right">${_wkVol(w.volume)}</td></tr>`;
+  };
+  return `<div style="flex:1 1 440px;min-width:300px">
+      <div style="font-weight:600;margin-bottom:6px">${U} by ${u} <span style="font-weight:400;color:var(--muted);font-size:12px">(newest first${u === 'week' ? ", labelled by the week's Monday" : ''})</span></div>
+      <div class="table-wrap" style="max-height:70vh;overflow-y:auto"><table>
+        <thead><tr><th class="left">${U}</th><th class="right">Open</th><th class="right">Close</th>
+          <th class="right">Chg %</th><th>Direction</th><th class="right">Volume</th></tr></thead>
+        <tbody>${d.weeks.slice().reverse().map(barRow).join('')}</tbody>
+      </table></div></div>`;
+}
+
 async function runWeeklyStats() {
   const ticker = document.getElementById('wk-ticker').value.trim().toUpperCase();
   const fromEl = document.getElementById('wk-from'), toEl = document.getElementById('wk-to');
@@ -5915,75 +6475,38 @@ async function runWeeklyStats() {
   }
   const btn = document.getElementById('wk-run-btn');
   btn.disabled = true;
-  el.innerHTML = '<div class="state-msg" style="padding:24px"><span class="spinner"></span>Fetching weekly bars…</div>';
+  el.innerHTML = '<div class="state-msg" style="padding:24px"><span class="spinner"></span>Fetching bars…</div>';
   try {
+    const ivs = _wkIntervals();
     const q = `ticker=${encodeURIComponent(ticker)}&from=${fromEl.value}&to=${toEl.value}`;
-    const d = await apiFetch('/api/weekly-stats?' + q);
-    const s = d.summary, hv = s.highest_volume_week;
-    const pct = v => v != null ? v.toFixed(0) + '%' : '—';
-    const ratio = s.avg_volume_ratio;
-    const ratioColor = ratio == null ? 'var(--muted)' : ratio >= 1 ? 'var(--green)' : 'var(--red)';
-    const verdict = ratio == null ? ''
-      : ratio >= 1 ? 'Up weeks traded heavier than down weeks on average — buying volume dominated.'
-                   : 'Down weeks traded heavier than up weeks on average — selling volume dominated.';
-    const chg = s.first_close && s.last_close ? (s.last_close / s.first_close - 1) * 100 : null;
-    const updown = (v, c) => `<span style="color:${c};font-weight:600">${v}</span>`;
+    const res = await Promise.allSettled(ivs.map(iv => apiFetch(`/api/weekly-stats?${q}&interval=${iv}`)));
+    const ok = res.map(r => r.status === 'fulfilled' ? r.value : null);
+    const first = ok.find(Boolean);
+    if (!first) throw res[0].reason;
 
-    const metrics = [
-      ['Total weeks', s.total_weeks],
-      ['Up weeks', `${updown(s.up_weeks, 'var(--green)')} (${pct(s.up_pct)})`],
-      ['Down weeks', `${updown(s.down_weeks, 'var(--red)')} (${pct(s.down_pct)})`],
-      ['Flat weeks', s.flat_weeks],
-      ['Avg volume (up weeks)', _wkVol(s.avg_volume_up)],
-      ['Avg volume (down weeks)', _wkVol(s.avg_volume_down)],
-      ['Volume ratio (up/down avg)', ratio != null ? updown(ratio.toFixed(2) + 'x', ratioColor) : '—'],
-      ['Total volume (up weeks)', _wkVol(s.total_volume_up)],
-      ['Total volume (down weeks)', _wkVol(s.total_volume_down)],
-      ['Volume ratio (up/down total)', s.total_volume_ratio != null ? s.total_volume_ratio.toFixed(2) + 'x' : '—'],
-      ['Highest volume week', hv ? `${hv.date} (${_wkDir(hv.direction)}), ${_wkVol(hv.volume)}` : '—'],
-      ['Close: first → last week', chg != null
-        ? `${s.first_close.toFixed(2)} → ${s.last_close.toFixed(2)} ` +
-          updown(`(${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%)`, chg >= 0 ? 'var(--green)' : 'var(--red)')
-        : '—'],
-    ];
-
-    const weekRow = w => {
-      const top = hv && w.date === hv.date;
-      const chgColor = w.change_pct >= 0 ? 'var(--green)' : 'var(--red)';
-      const partial = w.partial ? ' <span style="color:var(--muted)" title="Partial week">*</span>' : '';
-      return `<tr${top ? ' style="background:rgba(240,180,40,.15)" title="Highest-volume week"' : ''}>
-        <td class="left" style="font-family:monospace">${w.date}${partial}</td>
-        <td class="right">${w.open.toFixed(2)}</td>
-        <td class="right">${w.close.toFixed(2)}</td>
-        <td class="right" style="color:${chgColor}">${w.change_pct != null ? w.change_pct.toFixed(1) + '%' : '—'}</td>
-        <td>${_wkDir(w.direction)}</td>
-        <td class="right">${_wkVol(w.volume)}</td></tr>`;
-    };
+    // one Metric table, a column per interval -> weekly and daily read side by side
+    const cells = ok.map(d => d ? _wkMetricCells(d) : null);
+    const metricRows = _WK_METRICS.map((label, i) => `<tr><td class="left">${label}</td>${
+      cells.map(c => `<td class="left">${c ? c[i] : '—'}</td>`).join('')}</tr>`).join('');
+    const notes = ok.flatMap(d => d && d.notes ? d.notes : [])
+      .concat(res.map((r, i) => r.status === 'rejected' ? `${_wkName(ivs[i])} failed: ${r.reason.message}` : null).filter(Boolean));
 
     let html = `<div style="font-size:14px;font-weight:600;margin:4px 0 10px">
-        Ticker: ${d.ticker} <span style="color:var(--muted);font-weight:400">|</span>
-        Range: ${d.start_date} to ${d.end_date}</div>
-      <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
-      <div style="flex:0 1 460px;min-width:300px">
+        Ticker: ${first.ticker} <span style="color:var(--muted);font-weight:400">|</span>
+        Range: ${first.start_date} to ${first.end_date}</div>
+      <div style="max-width:${ivs.length > 1 ? 760 : 460}px">
         <div class="table-wrap"><table>
-          <thead><tr><th class="left">Metric</th><th class="left">Value</th></tr></thead>
-          <tbody>${metrics.map(([k, v]) => `<tr><td class="left">${k}</td><td class="left">${v}</td></tr>`).join('')}</tbody>
+          <thead><tr><th class="left">Metric</th>${ivs.map(iv => `<th class="left">${_wkName(iv)}</th>`).join('')}</tr></thead>
+          <tbody>${metricRows}</tbody>
         </table></div>`;
-    if (verdict) html += `<div style="margin-top:8px;font-size:12px;color:${ratioColor}">${verdict}</div>`;
-    if (d.notes && d.notes.length)
-      html += `<div style="margin-top:8px;font-size:11px;color:var(--muted)">${d.notes.map(n => '&#9432; ' + n).join('<br>')}</div>`;
+    if (notes.length)
+      html += `<div style="margin-top:8px;font-size:11px;color:var(--muted)">${notes.map(n => '&#9432; ' + n).join('<br>')}</div>`;
     html += `</div>
-      <div style="flex:1 1 520px;min-width:320px">
-        <div style="font-weight:600;margin-bottom:6px">Week by week <span style="font-weight:400;color:var(--muted);font-size:12px">(newest first, labelled by the week's Monday)</span></div>
-        <div class="table-wrap" style="max-height:70vh;overflow-y:auto"><table>
-          <thead><tr><th class="left">Week</th><th class="right">Open</th><th class="right">Close</th>
-            <th class="right">Chg %</th><th>Direction</th><th class="right">Volume</th></tr></thead>
-          <tbody>${d.weeks.slice().reverse().map(weekRow).join('')}</tbody>
-        </table></div>
-      </div></div>`;
+      <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;margin-top:14px">
+        ${ok.filter(Boolean).map(_wkBarsPanel).join('')}</div>`;
     el.innerHTML = html;
   } catch (e) {
-    el.innerHTML = `<div class="state-msg" style="padding:24px;color:var(--red)">Error: ${e.message}</div>`;
+    el.innerHTML = _wkErr(e.message);
   } finally {
     btn.disabled = false;
   }
@@ -6014,79 +6537,6 @@ async function loadVolumeProfile() {
         <th>Price</th><th>Vol&nbsp;%</th><th>Type</th><th>Confirmed</th>
       </tr></thead><tbody>`;
     html += (data.volume_levels && data.volume_levels.length)
-  const rFrom = document.getElementById('wkr-from'), rTo = document.getElementById('wkr-to');
-  if (!rTo.value) rTo.value = new Date().toISOString().slice(0, 10);
-  if (!rFrom.value) {
-    const d = new Date(); d.setMonth(d.getMonth() - 4);
-    rFrom.value = d.toISOString().slice(0, 10);
-  }
-  if (!_wkRankLoaded) { _wkRankLoaded = true; runWeeklyRanking(); }
-}
-
-let _wkRankLoaded = false;
-
-// Ranking row click -> run the single-ticker analysis over the same range
-function wkAnalyzeTicker(ticker) {
-  document.getElementById('wk-ticker').value = ticker;
-  document.getElementById('wk-from').value = document.getElementById('wkr-from').value;
-  document.getElementById('wk-to').value = document.getElementById('wkr-to').value;
-  document.getElementById('wk-ticker').scrollIntoView({behavior: 'smooth', block: 'center'});
-  runWeeklyStats();
-}
-
-async function runWeeklyRanking() {
-  const fromEl = document.getElementById('wkr-from'), toEl = document.getElementById('wkr-to');
-  normaliseDateInput(fromEl); normaliseDateInput(toEl);
-  const el = document.getElementById('wkr-result');
-  const btn = document.getElementById('wkr-run-btn');
-  btn.disabled = true;
-  el.innerHTML = '<div class="state-msg" style="padding:24px"><span class="spinner"></span>Ranking…</div>';
-  try {
-    const q = `from=${fromEl.value}&to=${toEl.value}` +
-      `&min_change=${encodeURIComponent(document.getElementById('wkr-min').value || 0)}` +
-      `&basis=${document.getElementById('wkr-basis').value}` +
-      `&top=${encodeURIComponent(document.getElementById('wkr-top').value || 30)}`;
-    const d = await apiFetch('/api/weekly-stats/ranking?' + q);
-    const pct = v => v == null ? '—'
-      : `<span style="color:${v >= 0 ? 'var(--green)' : 'var(--red)'}">${v >= 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
-    const row = r => `<tr>
-        <td class="right">${r.rank}</td>
-        <td class="left"><a href="#" onclick="wkAnalyzeTicker('${r.ticker}');return false"
-            style="font-weight:600">${r.ticker}</a>${r.tracked
-            ? ' <span style="color:var(--green)" title="On the Ticker List">&#9679;</span>' : ''}</td>
-        <td class="right" style="color:var(--green);font-weight:600">${r.avg_volume_ratio.toFixed(2)}x</td>
-        <td class="right"><span style="color:var(--green)">${r.up_weeks}</span> / <span style="color:var(--red)">${r.down_weeks}</span></td>
-        <td class="right">${_wkVol(r.avg_volume_up)}</td>
-        <td class="right">${_wkVol(r.avg_volume_down)}</td>
-        <td class="right">${r.start_price.toFixed(2)}</td>
-        <td class="right">${r.last_close.toFixed(2)}</td>
-        <td class="right">${pct(r.range_change_pct)}</td>
-        <td class="right">${r.best_week ? pct(r.best_week.change_pct) : '—'}</td>
-        <td class="left" style="font-family:monospace">${r.best_week ? r.best_week.date : '—'}</td>
-        <td class="left">${r.highest_volume_week
-          ? `<span style="font-family:monospace">${r.highest_volume_week.date}</span> (${_wkDir(r.highest_volume_week.direction)})` : '—'}</td></tr>`;
-    const basisTxt = d.basis === 'week' ? 'in at least one week vs the previous week' : 'over the whole range';
-    let html = `<div style="font-size:12px;color:var(--muted);margin:4px 0 8px">
-        Weeks ${d.start_date} to ${d.end_date} &middot; ${d.scanned} tickers scanned &middot;
-        ${d.qualified} with ratio &gt; 1 and price up more than ${d.min_change_pct}% ${basisTxt} &middot; showing top ${d.rows.length}
-        &middot; data through ${d.data_through || '—'}${d.excluded_partial_week
-          ? ` (week of ${d.excluded_partial_week} still forming — left out)` : ''}</div>`;
-    if (!d.rows.length) {
-      html += '<div class="state-msg" style="padding:24px">No ticker matches these filters.</div>';
-    } else {
-      html += `<div class="table-wrap"><table>
-        <thead><tr><th class="right">#</th><th class="left">Ticker</th><th class="right">Vol ratio</th>
-          <th class="right">Up / Down wks</th><th class="right">Avg vol up</th><th class="right">Avg vol down</th>
-          <th class="right">Start</th><th class="right">Last close</th><th class="right">Range chg</th>
-          <th class="right">Best week</th><th class="left">Best week of</th><th class="left">Highest-vol week</th></tr></thead>
-        <tbody>${d.rows.map(row).join('')}</tbody></table></div>`;
-    }
-    el.innerHTML = html;
-  } catch (e) {
-    el.innerHTML = `<div class="state-msg" style="padding:24px;color:var(--red)">Error: ${e.message}</div>`;
-  } finally {
-    btn.disabled = false;
-  }
       ? data.volume_levels.map(l => `<tr style="${l.confirmed_by_pivot ? 'background:rgba(240,180,40,.15)' : ''}">
           <td>${fmt(l.price)}${l.is_poc ? ' <span title="Point of Control">&#9733;</span>' : ''}</td>
           <td>${fmt(l.pct_of_total_volume)}%</td>
@@ -6193,9 +6643,13 @@ document.getElementById('last-updated').textContent =
 loadHoldings();
 _loadWatchlists(); // pre-load so + Watch picker works from any tab
 _refreshCongressTickerSet(); // pre-load so the Congress badge works from any tab
+_refreshInsiderTickerSet();  // same for the insider badge
+setInterval(_refreshActivityBadges, 30 * 60 * 1000);
 _surgeNotifyBtn();
 pollSurgeAlerts();                       // badge/notifications for the Surge Strategy tab from any tab
 setInterval(pollSurgeAlerts, 60000);
+pollIntraday(true);                      // hourly intraday monitor: Market-tab badge + notifications for my-list alerts
+setInterval(pollIntraday, 60000);
 _hkNotifyBtn();
 pollHkAlerts();
 setInterval(pollHkAlerts, 60000);

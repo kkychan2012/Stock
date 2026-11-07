@@ -133,6 +133,9 @@ def _fetch_chunk(chunk_from: datetime, chunk_to: datetime) -> list[dict]:
 
         total = hits_block.get("total", {})
         total_count = total.get("value", 0) if isinstance(total, dict) else int(total or 0)
+        if start == 0 and total_count > MAX_OFFSET:
+            logger.warning("EFTS %s-%s has %d hits, only the first %d are reachable",
+                           chunk_from.date(), chunk_to.date(), total_count, MAX_OFFSET)
         start += page_size
         if start >= min(total_count, MAX_OFFSET):
             break
@@ -147,10 +150,14 @@ def fetch_form4_index(date_from: datetime, date_to: datetime) -> list[dict]:
     Returns list of dicts: {cik, accession, filed_date, company_name}.
     """
     results = []
-    chunk_size = timedelta(days=4)  # keeps each chunk <2000 results; avoids EFTS 500s at high offsets
+    # One filing day per request: EFTS returns at most ~10,000 hits per query,
+    # and a busy multi-day chunk (Feb/Mar grant season) could exceed that and
+    # silently drop filings. (Was a 5-day chunk with `cursor < date_to`, which
+    # also skipped date_to whenever a chunk boundary landed exactly on it.)
+    chunk_size = timedelta(days=0)
     cursor = date_from
 
-    while cursor < date_to:
+    while cursor <= date_to:
         chunk_end = min(cursor + chunk_size, date_to)
         logger.debug("Fetching chunk %s -> %s", cursor.date(), chunk_end.date())
         chunk = _fetch_chunk(cursor, chunk_end)
