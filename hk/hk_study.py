@@ -121,6 +121,9 @@ def main():
     ap.add_argument("--entry-mode", choices=["touch", "optimistic", "stop", "limit"], default="touch",
                     help="how the buy at the surge-day close is filled (see study_volume_surge_2026_04.ENTRY_MODE)")
     ap.add_argument("--data-through", help="ignore price data after this date YYYY-MM-DD (e.g. drop an unfinished day)")
+    ap.add_argument("--min-drop-pct", type=float, default=study.MIN_DROP_PCT,
+                    help="drop day also needs this much open-to-close decline, e.g. 0.03 = 3%% "
+                         "(0 = any red candle; default matches the live dashboard's current setting)")
     ap.add_argument("--min-mcap", type=float, default=0.0, help="min market cap in HKD at the time of the surge (0 = no filter)")
     ap.add_argument("--min-turnover", type=float, default=0.0, help="min avg daily turnover in HKD (0 = no filter)")
     ap.add_argument("--capital", type=float, help="also run the capital simulation with this starting capital")
@@ -139,6 +142,7 @@ def main():
     study.VOL_MULT = args.vol_mult
     study.PARTIAL_TARGET_PCT = args.target
     study.ENTRY_MODE = args.entry_mode
+    study.MIN_DROP_PCT = args.min_drop_pct
 
     tickers = hk_fetch.read_ticker_file(hk_fetch.ALL_FILE if args.universe == "all" else hk_fetch.HSI_FILE)
     by_ticker = load_series(tickers, args.data_through)
@@ -147,7 +151,8 @@ def main():
     last_date = max(s[-1]["date"] for s in by_ticker.values())
     tag = args.tag or (f"{args.universe}_vm{args.vol_mult:g}_liq{int(args.min_turnover / 1e6) if args.min_turnover else 0}m"
                        + (f"_cap{int(args.min_mcap / 1e6)}m" if args.min_mcap else "")
-                       + (f"_{args.entry_mode}" if args.entry_mode != "optimistic" else ""))
+                       + (f"_{args.entry_mode}" if args.entry_mode != "optimistic" else "")
+                       + (f"_drop{args.min_drop_pct * 100:g}pct" if args.min_drop_pct else ""))
     shares = load_shares() if args.min_mcap else None
     if args.min_mcap:
         have = sum(1 for t in by_ticker if t in shares)

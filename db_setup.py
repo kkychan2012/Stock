@@ -117,6 +117,12 @@ def setup_database():
                 signal_date  TEXT,
                 signal_price REAL,
                 added_at     TEXT    DEFAULT CURRENT_TIMESTAMP,
+                range_low    REAL,             -- user-defined target price range for the "+ Refresh" alert
+                range_high   REAL,
+                range_hit    INTEGER DEFAULT 0,  -- 1 once a refresh has found the live price inside [range_low, range_high]
+                range_hit_at TEXT,              -- when it was FIRST hit; not touched again until Reset
+                last_price   REAL,              -- last live price fetched by "+ Refresh" (Yahoo, ~15 min delayed)
+                last_checked TEXT,
                 UNIQUE(watchlist_id, ticker)
             );
 
@@ -206,6 +212,151 @@ def setup_database():
 
             CREATE INDEX IF NOT EXISTS idx_insider_signals_date
                 ON insider_signals(transaction_date DESC);
+            CREATE INDEX IF NOT EXISTS idx_insider_signals_ticker_type
+                ON insider_signals(ticker, transaction_type, transaction_date);
+
+            -- Complete SEC Form 4 store (every filer role, every transaction
+            -- code, any size) written by the nightly collector
+            -- (nightly_collect.py -> insider_pipeline/main.py --store-all).
+            -- insider_signals above stays the filtered high-conviction view.
+            CREATE TABLE IF NOT EXISTS insider_trades_all (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                accession          TEXT NOT NULL,
+                tx_index           INTEGER NOT NULL,
+                filed_date         TEXT,
+                transaction_date   TEXT,
+                ticker             TEXT,
+                company_name       TEXT,
+                issuer_cik         TEXT,
+                insider_name       TEXT,
+                role               TEXT,
+                transaction_code   TEXT,
+                transaction_type   TEXT,
+                acquired_disposed  TEXT,
+                shares             REAL,
+                price              REAL,
+                total_value        REAL,
+                shares_owned_after REAL,
+                direct_indirect    TEXT,
+                flag_10b51         INTEGER DEFAULT 0,
+                filing_url         TEXT,
+                source             TEXT DEFAULT 'Form 4',
+                fetched_at         TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(accession, tx_index)
+            );
+            CREATE INDEX IF NOT EXISTS idx_insider_all_ticker_date
+                ON insider_trades_all(ticker, transaction_date);
+            CREATE INDEX IF NOT EXISTS idx_insider_all_date
+                ON insider_trades_all(transaction_date);
+
+            -- SEC Form 144 (proposed insider/affiliate sales), whole market,
+            -- one row per filing — written by sec_filings.py (nightly job).
+            CREATE TABLE IF NOT EXISTS sec_form144 (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                accession          TEXT NOT NULL UNIQUE,
+                form_type          TEXT,
+                filed_date         TEXT,
+                issuer_cik         TEXT,
+                ticker             TEXT,
+                company_name       TEXT,
+                seller_name        TEXT,
+                relationship       TEXT,
+                securities_class   TEXT,
+                shares_to_sell     REAL,
+                market_value       REAL,
+                shares_outstanding REAL,
+                approx_sale_date   TEXT,
+                exchange           TEXT,
+                broker             TEXT,
+                acquired_how       TEXT,
+                acquired_date      TEXT,
+                plan_10b51         INTEGER DEFAULT 0,
+                plan_adoption_date TEXT,
+                remarks            TEXT,
+                filing_url         TEXT,
+                fetched_at         TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_form144_ticker_date
+                ON sec_form144(ticker, filed_date);
+            CREATE INDEX IF NOT EXISTS idx_form144_date ON sec_form144(filed_date);
+
+            -- SEC Schedule 13D / 13G (+ amendments): > 5% holders, whole
+            -- market, one row per reporting person per filing (sec_filings.py).
+            CREATE TABLE IF NOT EXISTS sec_13dg (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                accession          TEXT NOT NULL,
+                person_index       INTEGER NOT NULL,
+                form_type          TEXT,
+                filed_date         TEXT,
+                event_date         TEXT,
+                issuer_cik         TEXT,
+                ticker             TEXT,
+                company_name       TEXT,
+                cusip              TEXT,
+                securities_class   TEXT,
+                filer_name         TEXT,
+                filer_cik          TEXT,
+                person_type        TEXT,
+                shares_owned       REAL,
+                percent_of_class   REAL,
+                sole_voting        REAL,
+                shared_voting      REAL,
+                sole_dispositive   REAL,
+                shared_dispositive REAL,
+                rule               TEXT,
+                purpose            TEXT,
+                filing_url         TEXT,
+                fetched_at         TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(accession, person_index)
+            );
+            CREATE INDEX IF NOT EXISTS idx_13dg_ticker_date ON sec_13dg(ticker, filed_date);
+            CREATE INDEX IF NOT EXISTS idx_13dg_date ON sec_13dg(filed_date);
+
+            -- The 10 ideas of each nightly Morning Brief (daily_brief.py) —
+            -- used for "featured before" notes and the track-record table.
+            CREATE TABLE IF NOT EXISTS daily_report_picks (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                as_of        TEXT NOT NULL,
+                rank         INTEGER,
+                ticker       TEXT NOT NULL,
+                score        REAL,
+                tech_score   REAL,
+                smart_score  REAL,
+                close        REAL,
+                headline     TEXT,
+                tags         TEXT,
+                risks        TEXT,
+                created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(as_of, ticker)
+            );
+
+            -- Intraday monitor alerts (intraday_monitor.py, hourly in US hours).
+            CREATE TABLE IF NOT EXISTS intraday_alerts (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                trade_date  TEXT NOT NULL,
+                ticker      TEXT NOT NULL,
+                alert_type  TEXT NOT NULL,
+                scope       TEXT,
+                price       REAL,
+                change_pct  REAL,
+                vol_pace    REAL,
+                level       REAL,
+                detail      TEXT,
+                first_seen  TEXT,
+                last_seen   TEXT,
+                UNIQUE(trade_date, ticker, alert_type)
+            );
+            CREATE INDEX IF NOT EXISTS idx_intraday_alerts_date ON intraday_alerts(trade_date);
+
+            -- One row per nightly_collect.py run (what ran, how it went).
+            CREATE TABLE IF NOT EXISTS data_collection_runs (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at   TEXT NOT NULL,
+                finished_at  TEXT,
+                job          TEXT NOT NULL,
+                status       TEXT,
+                detail       TEXT
+            );
 
             CREATE INDEX IF NOT EXISTS idx_vcp_signals_date
                 ON vcp_signals(scan_date);
@@ -429,12 +580,26 @@ def _migrate(conn):
     # Ensure Default watchlist always exists
     conn.execute("INSERT OR IGNORE INTO watchlists (id, name) VALUES (1, 'Default')")
 
+    # monitor_list target-price-range columns (added after the table first shipped). Queried fresh here
+    # since the block above may have just recreated the table via the old-schema migration path.
+    monitor_cols_now = {row[1] for row in conn.execute("PRAGMA table_info(monitor_list)")}
+    for col, typ in (("range_low", "REAL"), ("range_high", "REAL"), ("range_hit", "INTEGER DEFAULT 0"),
+                     ("range_hit_at", "TEXT"), ("last_price", "REAL"), ("last_checked", "TEXT")):
+        if col not in monitor_cols_now:
+            conn.execute(f"ALTER TABLE monitor_list ADD COLUMN {col} {typ}")
+
     # surge_positions live-monitor columns (added after the table first shipped)
     surge_pos_cols = {row[1] for row in conn.execute("PRAGMA table_info(surge_positions)")}
     for col, typ in (("alert_note", "TEXT"), ("target_hit_date", "TEXT"),
                      ("price_asof", "TEXT"), ("price_is_live", "INTEGER DEFAULT 0")):
         if surge_pos_cols and col not in surge_pos_cols:
             conn.execute(f"ALTER TABLE surge_positions ADD COLUMN {col} {typ}")
+
+    # Morning Brief key levels (used by intraday_monitor.py alerts)
+    pick_cols = {row[1] for row in conn.execute("PRAGMA table_info(daily_report_picks)")}
+    for col in ("stop_level", "support_level", "resistance_level"):
+        if pick_cols and col not in pick_cols:
+            conn.execute(f"ALTER TABLE daily_report_picks ADD COLUMN {col} REAL")
 
     surge_sig_cols = {row[1] for row in conn.execute("PRAGMA table_info(surge_signals)")}
     for col, typ in (("last_price", "REAL"), ("price_asof", "TEXT"),

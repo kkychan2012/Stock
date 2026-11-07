@@ -52,32 +52,55 @@ GREEN = Font(color="15803D")
 RED = Font(color="B91C1C")
 
 
-def generate_trades(by_ticker, mode, vol_mult, first, last, out_dir):
-    study.ENTRY_MODE, study.VOL_MULT = mode, vol_mult
+def generate_trades(by_ticker, mode, vol_mult, min_drop_pct, first, last, out_dir, exclude_acquisitions=False):
+    """Writes one study_volume_surge_YYYY_MM.json per surge month and returns (signal count, excluded list).
+    exclude_acquisitions drops signals whose surge day coincides with a merger / tender-offer filing
+    (see acquisition_filter.py) before the account simulation ever sees them."""
+    study.ENTRY_MODE, study.VOL_MULT, study.MIN_DROP_PCT = mode, vol_mult, min_drop_pct
     os.makedirs(out_dir, exist_ok=True)
     for f in os.listdir(out_dir):
         if f.startswith("study_volume_surge_") and f.endswith(".json"):
             os.remove(os.path.join(out_dir, f))
+    # one pass over the whole period, bucketed by surge month (same signals as scanning month by month)
+    study.SURGE_START, study.SURGE_END = f"{first}-01", f"{last}-31"
+    by_month = {ym: [] for ym in months(first, last)}
+    for ticker, series in by_ticker.items():
+        for surge_idx in study.find_surge_indices(series):
+            drop_idx = study.find_drop_day(series, surge_idx)
+            if drop_idx is None:
+                continue
+            a_idx = study.find_scenario_a(series, surge_idx, drop_idx)
+            if a_idx is None:
+                continue
+            level = series[surge_idx]["close"]
+            by_month[series[surge_idx]["date"][:7]].append(study.build_trade(
+                ticker, series[surge_idx]["date"], level, series[drop_idx]["date"], "A", series, a_idx,
+                entry_price=study.entry_fill(series, a_idx, level)))
+
+    excluded = []
+    if exclude_acquisitions:
+        from acquisition_filter import AcquisitionFilter
+        af = AcquisitionFilter()
+        af.load({t["ticker"] for trades in by_month.values() for t in trades})
+        for ym, trades in by_month.items():
+            keep = []
+            for t in trades:
+                hit = af.match(t["ticker"], t["surge_date"])
+                if hit:
+                    excluded.append({"ticker": t["ticker"], "surge_date": t["surge_date"], "drop_date": t["drop_date"],
+                                     "would_buy_date": t["entry_date"], "buy_level": t["entry_price"],
+                                     "sec_form": hit[1], "sec_filing_date": hit[0],
+                                     "trade_return_%": t.get("blended_return_pct")})
+                else:
+                    keep.append(t)
+            by_month[ym] = keep
+
     total = 0
-    for ym in months(first, last):
-        study.SURGE_START, study.SURGE_END = f"{ym}-01", f"{ym}-31"
-        trades = []
-        for ticker, series in by_ticker.items():
-            for surge_idx in study.find_surge_indices(series):
-                drop_idx = study.find_drop_day(series, surge_idx)
-                if drop_idx is None:
-                    continue
-                a_idx = study.find_scenario_a(series, surge_idx, drop_idx)
-                if a_idx is None:
-                    continue
-                level = series[surge_idx]["close"]
-                trades.append(study.build_trade(
-                    ticker, series[surge_idx]["date"], level, series[drop_idx]["date"], "A", series, a_idx,
-                    entry_price=study.entry_fill(series, a_idx, level)))
+    for ym, trades in by_month.items():
         with open(os.path.join(out_dir, f"study_volume_surge_{ym.replace('-', '_')}.json"), "w") as f:
             json.dump({"trades": trades}, f, indent=2)
         total += len(trades)
-    return total
+    return total, excluded
 
 
 def transaction_rows(t):
@@ -201,6 +224,9 @@ def main():
     ap = argparse.ArgumentParser(description="US surge backtest -> Excel report grouped by ticker")
     ap.add_argument("--entry-mode", choices=["touch", "stop", "limit", "optimistic"], default="touch")
     ap.add_argument("--vol-mult", type=float, default=3.5)
+    ap.add_argument("--min-drop-pct", type=float, default=study.MIN_DROP_PCT,
+                    help="drop day also needs this much open-to-close decline, e.g. 0.03 = 3%% "
+                         "(0 = any red candle; default matches the live dashboard's current setting)")
     ap.add_argument("--capital", type=float, default=20000.0)
     ap.add_argument("--position", type=float, default=1000.0, help="base stake per slot")
     ap.add_argument("--slots", type=int, default=20)
@@ -208,14 +234,24 @@ def main():
     ap.add_argument("--to", dest="last", default="2026-09")
     ap.add_argument("--data-through", default="2026-09-18", help="ignore later data (drops an unfinished day)")
     ap.add_argument("--include-hk", action="store_true", help="keep .HK tickers from the tracked list (HKD prices)")
+    ap.add_argument("--vol-window", type=int, default=10,
+                    help="days in the volume average the surge is measured against (10 = the dashboard's Vol MA10)")
+    ap.add_argument("--db", default=study.DB_PATH,
+                    help="price database (default the dashboard's; a long-history one comes from build_us_10y_prices.py)")
+    ap.add_argument("--exclude-acquisitions", action="store_true",
+                    help="drop surges caused by a confirmed acquisition (SEC merger / tender-offer filing around the surge day)")
     ap.add_argument("--out", help="output .xlsx path")
     args = ap.parse_args()
 
-    tag = f"{args.entry_mode}_vm{args.vol_mult:g}_{int(args.slots)}slots"
+    tag = (f"{args.entry_mode}_vm{args.vol_mult:g}"
+          + (f"_drop{args.min_drop_pct * 100:g}pct" if args.min_drop_pct else "") + f"_{int(args.slots)}slots"
+          + (f"_volma{args.vol_window}" if args.vol_window != 10 else "")
+          + ("_exMA" if args.exclude_acquisitions else "")
+          + (f"_{args.first}_{args.last}" if args.db != study.DB_PATH else ""))
     run_dir = os.path.join(OUT_ROOT, tag)
     out = args.out or os.path.join(OUT_ROOT, f"us_surge_backtest_{tag}.xlsx")
 
-    conn = sqlite3.connect(study.DB_PATH)
+    conn = sqlite3.connect(args.db)
     by_ticker = study.load_series_by_ticker(conn)
     conn.close()
     for t in list(by_ticker):
@@ -224,9 +260,16 @@ def main():
             continue
         by_ticker[t] = [r for r in by_ticker[t] if r["date"] <= args.data_through]
         study.add_ma21(by_ticker[t])
+        if args.vol_window != 10:        # same convention as Vol MA10: the average includes the day itself
+            vols = pd.Series([r["volume"] for r in by_ticker[t]], dtype="float64").rolling(args.vol_window).mean()
+            for r, v in zip(by_ticker[t], vols):
+                r["vol_ma10"] = None if pd.isna(v) else float(v)
     print(f"US universe {len(by_ticker)} tickers | data through {args.data_through} | fills: {args.entry_mode} | volume x{args.vol_mult:g}")
 
-    n_sig = generate_trades(by_ticker, args.entry_mode, args.vol_mult, args.first, args.last, os.path.join(run_dir, "strategies"))
+    n_sig, excluded = generate_trades(by_ticker, args.entry_mode, args.vol_mult, args.min_drop_pct, args.first, args.last,
+                                      os.path.join(run_dir, "strategies"), args.exclude_acquisitions)
+    excluded = pd.DataFrame(excluded, columns=["ticker", "surge_date", "drop_date", "would_buy_date", "buy_level",
+                                               "sec_form", "sec_filing_date", "trade_return_%"])
     cwd = os.getcwd()
     os.chdir(run_dir)                                            # capital_simulation reads ./strategies/
     try:
@@ -258,17 +301,20 @@ def main():
     info = [
         ("STRATEGY", ""),
         ("Universe", f"US: tracked tickers + S&P 500 / Russell 1000 ({len(by_ticker)} tickers)"),
-        ("Surge day", f"volume > {args.vol_mult:g}x its 10-day average, close > MA200, MA50 > MA200, up day"),
-        ("Drop day", "first red candle (close < open) after the surge, within 10 trading days"),
+        ("Surge day", f"volume > {args.vol_mult:g}x its {args.vol_window}-day average, close > MA200, MA50 > MA200, up day"),
+        ("Drop day", "first red candle (close < open) after the surge, within 10 trading days"
+                    + (f", also needing at least a {args.min_drop_pct:.0%} open-to-close decline that same day" if args.min_drop_pct else "")),
         ("Buy", f"buy level = surge-day close, within 5 trading days after the drop day; fills: {args.entry_mode} "
-                f"({'pay max(open, level) once the High reaches the level' if args.entry_mode == 'stop' else 'needs the Low to reach the level, pay min(open, level)' if args.entry_mode == 'limit' else 'OLD optimistic rule: fill at the level even if never traded'})"),
+                f"({'pay max(open, level) once the High reaches the level' if args.entry_mode == 'stop' else 'needs the Low to reach the level, pay min(open, level)' if args.entry_mode == 'limit' else 'a day counts only if its range [Low, High] touches the level and the level is at or above MA21; filled at the level' if args.entry_mode == 'touch' else 'OLD optimistic rule: fill at the level even if never traded'})"),
         ("Sell", "half at +15% (close vs surge close); the rest when a close is below MA21 and the next open is still below"),
         ("Period", f"surge days {args.first} .. {args.last}, price data through {args.data_through}"),
         ("Costs", "none modelled (US)"),
         ("", ""),
         ("ACCOUNT", ""),
         ("Start capital", f"${args.capital:,.0f}   ({args.slots} slots, base stake ${args.position:,.0f} per slot; each buy = base + an even share of the profit so far; never more than {args.slots} open positions)"),
-        ("Signals found", f"{n_sig:,}"),
+        ("Acquisitions", (f"{len(excluded)} signal(s) left out: a merger / tender-offer document was filed with the SEC around the surge day "
+                          "(sheet 'Excluded (M&A)')") if args.exclude_acquisitions else "not filtered"),
+        ("Signals found", f"{n_sig:,}" + (" (after leaving out the acquisition surges)" if args.exclude_acquisitions else "")),
         ("Trades taken", f"{int(s['trades_executed'])}   (skipped for no free slot / cash: {int(s['trades_skipped'])})"),
         ("Ending value", f"${s['total_ending_value']:,.2f}   (cash ${s['ending_cash']:,.2f} + open positions ${s['value_in_open_positions']:,.2f})"),
         ("Total P/L", f"${s['total_pnl']:,.2f}   ({s['total_return_pct']:.1f}% on start capital)"),
@@ -282,6 +328,7 @@ def main():
         ("By Buy Date", "the same buy / sell detail with one block per trade, in the order the trades were bought; the header shows the running total of trade P/L."),
         ("Amount ($)", "negative = cash paid for a buy, positive = cash received from a sale"),
         ("Trade P/L", "shown on the last row of each trade: proceeds from all sells minus the amount paid"),
+        ("Survivorship", "the ticker list is TODAY's index membership: companies acquired, bankrupt or dropped from the indexes during the period are missing, which flatters a long backtest"),
         ("Caveat", "daily bars only (intraday order of highs/lows unknown); no slippage or partial fills; backtest, not a forecast"),
     ]
 
@@ -324,6 +371,9 @@ def main():
         log.to_excel(w, sheet_name="Transactions (chrono)", index=False)
         skipped.to_excel(w, sheet_name="Skipped Signals", index=False)
         open_pos.to_excel(w, sheet_name="Still Open", index=False)
+        if args.exclude_acquisitions:
+            excluded.sort_values(["surge_date", "ticker"]).to_excel(w, sheet_name="Excluded (M&A)", index=False)
+            autosize(wb["Excluded (M&A)"])
         if "Sheet" in wb.sheetnames:
             del wb["Sheet"]
         wb.move_sheet("Summary", offset=-wb.index(wb["Summary"]))
@@ -332,6 +382,8 @@ def main():
 
     print(f"signals {n_sig} | taken {int(s['trades_executed'])} | skipped {int(s['trades_skipped'])} | "
           f"P/L ${s['total_pnl']:,.0f} ({s['total_return_pct']:.1f}%) | win rate {100 * (trades.total_pnl > 0).mean():.1f}%")
+    if args.exclude_acquisitions:
+        print(f"acquisition surges left out: {len(excluded)}")
     print(f"wrote {out}")
 
 

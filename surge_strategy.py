@@ -46,6 +46,12 @@ CONFIG = {
                                     # after its trigger day expires (None = never)
     "PARTIAL_TARGET_PCT": 0.15,  # used by the position monitor (phase 3)
     "MA21_WINDOW": 21,
+    "REQUIRE_BUY_ABOVE_MA21": True,  # a touch/High-reached day only counts as a trigger if the buy
+                                     # level (surge-day close) is >= that day's MA21 - i.e. never buy
+                                     # into a stock already trading below its MA21
+    "MIN_DROP_PCT": 0.02,       # a red candle only counts as the drop day if it also fell at least this
+                                # much from its own open to its close, e.g. 0.03 = 3%. 0 = any red candle
+                                # (the original rule) counts, no matter how small.
 }
 
 LIVE_TRIGGER_NOTE = "triggered live by the monitor"      # marks a trigger set before its daily bar was stored
@@ -121,13 +127,17 @@ def is_surge(series, i, cfg):
             and r["close"] > prev_close)
 
 
-def find_drop_day(series, surge_idx, max_days):
-    """First solid red candle (close < open) after the surge day, within
-    max_days trading days (None = no limit). A green candle never counts."""
+def find_drop_day(series, surge_idx, max_days, min_drop_pct=0.0):
+    """First solid red candle (close < open) after the surge day, within max_days trading days
+    (None = no limit). A green candle never counts. If min_drop_pct > 0, the candle's own decline
+    -- (open - close) / open -- must also reach it; a red candle that's too small is skipped and
+    the search keeps going for a later, bigger one."""
     end = len(series) if max_days is None else min(len(series), surge_idx + 1 + max_days)
     for i in range(surge_idx + 1, end):
         c, o = series[i]["close"], series[i]["open"]
         if c is not None and o is not None and c < o:
+            if min_drop_pct and (o - c) / o < min_drop_pct:
+                continue
             return i
     return None
 
@@ -141,7 +151,7 @@ def evaluate_signal(series, surge_idx, config=None):
     out = {"status": "watching", "drop_date": None, "buy_level": None,
            "window_days_left": None, "trigger_date": None, "note": None}
 
-    drop_idx = find_drop_day(series, surge_idx, cfg["MAX_DAYS_TO_DROP"])
+    drop_idx = find_drop_day(series, surge_idx, cfg["MAX_DAYS_TO_DROP"], cfg["MIN_DROP_PCT"])
     if drop_idx is None:
         cap = cfg["MAX_DAYS_TO_DROP"]
         if cap is not None and last >= surge_idx + cap:
@@ -154,12 +164,19 @@ def evaluate_signal(series, surge_idx, config=None):
     window = cfg["BUY_WINDOW_DAYS"]
     w0 = drop_idx + 1
     touch = cfg["ENTRY_RULE"] == "touch"
+    require_ma21 = cfg["REQUIRE_BUY_ABOVE_MA21"]
+    closes = [r["close"] for r in series] if require_ma21 else None
+    ma21_window = cfg["MA21_WINDOW"]
     for i in range(w0, min(w0 + window, len(series))):
         h, lo = series[i]["high"], series[i]["low"]
         if touch:
             hit = h is not None and lo is not None and lo <= surge_close <= h
         else:
             hit = h is not None and h >= surge_close
+        if hit and require_ma21:
+            m21 = _ma(closes, i, ma21_window)
+            if m21 is not None and surge_close < m21:
+                hit = False   # buy price would sit below that day's MA21 -- not a valid trigger, keep scanning
         if hit:
             out["status"] = "triggered"
             out["trigger_date"] = series[i]["date"]
@@ -171,8 +188,9 @@ def evaluate_signal(series, surge_idx, config=None):
 
     if len(series) >= w0 + window:
         out["status"] = "expired"
-        out["note"] = (f"price never touched the surge close within {window} trading days of the drop day - deal closed"
-                       if touch else f"High never reached the surge close within {window} trading days of the drop day")
+        reason = ("price never touched the surge close" if touch else "High never reached the surge close")
+        suffix = " (or only did so below MA21)" if require_ma21 else ""
+        out["note"] = f"{reason}{suffix} within {window} trading days of the drop day - deal closed"
     else:
         out["status"] = "armed"
         out["window_days_left"] = drop_idx + window - last

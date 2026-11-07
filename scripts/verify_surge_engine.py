@@ -38,6 +38,8 @@ def main():
     conn = sqlite3.connect(study.DB_PATH)
     study_series = study.load_series_by_ticker(conn)
     conn.close()
+    for series in study_series.values():
+        study.add_ma21(series)                  # needed for the REQUIRE_BUY_ABOVE_MA21 filter
     expected = {}
     for ym in months():
         study.SURGE_START, study.SURGE_END = f"{ym}-01", f"{ym}-31"

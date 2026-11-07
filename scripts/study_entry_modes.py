@@ -44,10 +44,12 @@ def months(first, last):
             y, m = y + 1, 1
 
 
-def run_mode(mode, vm, by_ticker, first, last, capital, position, slots):
+def run_mode(mode, vm, by_ticker, first, last, capital, position, slots, min_drop_pct=0.0):
     study.ENTRY_MODE = mode
     study.VOL_MULT = vm
-    out_dir = os.path.join(OUT_ROOT, f"vm{vm:g}", mode, "strategies")
+    study.MIN_DROP_PCT = min_drop_pct
+    tag = f"vm{vm:g}" + (f"_drop{min_drop_pct * 100:g}pct" if min_drop_pct else "")
+    out_dir = os.path.join(OUT_ROOT, tag, mode, "strategies")
     os.makedirs(out_dir, exist_ok=True)
     for f in os.listdir(out_dir):
         if f.startswith("study_volume_surge_") and f.endswith(".json"):
@@ -72,7 +74,7 @@ def run_mode(mode, vm, by_ticker, first, last, capital, position, slots):
             json.dump({"trades": trades}, f, indent=2)
         trades_all += trades
     cwd = os.getcwd()
-    os.chdir(os.path.join(OUT_ROOT, f"vm{vm:g}", mode))        # capital_simulation reads ./strategies/
+    os.chdir(os.path.join(OUT_ROOT, tag, mode))                 # capital_simulation reads ./strategies/
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             res = capsim.run_simulation(capital, position, "strategies/capital_simulation_us.xlsx", compound_slots=slots)
@@ -86,6 +88,9 @@ def main():
     ap.add_argument("--modes", nargs="+", default=["touch", "optimistic", "stop", "limit"])
     ap.add_argument("--vol-mults", nargs="+", type=float, default=[study.VOL_MULT],
                     help="surge volume multiples to test (default: the study's 3.5)")
+    ap.add_argument("--min-drop-pct", type=float, default=study.MIN_DROP_PCT,
+                    help="drop day also needs this much open-to-close decline, e.g. 0.03 = 3%% "
+                         "(0 = any red candle; default matches the live dashboard's current setting)")
     ap.add_argument("--from", dest="first", default="2024-11")
     ap.add_argument("--to", dest="last", default="2026-09")
     ap.add_argument("--data-through", default="2026-09-18", help="ignore data after this date (drops an unfinished day)")
@@ -105,7 +110,8 @@ def main():
     print(f"\n{'vol x':>5s} {'mode':11s} {'trades':>6s} {'avg %':>7s} {'median %':>9s} {'win %':>6s} | {'sim exec':>8s} {'skipped':>7s} {'P/L':>10s} {'return %':>9s}")
     for vm in args.vol_mults:
         for mode in args.modes:
-            trades, s = run_mode(mode, vm, by_ticker, args.first, args.last, args.capital, args.position, args.slots)
+            trades, s = run_mode(mode, vm, by_ticker, args.first, args.last, args.capital, args.position, args.slots,
+                                args.min_drop_pct)
             r = sorted(t["blended_return_pct"] for t in trades)
             n = len(r)
             if not n:

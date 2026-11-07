@@ -117,18 +117,29 @@ def find_surge_indices(series):
     return idxs
 
 
+MIN_DROP_PCT = 0.02  # a red candle only counts as the drop day if it also fell at least this much from its
+                    # own open to its close, e.g. 0.03 = 3%. 0 = any red candle counts (the original rule).
+
+
 def find_drop_day(series, surge_idx):
     """Drop Day = first day after the surge day with a SOLID/FILLED red candle
     (close < open). A green/hollow candle (close > open) never counts, even
-    if its close is below the previous day's close."""
+    if its close is below the previous day's close. If MIN_DROP_PCT > 0, the
+    candle's own decline -- (open - close) / open -- must also reach it, or
+    the search keeps going for a later, bigger one."""
     for i in range(surge_idx + 1, len(series)):
         c, o = series[i]["close"], series[i]["open"]
         if c is not None and o is not None and c < o:
+            if MIN_DROP_PCT and (o - c) / o < MIN_DROP_PCT:
+                continue
             return i
     return None
 
 
 SCENARIO_A_MAX_DAYS = 5  # trading days, counted starting the day AFTER the Drop Day
+
+REQUIRE_BUY_ABOVE_MA21 = True  # a day only counts as a valid trigger if the buy level (surge close)
+                                # is >= that day's MA21 - never buy into a stock already below its MA21
 
 # How the Scenario A buy at the surge-day close is FILLED:
 #   "touch"      (DEFAULT - the rule the dashboard uses): the deal happens only if, within the window, a day's
@@ -154,16 +165,19 @@ def find_scenario_a(series, surge_idx, drop_idx):
     for i in range(window_start, window_end):
         if ENTRY_MODE == "touch":
             lo, h = series[i]["low"], series[i]["high"]
-            if lo is not None and h is not None and lo <= surge_close <= h:
-                return i
+            hit = lo is not None and h is not None and lo <= surge_close <= h
         elif ENTRY_MODE == "limit":
             lo = series[i]["low"]
-            if lo is not None and lo <= surge_close:
-                return i
+            hit = lo is not None and lo <= surge_close
         else:
             h = series[i]["high"]
-            if h is not None and h >= surge_close:
-                return i
+            hit = h is not None and h >= surge_close
+        if hit and REQUIRE_BUY_ABOVE_MA21:
+            m21 = series[i].get("ma21")   # populated by add_ma21() before scanning
+            if m21 is not None and surge_close < m21:
+                hit = False               # buy price would sit below MA21 -- not a valid trigger
+        if hit:
+            return i
     return None
 
 

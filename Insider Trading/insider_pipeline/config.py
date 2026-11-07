@@ -10,7 +10,7 @@ CLUSTER_MIN_INSIDERS = 3
 
 # SEC API
 SEC_USER_AGENT = "kkychan2012 kkychan2012@gmail.com"
-SEC_RATE_LIMIT = 10  # max requests per second
+SEC_RATE_LIMIT = 8  # max requests per second (SEC cap is 10; headroom avoids 503 throttling)
 SEC_RETRY_ATTEMPTS = 3
 SEC_RETRY_BACKOFF = 2  # seconds, doubles each retry
 

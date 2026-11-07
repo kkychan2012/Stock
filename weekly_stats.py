@@ -15,7 +15,12 @@ Two entry points:
     summarize_weeks(weeks)                     pure — list of week dicts in, stats out
     weekly_up_down(ticker, start_date, end_date)  fetches from Yahoo, then summarizes
 
-CLI:  python weekly_stats.py VKTX 2025-04-07 2026-09-30
+Both the single-ticker analysis and the ranking also run on DAILY bars
+(`interval="day"`): the same up/down/flat rule applied to each day's candle.
+The result keeps the weekly field names (`weeks`, `up_weeks`, `best_week`, ...)
+— in daily mode each "week" is one trading day; `interval` in the result says which.
+
+CLI:  python weekly_stats.py VKTX 2025-04-07 2026-09-30 [--daily]
 """
 
 from datetime import date, datetime, timedelta
@@ -82,14 +87,23 @@ def summarize_weeks(weeks):
     return weeks, summary
 
 
-def fetch_weekly_bars(ticker, start_date, end_date):
-    """Weekly OHLCV bars from Yahoo, ascending. Dates are 'YYYY-MM-DD' strings;
-    end_date is inclusive (yfinance's `end` is exclusive, so +1 day is passed).
-    Each bar is labelled by the Monday its week starts on."""
+INTERVALS = ("week", "day")
+
+
+def _check_interval(interval):
+    if interval not in INTERVALS:
+        raise ValueError("interval must be 'week' or 'day'")
+
+
+def fetch_bars(ticker, start_date, end_date, interval="week"):
+    """Weekly (or daily) OHLCV bars from Yahoo, ascending. Dates are 'YYYY-MM-DD'
+    strings; end_date is inclusive (yfinance's `end` is exclusive, so +1 day is
+    passed). A weekly bar is labelled by the Monday its week starts on."""
     import yfinance as yf
 
     end_excl = (_parse_date(end_date) + timedelta(days=1)).isoformat()
-    df = yf.download(ticker, start=start_date, end=end_excl, interval="1wk",
+    df = yf.download(ticker, start=start_date, end=end_excl,
+                     interval="1wk" if interval == "week" else "1d",
                      auto_adjust=True, progress=False, multi_level_index=False)
     if df is None or df.empty:
         return []
@@ -110,22 +124,29 @@ def fetch_weekly_bars(ticker, start_date, end_date):
     return weeks
 
 
-def weekly_up_down(ticker, start_date, end_date=None):
+def weekly_up_down(ticker, start_date, end_date=None, interval="week"):
     """Fetch + summarize. Returns a JSON-ready dict:
-    {ticker, start_date, end_date, summary, weeks, notes}."""
+    {ticker, interval, start_date, end_date, summary, weeks, notes}.
+    interval="day" does the same per trading day (see the module docstring)."""
+    _check_interval(interval)
     ticker = ticker.strip().upper()
     end_date = end_date or date.today().isoformat()
     if _parse_date(end_date) < _parse_date(start_date):
         raise ValueError("end_date is before start_date")
 
-    weeks = fetch_weekly_bars(ticker, start_date, end_date)
+    weeks = fetch_bars(ticker, start_date, end_date, interval)
     weeks, summary = summarize_weeks(weeks)
 
     # Flag partial weeks at either edge so they can be read with care: a range
     # starting mid-week (Yahoo trims that bar to start_date), or ending before
     # that week's Friday (incl. the current, still-forming week).
     notes = []
-    if weeks:
+    if weeks and interval == "day":
+        if weeks[-1]["date"] == date.today().isoformat():
+            weeks[-1]["partial"] = True
+            notes.append(f"Last day ({weeks[-1]['date']}) is today — its candle and volume "
+                         "can still change until the close.")
+    elif weeks:
         first_monday = _parse_date(weeks[0]["date"])
         last_friday = _parse_date(weeks[-1]["date"]) + timedelta(days=4)
         if _parse_date(start_date) > first_monday:
@@ -138,11 +159,189 @@ def weekly_up_down(ticker, start_date, end_date=None):
 
     return {
         "ticker": ticker,
+        "interval": interval,
         "start_date": start_date,
         "end_date": end_date,
         "summary": summary,
         "weeks": weeks,
         "notes": notes,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Ranking — top tickers by up/down volume ratio across the whole stored set
+# (tracked Ticker List ∪ active S&P 500 + Russell 1000 universe).
+#
+# Unlike weekly_up_down() this reads the STORED daily bars and rolls them up
+# into weeks (open = first day's open, close = last day's close, volume = sum
+# — the same definition Yahoo uses for its 1wk bars), so ~1,100 tickers rank
+# in about a second with no download. It is only as current as the last Fetch.
+# ---------------------------------------------------------------------------
+RANK_MONTHS = 4            # default look-back
+RANK_TOP_N = 30
+RANK_MIN_CHANGE_PCT = 10.0  # minimum price rise, see `basis` in rank_volume_ratio()
+RANK_MIN_WEEKS_EACH = 1    # need at least this many up AND down weeks for a ratio
+
+
+def _months_back(d, months):
+    y, m = divmod(d.year * 12 + d.month - 1 - months, 12)
+    m += 1
+    leap = y % 4 == 0 and (y % 100 != 0 or y % 400 == 0)
+    last_day = [31, 29 if leap else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]
+    return date(y, m, min(d.day, last_day))
+
+
+def _monday(d):
+    return d - timedelta(days=d.weekday())
+
+
+def daily_to_weekly(days):
+    """days: ascending list of (date_str, open, close, volume) for one ticker.
+    Returns ascending week dicts labelled by the week's Monday."""
+    weeks = []
+    for ds, o, c, v in days:
+        monday = _monday(_parse_date(ds)).isoformat()
+        if weeks and weeks[-1]["date"] == monday:
+            weeks[-1]["close"] = c
+            weeks[-1]["volume"] += v or 0
+        else:
+            weeks.append({"date": monday, "open": o, "close": c, "volume": v or 0})
+    return weeks
+
+
+def rank_volume_ratio(start_date=None, end_date=None, top_n=RANK_TOP_N,
+                      min_change_pct=RANK_MIN_CHANGE_PCT, basis="range", conn=None,
+                      interval="week"):
+    """Top `top_n` tickers by avg-volume ratio (up weeks / down weeks), up side
+    only (ratio > 1), among tickers whose price rose more than `min_change_pct`:
+        basis="range" — last close vs the close just before the range started
+        basis="week"  — the best single week's close vs the previous week's close
+    Only whole weeks count: the start is snapped back to its Monday and the
+    still-forming current week is left out, since a short week's low volume
+    would skew the up/down averages.
+    interval="day" ranks by up DAYS / down DAYS instead: the stored daily bars
+    are used as they are (no Monday snap), basis="week" then means the best
+    single day vs the previous day's close, and today's bar is left out while
+    the US market is still open (a fetch made mid-session stores a partial bar)."""
+    from db_setup import get_connection
+
+    _check_interval(interval)
+    if basis not in ("range", "week"):
+        raise ValueError("basis must be 'range' or 'week'")
+    end = _parse_date(end_date) if end_date else date.today()
+    start = _parse_date(start_date) if start_date else _months_back(end, RANK_MONTHS)
+    if end < start:
+        raise ValueError("end_date is before start_date")
+    if interval == "week":
+        start = _monday(start)
+    # a few extra days before the range, for the "previous close" each ticker starts from
+    load_from = (start - timedelta(days=10)).isoformat()
+
+    own_conn = conn is None
+    if own_conn:
+        conn = get_connection()
+    try:
+        # tracked tickers win on overlap — same rule as /api/data/summary
+        rows = conn.execute("""
+            SELECT s.ticker, s.date, s.open, s.close, s.volume, 1 AS tracked
+            FROM stocks_daily s
+            WHERE s.date BETWEEN ? AND ?
+              AND s.ticker IN (SELECT ticker FROM extraction_tickers)
+            UNION ALL
+            SELECT u.ticker, u.date, u.open, u.close, u.volume, 0 AS tracked
+            FROM universe_prices u
+            JOIN ticker_universe t ON t.ticker = u.ticker AND t.is_active = 1
+            WHERE u.date BETWEEN ? AND ?
+              AND u.ticker NOT IN (SELECT ticker FROM extraction_tickers)
+            ORDER BY 1, 2
+        """, (load_from, end.isoformat(), load_from, end.isoformat())).fetchall()
+    finally:
+        if own_conn:
+            conn.close()
+
+    by_ticker, tracked, data_through = {}, {}, None
+    for tk, ds, o, c, v, is_tracked in rows:
+        if o is None or c is None:
+            continue
+        by_ticker.setdefault(tk, []).append((ds, o, c, v))
+        tracked[tk] = bool(is_tracked)
+        if data_through is None or ds > data_through:
+            data_through = ds
+
+    # the last week is whole only once the data reaches its Friday; in daily
+    # mode the only partial bar is today's, while the market is still open
+    partial_monday = None
+    if interval == "day":
+        from surge_strategy import market_clock
+        clock = market_clock()
+        if clock["weekday"] and not clock["is_final"] and data_through == clock["today"]:
+            partial_monday = clock["today"]
+    elif data_through:
+        last = _parse_date(data_through)
+        if last.weekday() < 4:
+            partial_monday = _monday(last).isoformat()
+
+    start_s = start.isoformat()
+    out = []
+    for tk, days in by_ticker.items():
+        prior = [d for d in days if d[0] < start_s]
+        in_range = [d for d in days if d[0] >= start_s]
+        if interval == "week":
+            weeks = daily_to_weekly(in_range)
+        else:
+            weeks = [{"date": ds, "open": o, "close": c, "volume": v or 0} for ds, o, c, v in in_range]
+        weeks = [w for w in weeks if w["date"] != partial_monday]
+        if not weeks:
+            continue
+        weeks, s = summarize_weeks(weeks)
+        ratio = s["avg_volume_ratio"]
+        if (ratio is None or ratio <= 1
+                or min(s["up_weeks"], s["down_weeks"]) < RANK_MIN_WEEKS_EACH):
+            continue
+
+        base = prior[-1][2] if prior else weeks[0]["open"]
+        range_chg = (s["last_close"] / base - 1) * 100 if base else None
+        best_week, prev_close = None, base
+        for w in weeks:
+            if prev_close:
+                chg = (w["close"] / prev_close - 1) * 100
+                if best_week is None or chg > best_week["change_pct"]:
+                    best_week = {"date": w["date"], "change_pct": chg}
+            prev_close = w["close"]
+
+        gate = range_chg if basis == "range" else (best_week or {}).get("change_pct")
+        if gate is None or gate <= min_change_pct:
+            continue
+        out.append({
+            "ticker": tk,
+            "tracked": tracked[tk],
+            "avg_volume_ratio": ratio,
+            "total_weeks": s["total_weeks"],
+            "up_weeks": s["up_weeks"],
+            "down_weeks": s["down_weeks"],
+            "avg_volume_up": s["avg_volume_up"],
+            "avg_volume_down": s["avg_volume_down"],
+            "start_price": base,
+            "last_close": s["last_close"],
+            "range_change_pct": range_chg,
+            "best_week": best_week,
+            "highest_volume_week": s["highest_volume_week"],
+        })
+
+    out.sort(key=lambda r: r["avg_volume_ratio"], reverse=True)
+    for i, r in enumerate(out, 1):
+        r["rank"] = i
+    return {
+        "start_date": start_s,
+        "end_date": end.isoformat(),
+        "data_through": data_through,
+        "excluded_partial_week": partial_monday,
+        "interval": interval,
+        "basis": basis,
+        "min_change_pct": min_change_pct,
+        "scanned": len(by_ticker),
+        "qualified": len(out),
+        "rows": out[:top_n],
     }
 
 
@@ -157,27 +356,29 @@ def _fmt_vol(v):
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) < 3:
-        print("usage: python weekly_stats.py TICKER START [END]")
+    args = [a for a in sys.argv[1:] if a != "--daily"]
+    unit = "day" if "--daily" in sys.argv else "week"
+    if len(args) < 2:
+        print("usage: python weekly_stats.py TICKER START [END] [--daily]")
         sys.exit(1)
-    res = weekly_up_down(sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
+    res = weekly_up_down(args[0], args[1], args[2] if len(args) > 2 else None, unit)
     s = res["summary"]
     print(f"Ticker: {res['ticker']} | Range: {res['start_date']} to {res['end_date']}")
     if not s["total_weeks"]:
-        print("No weekly data.")
+        print(f"No {unit} data.")
         sys.exit(0)
     hv = s["highest_volume_week"]
     ratio = f"{s['avg_volume_ratio']:.2f}x" if s["avg_volume_ratio"] else "—"
     rows = [
-        ("Total weeks", s["total_weeks"]),
-        ("Up weeks", f"{s['up_weeks']} ({s['up_pct']:.0f}%)"),
-        ("Down weeks", f"{s['down_weeks']} ({s['down_pct']:.0f}%)"),
-        ("Flat weeks", s["flat_weeks"]),
-        ("Avg volume (up weeks)", _fmt_vol(s["avg_volume_up"])),
-        ("Avg volume (down weeks)", _fmt_vol(s["avg_volume_down"])),
+        (f"Total {unit}s", s["total_weeks"]),
+        (f"Up {unit}s", f"{s['up_weeks']} ({s['up_pct']:.0f}%)"),
+        (f"Down {unit}s", f"{s['down_weeks']} ({s['down_pct']:.0f}%)"),
+        (f"Flat {unit}s", s["flat_weeks"]),
+        (f"Avg volume (up {unit}s)", _fmt_vol(s["avg_volume_up"])),
+        (f"Avg volume (down {unit}s)", _fmt_vol(s["avg_volume_down"])),
         ("Volume ratio (up/down avg)", ratio),
         ("Total volume (up / down)", f"{_fmt_vol(s['total_volume_up'])} / {_fmt_vol(s['total_volume_down'])}"),
-        ("Highest volume week", f"{hv['date']} ({hv['direction'].title()}), {_fmt_vol(hv['volume'])}"),
+        (f"Highest volume {unit}", f"{hv['date']} ({hv['direction'].title()}), {_fmt_vol(hv['volume'])}"),
     ]
     for k, v in rows:
         print(f"  {k:<28} {v}")
