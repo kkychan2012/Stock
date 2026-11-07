@@ -132,8 +132,8 @@ pos_bars = mk(BASE + [95.0, 96.0], opens=[None] * 25 + [None, 96.0])
 # then bars whose last High reaches the 100 limit
 arm = mk([100.0] * 28 + [100.0, 98.0, 97.0, 99.0])
 for b in arm:
-    if b["date"] == "2026-02-03":
-        b["open"], b["close"] = 99.0, 98.0
+    if b["date"] == "2026-02-03":                   # unambiguous ~8.6% decline -- not near any MIN_DROP_PCT boundary
+        b["open"], b["close"] = 107.0, 97.8
 arm[-1]["high"] = 100.5
 summary = ss.run_refresh("test", now=et(2026, 3, 1, 12, 0), bars_by_ticker={"POS": pos_bars, "ARM": arm})
 c = sqlite3.connect(tmp)
@@ -152,7 +152,7 @@ db = sqlite3.connect(tmp)
 db.execute("INSERT INTO surge_signals (ticker, surge_date, surge_close, status) VALUES ('WCH','2026-02-02',100,'watching')")
 db.commit()
 db.close()
-wbars = mk([100.0] * 29 + [99.0], opens=[None] * 29 + [101.0])      # idx 28 = surge day (close 100); idx 29 = 2026-02-03 red candle
+wbars = mk([100.0] * 29 + [90.0], opens=[None] * 29 + [101.0])   # ~10.9% decline -- unambiguous      # idx 28 = surge day (close 100); idx 29 = 2026-02-03 red candle
 ss.refresh_live(now=et(2026, 2, 3, 12, 0), bars_by_ticker={"WCH": wbars})          # day still forming
 db = sqlite3.connect(tmp)
 db.row_factory = sqlite3.Row
@@ -190,7 +190,7 @@ t = db.execute("SELECT * FROM surge_signals WHERE ticker='TRG'").fetchone()
 check("triggered signal gets its current price", t["last_price"] == 104.5 and t["price_asof"] == tbars[-1]["date"]
       and t["price_is_live"] == 0, dict(t))
 w = db.execute("SELECT * FROM surge_signals WHERE ticker='WCH'").fetchone()
-check("armed / watching signals get a price too", w["last_price"] == 99.0, dict(w))
+check("armed / watching signals get a price too", w["last_price"] == 90.0, dict(w))
 ss.refresh_live(now=et(2026, 2, 5, 12, 0), bars_by_ticker={"TRG": tbars})            # same day, market open -> still forming
 t = db.execute("SELECT * FROM surge_signals WHERE ticker='TRG'").fetchone()
 check("today's forming bar is flagged live", t["price_is_live"] == 1, dict(t))
@@ -252,6 +252,21 @@ r = ss.evaluate_signal(_touch_series(below), 0, NOCAP)
 check("price stays entirely below the level -> deal closed", r["status"] == "expired", r)
 r = ss.evaluate_signal(_touch_series(above[:2]), 0, NOCAP)
 check("2 days used, no touch yet -> still armed with 3 days left", r["status"] == "armed" and r["window_days_left"] == 3, r)
+
+# 17. MIN_DROP_PCT: a red candle only counts as the drop day once its own open->close decline
+#     reaches the threshold; a smaller red candle is skipped, the search keeps going.
+def _drop_series(candles):
+    rows = [{"date": "s", "open": 95.0, "high": 101.0, "low": 94.0, "close": 100.0}]  # surge day
+    for n, (o, c) in enumerate(candles, 1):
+        rows.append({"date": f"d{n}", "open": o, "close": c, "high": max(o, c) + 1, "low": min(o, c) - 1})
+    return rows
+
+
+series = _drop_series([(100.0, 99.0), (100.0, 96.5), (100.0, 95.0)])  # -1%, -3.5%, -5%
+check("no threshold: the first (small) red candle counts", ss.find_drop_day(series, 0, None) == 1)
+check("3% threshold: the 1% red candle is skipped, the 3.5% one counts", ss.find_drop_day(series, 0, None, 0.03) == 2)
+check("6% threshold: no candle is big enough", ss.find_drop_day(series, 0, None, 0.06) is None)
+check("exactly at the threshold counts", ss.find_drop_day(_drop_series([(100.0, 97.0)]), 0, None, 0.03) == 1)
 
 print(f"\n{'ALL PASSED' if not fails else str(fails) + ' FAILED'}")
 sys.exit(1 if fails else 0)

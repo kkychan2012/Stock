@@ -86,8 +86,8 @@ db.close()
 pos_bars = mk(BASE + [95.0, 96.0], opens=[None] * 25 + [None, 96.0])
 arm = mk([100.0] * 28 + [100.0, 98.0, 97.0, 99.0])
 for b in arm:
-    if b["date"] == "2026-02-03":
-        b["open"], b["close"] = 99.0, 98.0
+    if b["date"] == "2026-02-03":                   # unambiguous ~8.6% decline -- not near any MIN_DROP_PCT boundary
+        b["open"], b["close"] = 107.0, 97.8
 arm[-1]["high"] = 100.5
 summary = hs.run_refresh("test", now=hkt(2026, 3, 1, 12, 0), bars_by_ticker={"0002.HK": pos_bars, "0001.HK": arm})
 db = sqlite3.connect(tmp)
@@ -137,7 +137,7 @@ db = sqlite3.connect(tmp)
 db.execute("INSERT INTO hk_surge_signals (ticker, surge_date, surge_close, status) VALUES ('0003.HK','2026-02-02',100,'watching')")
 db.commit()
 db.close()
-wbars = mk([100.0] * 29 + [99.0], opens=[None] * 29 + [101.0])
+wbars = mk([100.0] * 29 + [90.0], opens=[None] * 29 + [101.0])   # ~10.9% decline -- unambiguous
 hs.refresh_live(now=hkt(2026, 2, 3, 11, 0), bars_by_ticker={"0003.HK": wbars})        # HK day still forming
 db = sqlite3.connect(tmp)
 db.row_factory = sqlite3.Row
@@ -171,7 +171,7 @@ db.row_factory = sqlite3.Row
 t = db.execute("SELECT * FROM hk_surge_signals WHERE ticker='0005.HK'").fetchone()
 check("HK: triggered signal gets its current price", t["last_price"] == 104.5 and t["price_asof"] == tbars[-1]["date"], dict(t))
 w = db.execute("SELECT * FROM hk_surge_signals WHERE ticker='0003.HK'").fetchone()
-check("HK: armed signal gets a price too", w["last_price"] == 99.0, dict(w))
+check("HK: armed signal gets a price too", w["last_price"] == 90.0, dict(w))
 hs.refresh_live(now=hkt(2026, 2, 5, 11, 0), bars_by_ticker={"0005.HK": tbars})
 t = db.execute("SELECT * FROM hk_surge_signals WHERE ticker='0005.HK'").fetchone()
 check("HK: today's forming bar is flagged live", t["price_is_live"] == 1, dict(t))
