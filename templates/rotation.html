@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Factor &amp; Sector Rotation</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f1f5f9; --surface: #ffffff; --border: #e2e8f0; --text: #1e293b; --muted: #64748b;
+    --accent: #2563eb; --accent-h: #1d4ed8; --green: #15803d; --green-bg: #dcfce7;
+    --red: #dc2626; --red-bg: #fee2e2; --neutral: #f8fafc; --amber: #b45309; --amber-bg: #fef3c7;
+    --heat-mid: #f0efec;
+  }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         font-size: 13px; color: var(--text); background: var(--bg); }
+  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 10px 16px;
+           display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+  header h1 { font-size: 17px; font-weight: 700; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  header .spacer { flex: 1; }
+  main { max-width: 1400px; margin: 0 auto; padding: 14px 16px 40px; }
+  .btn { padding: 6px 12px; border-radius: 6px; border: none; cursor: pointer; font-size: 12.5px;
+         font-weight: 600; text-decoration: none; display: inline-block; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-h); }
+  .btn-primary:disabled { opacity: .6; cursor: wait; }
+  .btn-ghost { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+  .seg-group { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex-wrap: wrap; }
+  .seg-btn { padding: 6px 12px; background: var(--surface); border: none; border-right: 1px solid var(--border);
+             cursor: pointer; font-size: 12.5px; color: var(--muted); font-weight: 600; }
+  .seg-btn:last-child { border-right: none; }
+  .seg-btn.active { background: var(--accent); color: #fff; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+           padding: 14px; margin-bottom: 14px; }
+  .panel h2 { font-size: 14px; margin-bottom: 4px; }
+  .panel .hint { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 10px; }
+  .toolbar label { color: var(--muted); font-size: 12px; font-weight: 600; }
+  .tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th { text-align: right; font-size: 11px; color: var(--muted); font-weight: 600; padding: 6px 8px;
+       border-bottom: 1px solid var(--border); white-space: nowrap; background: var(--neutral); }
+  td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; position: sticky; left: 0; background: var(--surface);
+       box-shadow: 1px 0 0 var(--border); z-index: 1; }
+  th:first-child { background: var(--neutral); }
+  th.sortable { cursor: pointer; }
+  th.sel, td.sel { background: #eff6ff; font-weight: 700; }
+  .lbl { font-weight: 700; }
+  .pair { color: var(--muted); font-size: 11px; display: block; font-weight: 400; }
+  .pos { color: var(--green); } .neg { color: var(--red); }
+  .na td { color: var(--muted); font-style: italic; }
+  .heat { min-width: 34px; text-align: center; font-size: 11px; border: 1px solid var(--surface); border-radius: 4px; }
+  .heat-tbl td.heatcell { padding: 0; }
+  .heat-tbl td.heatcell div { padding: 6px 4px; border-radius: 4px; margin: 1px; text-align: center; font-size: 11.5px; min-width: 50px; }
+  .flag { font-size: 9px; vertical-align: super; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
+  .q-Leading { background: var(--green-bg); color: var(--green); }
+  .q-Weakening { background: var(--amber-bg); color: var(--amber); }
+  .q-Lagging { background: var(--red-bg); color: var(--red); }
+  .q-Improving { background: #dbeafe; color: #1d4ed8; }
+  .rk-up { color: var(--green); font-weight: 600; } .rk-dn { color: var(--red); font-weight: 600; }
+  .regime { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; }
+  .regime .big { font-size: 20px; font-weight: 800; }
+  .reg-defensive { color: #1d4ed8; } .reg-risk_on { color: var(--green); }
+  .reg-momentum_crash { color: var(--red); } .reg-neutral { color: var(--muted); }
+  .zchips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .zchip { border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; font-size: 12px; }
+  .grid2 { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 14px; }
+  .panel, main { min-width: 0; }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: minmax(0,1fr); } }
+  .chart-box { position: relative; height: 340px; }
+  @media (max-width: 600px) { .chart-box { height: 280px; } header h1 { font-size: 15px; } }
+  .notes { color: var(--muted); font-size: 12px; line-height: 1.6; }
+  .notes li { margin-left: 18px; }
+  .warn { background: var(--amber-bg); color: var(--amber); border-radius: 6px; padding: 6px 10px; margin-bottom: 10px; font-size: 12px; }
+  #tip { position: fixed; pointer-events: none; background: #1e293b; color: #fff; font-size: 12px;
+         padding: 6px 9px; border-radius: 6px; z-index: 50; display: none; max-width: 280px; line-height: 1.45; }
+  .hidden { display: none !important; }
+  .empty { padding: 30px; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Factor &amp; Sector Rotation</h1>
+    <div class="sub">ETF proxies (long ETF − short ETF daily return) — <b>not</b> Bloomberg's true factor returns</div>
+  </div>
+  <div class="spacer"></div>
+  <div class="sub" id="stamp">Loading…</div>
+  <button class="btn btn-primary" id="refresh-btn" onclick="refreshData()">↻ Refresh data</button>
+  <a class="btn btn-ghost" href="/" target="_top" id="dash-link">← Dashboard</a>
+</header>
+
+<main>
+  <div id="warn" class="warn hidden"></div>
+
+  <section class="panel" id="regime-panel"><div class="empty">Loading…</div></section>
+
+  <div class="toolbar">
+    <label>View</label>
+    <div class="seg-group" id="view-seg">
+      <button class="seg-btn active" data-v="daily">Daily</button>
+      <button class="seg-btn" data-v="weekly">Weekly</button>
+      <button class="seg-btn" data-v="monthly">Monthly</button>
+    </div>
+  </div>
+
+  <!-- DAILY -->
+  <div id="view-daily">
+    <section class="panel">
+      <h2>Factor monitor</h2>
+      <div class="hint">Long-short spread returns, sorted by the selected period. z = today's spread vs the previous <span class="zwin">60</span> days. Rank = 1D rank; ▲/▼ = places moved vs yesterday / 5 days ago. Heatmap = last 10 trading days (oldest → newest).</div>
+      <div class="toolbar">
+        <label>Sort by</label>
+        <div class="seg-group" id="period-seg">
+          <button class="seg-btn active" data-p="1D">1D</button><button class="seg-btn" data-p="5D">5D</button>
+          <button class="seg-btn" data-p="1M">1M</button><button class="seg-btn" data-p="3M">3M</button>
+          <button class="seg-btn" data-p="MTD">MTD</button><button class="seg-btn" data-p="YTD">YTD</button>
+        </div>
+      </div>
+      <div class="tbl-wrap"><table id="factor-tbl"></table></div>
+    </section>
+
+    <section class="panel">
+      <h2>Sector rotation <span class="sub" style="font-weight:400;color:var(--muted)">(SPDR sector ETF vs SPY)</span></h2>
+      <div class="hint">Relative return = sector − SPY daily return, compounded. RS-Ratio = 100 × (sector/SPY) ÷ its 63-day average; RS-Momentum = 100 × RS-Ratio ÷ RS-Ratio 10 days ago. Quadrants split at 100 (an approximation of the JdK Relative Rotation Graph).</div>
+      <div class="tbl-wrap"><table id="sector-tbl"></table></div>
+    </section>
+
+    <div class="grid2">
+      <section class="panel">
+        <h2>Cumulative spread</h2>
+        <div class="toolbar">
+          <div class="seg-group" id="kind-seg">
+            <button class="seg-btn active" data-k="factor">Factors</button><button class="seg-btn" data-k="sector">Sectors</button>
+          </div>
+          <div class="seg-group" id="range-seg">
+            <button class="seg-btn" data-r="1M">1M</button><button class="seg-btn active" data-r="3M">3M</button>
+            <button class="seg-btn" data-r="6M">6M</button><button class="seg-btn" data-r="1Y">1Y</button>
+          </div>
+        </div>
+        <div class="hint">Compounded daily spread, rebased to 0 at the start of the range. Click a legend item to hide/show it.</div>
+        <div class="chart-box"><canvas id="cum-chart"></canvas></div>
+      </section>
+      <section class="panel">
+        <h2>Relative Rotation Graph — sectors</h2>
+        <div class="hint">Dot = today, tail = last 10 trading days. Top-right Leading, bottom-right Weakening, bottom-left Lagging, top-left Improving.</div>
+        <div class="chart-box"><canvas id="rrg-chart"></canvas></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- WEEKLY / MONTHLY -->
+  <div id="view-cal" class="hidden">
+    <section class="panel">
+      <h2 id="cal-title">Monthly heatmap</h2>
+      <div class="hint" id="cal-hint"></div>
+      <h3 style="font-size:13px;margin:6px 0">Factors</h3>
+      <div class="tbl-wrap"><table class="heat-tbl" id="cal-factors"></table></div>
+      <h3 style="font-size:13px;margin:16px 0 6px">Sectors vs SPY</h3>
+      <div class="tbl-wrap"><table class="heat-tbl" id="cal-sectors"></table></div>
+    </section>
+  </div>
+
+  <section class="panel">
+    <h2>Regime history</h2>
+    <div class="hint" id="reg-hint"></div>
+    <div class="tbl-wrap" style="max-height:420px;overflow-y:auto"><table id="reg-tbl"></table></div>
+  </section>
+
+  <section class="panel notes">
+    <h2 style="color:var(--text)">About these numbers</h2>
+    <ul id="notes-list">
+      <li>Every factor is an <b>ETF proxy</b>: long ETF daily return minus short/benchmark ETF daily return, compounded (daily rebalanced). Long-only smart-beta ETFs overlap heavily with SPY, so spreads are much smaller and noisier than true long-short factor portfolios.</li>
+      <li>Adjusted closes from Yahoo Finance (dividends reinvested). Yahoo re-adjusts history after each distribution; the refresh re-downloads a ticker's full history when that moves stored closes by more than 0.3%.</li>
+      <li>No look-ahead: z-scores use only the days before each date; today's bar is ignored until the US close is final (16:20 ET). A day missing for one ETF is folded into the next common day's return.</li>
+    </ul>
+  </section>
+</main>
+<div id="tip"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+// Categorical slots (fixed order, colour follows the series' position in the config).
+// Series 9+ reuse slots 1.. with a dashed line (composite encoding, never a generated hue).
+const SERIES = ['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#008300','#6250d6','#e34948'];
+const S = { sum: null, period: '1D', view: 'daily', kind: 'factor', range: '3M', cal: {}, charts: {} };
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pct = (v, d = 2) => v == null ? '–' : (v >= 0 ? '+' : '') + (v * 100).toFixed(d) + '%';
+const cls = v => v == null ? '' : v > 0 ? 'pos' : v < 0 ? 'neg' : '';
+const api = (u, opt) => fetch(u, opt).then(r => r.json());
+
+// green/red diverging scale with a neutral grey midpoint; value written in every cell
+function heatStyle(v, scale) {
+  if (v == null) return 'background:#f8fafc;color:#94a3b8';
+  const t = Math.min(Math.abs(v) / scale, 1);
+  const mid = [240, 239, 236], pole = v >= 0 ? [21, 128, 61] : [220, 38, 38];
+  const c = mid.map((m, i) => Math.round(m + (pole[i] - m) * t));
+  return `background:rgb(${c});color:${t > 0.55 ? '#fff' : '#1e293b'}`;
+}
+function rankChg(n) {
+  if (n == null) return '<span style="color:#94a3b8">–</span>';
+  if (n === 0) return '<span style="color:#94a3b8">0</span>';
+  return n > 0 ? `<span class="rk-up">▲${n}</span>` : `<span class="rk-dn">▼${-n}</span>`;
+}
+function seriesColor(i) { return { color: SERIES[i % 8], dash: i >= 8 ? [6, 4] : [] }; }
+
+// ---- tooltip for [data-tip] -------------------------------------------------------
+const tip = document.getElementById('tip');
+document.addEventListener('mouseover', e => {
+  const el = e.target.closest('[data-tip]');
+  if (!el) { tip.style.display = 'none'; return; }
+  tip.innerHTML = el.dataset.tip; tip.style.display = 'block';
+});
+document.addEventListener('mousemove', e => {
+  if (tip.style.display !== 'block') return;
+  const x = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8);
+  tip.style.left = x + 'px'; tip.style.top = (e.clientY + 16) + 'px';
+});
+
+// ---- segmented controls -------------------------------------------------------------
+function seg(id, attr, fn) {
+  document.getElementById(id).addEventListener('click', e => {
+    const b = e.target.closest('.seg-btn'); if (!b) return;
+    document.querySelectorAll(`#${id} .seg-btn`).forEach(x => x.classList.toggle('active', x === b));
+    fn(b.dataset[attr]);
+  });
+}
+seg('period-seg', 'p', p => { S.period = p; renderTables(); });
+seg('kind-seg', 'k', k => { S.kind = k; loadChart(); });
+seg('range-seg', 'r', r => { S.range = r; loadChart(); });
+seg('view-seg', 'v', v => {
+  S.view = v;
+  document.getElementById('view-daily').classList.toggle('hidden', v !== 'daily');
+  document.getElementById('view-cal').classList.toggle('hidden', v === 'daily');
+  if (v !== 'daily') loadCalendar(v);
+  history.replaceState(null, '', v === 'daily' ? location.pathname : '#' + v);
+});
+
+// ---- summary --------------------------------------------------------------------------
+async function loadSummary() {
+  const s = await api('/api/rotation/summary');
+  S.sum = s;
+  if (!s.as_of) {
+    document.getElementById('regime-panel').innerHTML =
+      '<div class="empty">No rotation data yet — press <b>Refresh data</b> (first run downloads ~2 years for 23 ETFs, about 10 s).</div>';
+    document.getElementById('stamp').textContent = 'No data';
+    return false;
+  }
+  const lr = s.meta.last_refresh ? s.meta.last_refresh.replace('T', ' ') : '–';
+  document.getElementById('stamp').innerHTML = `Latest trading day <b>${esc(s.as_of)}</b> · data last updated ${esc(lr)}`;
+  document.querySelectorAll('.zwin').forEach(e => e.textContent = s.zscore_window);
+  const failed = s.meta.failed || {};
+  const fk = Object.keys(failed);
+  const stale = [...s.factors, ...s.sectors].filter(r => r.stale).map(r => r.label);
+  const w = document.getElementById('warn');
+  const msgs = [];
+  if (fk.length) msgs.push('Last download failed for ' + fk.map(t => `${esc(t)} (last good ${esc(failed[t] || 'never')})`).join(', ') + '.');
+  if (stale.length) msgs.push('Not updated to the latest day: ' + stale.map(esc).join(', ') + '.');
+  w.innerHTML = msgs.join(' '); w.classList.toggle('hidden', !msgs.length);
+  renderRegime(); renderTables(); renderRRG();
+  return true;
+}
+
+function renderRegime() {
+  const s = S.sum, L = s.regime_labels, r = s.regime || {}, ls = s.last_signal;
+  const z = r.detail || {};
+  const zname = { low_vol: 'Low Vol', value: 'Value', growth: 'Growth', momentum: 'Momentum' };
+  const todayZ = {};
+  s.factors.forEach(f => todayZ[f.id] = f.z);
+  const chips = Object.keys(zname).map(k => {
+    const v = todayZ[k];
+    return `<span class="zchip">${zname[k]} z <b class="${cls(v)}">${v == null ? '–' : (v > 0 ? '+' : '') + v.toFixed(2)}</b></span>`;
+  }).join('');
+  document.getElementById('regime-panel').innerHTML = `
+    <div class="regime">
+      <div><div class="sub" style="color:var(--muted);font-size:12px">Current regime</div>
+        <div class="big reg-${esc(r.regime)}">${esc(L[r.regime] || '–')}</div>
+        <div style="font-size:12px;color:var(--muted)">since ${esc(r.start_date || '–')} (${r.days || 0} trading day${r.days === 1 ? '' : 's'})</div></div>
+      <div><div style="font-size:12px;color:var(--muted);margin-bottom:4px">Today's z-scores (${esc(s.regime_config.basis)} spread vs prior ${s.zscore_window} days)</div>
+        <div class="zchips">${chips}</div></div>
+      <div style="font-size:12px;color:var(--muted)">Last non-neutral signal:<br>
+        <b class="reg-${esc(ls?.regime)}">${esc(ls ? L[ls.regime] : 'none')}</b> ${ls ? esc(ls.start_date) + (ls.end_date ? ' → ' + esc(ls.end_date) : ' (ongoing)') : ''}</div>
+    </div>`;
+  const rules = s.regime_config.rules.map(([name, conds]) =>
+    `<b>${esc(L[name] || name)}</b>: ` + conds.map(([f, op, t]) => `${esc(zname[f] || f)} z ${op} ${t > 0 ? '+' : ''}${t}`).join(', ')).join(' · ');
+  document.getElementById('reg-hint').innerHTML =
+    `Rules (first match wins; thresholds in <code>rotation.py</code> CONFIG["REGIME"]): ${rules}. A new regime must hold ${s.regime_config.min_days} day(s) in a row. Single-day z-scores are noisy, so regimes switch often.`;
+}
+
+function renderTables() {
+  const s = S.sum; if (!s || !s.as_of) return;
+  const P = ['1D', '5D', '1M', '3M', 'MTD', 'YTD'];
+  const sorted = rows => [...rows].sort((a, b) => (b.periods?.[S.period] ?? -9) - (a.periods?.[S.period] ?? -9));
+  const head = (first, extra) => `<tr><th>${first}</th>${P.map(p =>
+      `<th class="sortable ${p === S.period ? 'sel' : ''}" data-sort="${p}">${p}</th>`).join('')}
+      <th>z</th><th>Rank</th><th>vs 1d</th><th>vs 5d</th>${extra}
+      <th style="text-align:center">Last 10 days</th><th>5D cum</th><th>20D cum</th><th>60D cum</th></tr>`;
+  const row = (r, extra) => {
+    if (r.missing) return `<tr class="na"><td><span class="lbl">${esc(r.label)}</span><span class="pair">${esc(r.long)} − ${esc(r.short)}</span></td><td colspan="20" style="text-align:left">no data</td></tr>`;
+    const heat = r.heat.map(([d, v]) => `<span class="heat" style="${heatStyle(v, 0.015)};display:inline-block;padding:3px 2px" data-tip="${esc(d)}<br>${pct(v)}">${v == null ? '–' : (v * 100).toFixed(1)}</span>`).join('');
+    return `<tr><td><span class="lbl">${esc(r.label)}</span><span class="pair">${esc(r.long)} − ${esc(r.short)}${r.stale ? ' · stale ' + esc(r.date) : ''}</span></td>
+      ${P.map(p => `<td class="${cls(r.periods[p])} ${p === S.period ? 'sel' : ''}">${pct(r.periods[p])}</td>`).join('')}
+      <td class="${r.z == null ? '' : Math.abs(r.z) >= 1.5 ? cls(r.z) : ''}" ${r.z != null && Math.abs(r.z) >= 1.5 ? 'style="font-weight:700"' : ''}>${r.z == null ? '–' : (r.z > 0 ? '+' : '') + r.z.toFixed(2)}</td>
+      <td>${r.rank ?? '–'}</td><td>${rankChg(r.rank_chg_1d)}</td><td>${rankChg(r.rank_chg_5d)}</td>${extra(r)}
+      <td style="text-align:center">${heat}</td>
+      ${['5D', '20D', '60D'].map(k => `<td class="${cls(r.cum[k])}">${pct(r.cum[k])}</td>`).join('')}</tr>`;
+  };
+  const una = Object.values(s.unavailable).map(l =>
+    `<tr class="na"><td><span class="lbl">${esc(l)}</span><span class="pair">no free ETF proxy</span></td><td colspan="20" style="text-align:left">not available</td></tr>`).join('');
+  document.getElementById('factor-tbl').innerHTML = head('Factor', '') + sorted(s.factors).map(r => row(r, () => '')).join('') + una;
+  const sx = r => `<td>${r.rs_ratio?.toFixed(1) ?? '–'}</td><td>${r.rs_momentum?.toFixed(1) ?? '–'}</td><td>${r.quadrant ? `<span class="pill q-${r.quadrant}">${r.quadrant}</span>` : '–'}</td>`;
+  document.getElementById('sector-tbl').innerHTML = head('Sector', '<th>RS-Ratio</th><th>RS-Mom</th><th>Quadrant</th>') + sorted(s.sectors).map(r => row(r, sx)).join('');
+  document.querySelectorAll('th[data-sort]').forEach(th => th.onclick = () => {
+    document.querySelector(`#period-seg [data-p="${th.dataset.sort}"]`).click();
+  });
+}
+
+// ---- charts ----------------------------------------------------------------------------
+Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+Chart.defaults.color = '#64748b';
+const GRID = '#e2e8f0';
+
+async function loadChart() {
+  const d = await api(`/api/rotation/series?kind=${S.kind}&range=${S.range}`);
+  const ids = (S.kind === 'factor' ? S.sum.factors : S.sum.sectors).map(r => r.id);
+  const ds = d.series.map(sr => {
+    const { color, dash } = seriesColor(ids.indexOf(sr.id));
+    return { label: sr.label, data: sr.values.map(v => v == null ? null : v * 100), borderColor: color,
+             backgroundColor: color, borderWidth: 2, borderDash: dash, pointRadius: 0, pointHoverRadius: 4,
+             tension: 0.15, spanGaps: true };
+  });
+  S.charts.cum?.destroy();
+  S.charts.cum = new Chart(document.getElementById('cum-chart'), {
+    type: 'line', data: { labels: d.dates, datasets: ds },
+    options: { maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 14, boxHeight: 2, font: { size: 11 } } },
+        tooltip: { itemSort: (a, b) => b.parsed.y - a.parsed.y,
+          callbacks: { label: c => ` ${c.dataset.label}: ${c.parsed.y >= 0 ? '+' : ''}${c.parsed.y.toFixed(2)}%` } } },
+      scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 7, maxRotation: 0 } },
+                y: { grid: { color: GRID }, ticks: { callback: v => v + '%' } } } }
+  });
+}
+
+const rrgLabels = { id: 'rrgLabels', afterDatasetsDraw(chart) {
+  const { ctx } = chart;
+  ctx.save(); ctx.font = '600 11px ' + Chart.defaults.font.family; ctx.fillStyle = '#1e293b';
+  chart.data.datasets.forEach((ds, i) => {
+    if (!chart.isDatasetVisible(i) || !ds.data.length) return;
+    const pt = chart.getDatasetMeta(i).data.at(-1);
+    if (pt) ctx.fillText(ds.label, pt.x + 7, pt.y - 6);
+  });
+  ctx.restore();
+}};
+const rrgQuadrants = { id: 'rrgQuadrants', beforeDatasetsDraw(chart) {
+  const { ctx, chartArea: a, scales: { x, y } } = chart;
+  const cx = x.getPixelForValue(100), cy = y.getPixelForValue(100);
+  const fill = [['rgba(21,128,61,.06)', cx, a.top, a.right, cy, 'Leading', a.right - 6, a.top + 14, 'right'],
+                ['rgba(180,83,9,.06)', cx, cy, a.right, a.bottom, 'Weakening', a.right - 6, a.bottom - 6, 'right'],
+                ['rgba(220,38,38,.06)', a.left, cy, cx, a.bottom, 'Lagging', a.left + 6, a.bottom - 6, 'left'],
+                ['rgba(37,99,235,.06)', a.left, a.top, cx, cy, 'Improving', a.left + 6, a.top + 14, 'left']];
+  ctx.save();
+  fill.forEach(([c, x0, y0, x1, y1, t, tx, ty, al]) => {
+    ctx.fillStyle = c; ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+    ctx.fillStyle = '#94a3b8'; ctx.font = '600 11px ' + Chart.defaults.font.family; ctx.textAlign = al; ctx.fillText(t, tx, ty);
+  });
+  ctx.restore();
+}};
+
+function renderRRG() {
+  const secs = S.sum.sectors.filter(r => r.rrg_tail && r.rrg_tail.length);
+  const all = secs.flatMap(r => r.rrg_tail);
+  const span = (k) => { const v = all.map(p => p[k]); const m = Math.ceil(Math.max(...v.map(x => Math.abs(x - 100)), 1) * 1.15); return [100 - m, 100 + m]; };
+  const [x0, x1] = span(0), [y0, y1] = span(1);
+  const ds = secs.map((r, i) => {
+    const { color, dash } = seriesColor(i);
+    const n = r.rrg_tail.length;
+    return { label: r.long, data: r.rrg_tail.map(([x, y]) => ({ x, y })), showLine: true, borderColor: color,
+             backgroundColor: color, borderWidth: 2, borderDash: dash,
+             pointRadius: r.rrg_tail.map((_, j) => j === n - 1 ? 6 : 2),
+             pointBorderColor: '#fff', pointBorderWidth: r.rrg_tail.map((_, j) => j === n - 1 ? 2 : 0),
+             pointHoverRadius: 7, _name: r.label, _q: r.quadrant };
+  });
+  S.charts.rrg?.destroy();
+  S.charts.rrg = new Chart(document.getElementById('rrg-chart'), {
+    type: 'scatter', data: { datasets: ds }, plugins: [rrgQuadrants, rrgLabels],
+    options: { maintainAspectRatio: false, animation: false,
+      plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
+        tooltip: { callbacks: { label: c => ` ${c.dataset.label} ${c.dataset._name}: RS-Ratio ${c.parsed.x.toFixed(2)}, RS-Mom ${c.parsed.y.toFixed(2)}` +
+            (c.dataIndex === c.dataset.data.length - 1 ? ` (today, ${c.dataset._q})` : ` (${c.dataset.data.length - 1 - c.dataIndex}d ago)`) } } },
+      scales: { x: { min: x0, max: x1, title: { display: true, text: 'RS-Ratio' }, grid: { color: GRID } },
+                y: { min: y0, max: y1, title: { display: true, text: 'RS-Momentum' }, grid: { color: GRID } } } }
+  });
+}
+
+// ---- weekly / monthly heatmaps --------------------------------------------------------------
+async function loadCalendar(freq) {
+  if (!S.cal[freq]) S.cal[freq] = await api('/api/rotation/calendar?freq=' + freq);
+  const c = S.cal[freq], L = S.sum.regime_labels;
+  const monthly = freq === 'monthly';
+  const scale = monthly ? 0.05 : 0.025;
+  document.getElementById('cal-title').textContent = monthly ? 'Monthly heatmap (last 24 calendar months)' : 'Weekly heatmap (last 26 weeks, week ending Friday)';
+  document.getElementById('cal-hint').innerHTML =
+    `Compounded daily spread per ${monthly ? 'calendar month' : 'week'}; newest on the right${c.partial ? `, <b>${esc(c.partial)}</b> is still in progress` : ''}. ` +
+    `Hover a cell for its rank and the change vs the previous ${monthly ? 'month' : 'week'}. ` +
+    `<span class="flag">⚑</span> on a cell = rank moved ≥${S.sum.flag_rule.jump} places or the sign flipped (both ≥${(S.sum.flag_rule[monthly ? "M" : "W"] * 100).toFixed(1).replace(".0", "")}%); ⚑ in the header = the ${monthly ? 'month' : 'week'}'s regime changed. ` +
+    `Header colour = regime held on ≥25% of its days. Rank / change columns = latest ${monthly ? 'month' : 'week'}.`;
+  const fmtKey = k => monthly ? (['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+k.slice(5) - 1] + (k.slice(5) === '01' || k === c.buckets[0] ? " '" + k.slice(2, 4) : '')) : k.slice(5).replace('-', '/');
+  const breg = Object.fromEntries((c.bucket_regime || []).map(b => [b.key, b]));
+  const regColor = { defensive: '#1d4ed8', risk_on: '#15803d', momentum_crash: '#dc2626', neutral: '#94a3b8' };
+  const header = `<tr><th>${''}</th>${c.buckets.map(k => {
+      const b = breg[k] || {};
+      const days = Object.entries(b.days || {}).map(([r, n]) => `${esc(L[r] || r)}: ${n}d`).join('<br>');
+      return `<th style="text-align:center;border-bottom:3px solid ${regColor[b.regime] || 'transparent'}" data-tip="${esc(k)}<br><b>${esc(L[b.regime] || '–')}</b><br>${days}">${esc(fmtKey(k))}${k === c.partial ? '*' : ''}${b.changed ? '<span class="flag">⚑</span>' : ''}</th>`;
+    }).join('')}<th>MTD</th><th>YTD</th><th>Rank</th><th>vs prev</th></tr>`;
+  const body = rows => rows.map(r => {
+    const last = r.cells.at(-1) || {};
+    return `<tr><td><span class="lbl">${esc(r.label)}</span><span class="pair">${esc(r.long)} − ${esc(r.short)}</span></td>` +
+      r.cells.map((x, i) => `<td class="heatcell"><div style="${heatStyle(x.v, scale)}" data-tip="${esc(r.label)} · ${esc(c.buckets[i])}<br>${pct(x.v)}<br>rank ${x.rank ?? '–'}${x.rank_chg != null ? ` (${x.rank_chg > 0 ? '▲' + x.rank_chg : x.rank_chg < 0 ? '▼' + (-x.rank_chg) : '='})` : ''}">${x.v == null ? '–' : (x.v * 100).toFixed(1)}${x.flag ? '<span class="flag">⚑</span>' : ''}</div></td>`).join('') +
+      `<td class="${cls(r.MTD)}">${pct(r.MTD, 1)}</td><td class="${cls(r.YTD)}">${pct(r.YTD, 1)}</td><td>${last.rank ?? '–'}</td><td>${rankChg(last.rank_chg)}</td></tr>`;
+  }).join('');
+  document.getElementById('cal-factors').innerHTML = header + body(c.factors);
+  document.getElementById('cal-sectors').innerHTML = header + body(c.sectors);
+}
+
+// ---- regime history ----------------------------------------------------------------------
+async function loadRegimes() {
+  const d = await api('/api/rotation/regimes'), L = d.labels;
+  const hideNeutral = true;
+  const rows = d.history.filter(r => !(hideNeutral && r.regime === 'neutral' && r.end_date));
+  document.getElementById('reg-tbl').innerHTML =
+    `<tr><th>Regime</th><th>Start</th><th>End</th><th>Days</th><th style="text-align:left">z-scores on start day</th></tr>` +
+    (rows.map(r => `<tr><td><b class="reg-${esc(r.regime)}">${esc(L[r.regime] || r.regime)}</b></td><td>${esc(r.start_date)}</td>
+      <td>${r.end_date ? esc(r.end_date) : '<b>current</b>'}</td><td>${r.days ?? ''}</td>
+      <td style="text-align:left;font-size:12px">${Object.entries(r.detail || {}).map(([k, v]) => `${esc(k)} <span class="${cls(v)}">${v > 0 ? '+' : ''}${v}</span>`).join(' · ')}</td></tr>`).join('')
+      || '<tr><td colspan="5">No regime changes yet.</td></tr>') +
+    `<tr><td colspan="5" style="text-align:left;color:var(--muted);font-size:11.5px">${d.history.length} episodes in total; past Neutral stretches are hidden.</td></tr>`;
+}
+
+// ---- refresh ----------------------------------------------------------------------------
+async function refreshData() {
+  const b = document.getElementById('refresh-btn');
+  b.disabled = true; b.textContent = 'Refreshing…';
+  let msg = '';
+  try {
+    const r = await api('/api/rotation/refresh', { method: 'POST' });
+    if (r.status === 'error') msg = 'Refresh failed: ' + r.error;
+    else if (r.status === 'busy') msg = 'A refresh is already running.';
+  } catch (e) { msg = 'Refresh failed: ' + e; }
+  S.cal = {};
+  await init();
+  if (msg) alertBox(msg);
+  b.disabled = false; b.textContent = '↻ Refresh data';
+}
+function alertBox(msg) { const w = document.getElementById('warn'); w.textContent = msg; w.classList.remove('hidden'); }
+
+async function init() {
+  if (!(await loadSummary())) return;
+  await Promise.all([loadChart(), loadRegimes()]);
+  if (S.view !== 'daily') loadCalendar(S.view);
+  const ext = S.sum.extensions || {};
+  const li = document.getElementById('ext-li') || Object.assign(document.createElement('li'), { id: 'ext-li' });
+  li.innerHTML = 'Not available (no free proxy): ' + Object.values(S.sum.unavailable).map(esc).join(', ') +
+    '. Planned data sources (not built yet): ' + Object.values(ext).map(e => esc(e.label)).join('; ') + '.';
+  document.getElementById('notes-list').appendChild(li);
+}
+if (window.top !== window.self) document.getElementById('dash-link').style.display = 'none';  // embedded in the dashboard tab
+init().then(() => {
+  const v = location.hash.slice(1);
+  if (['weekly', 'monthly'].includes(v)) document.querySelector(`#view-seg [data-v="${v}"]`).click();
+});
+</script>
+</body>
+</html>

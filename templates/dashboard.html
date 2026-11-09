@@ -368,6 +368,7 @@
   <span class="subtitle">Yahoo Finance · SQLite</span>
   <span id="last-updated"></span>
   <a href="/report" target="_blank" class="btn btn-primary" style="text-decoration:none" title="Tonight's 10 stock ideas (generated after the US close)">&#128240; Morning Brief</a>
+  <a href="/rotation" target="_blank" class="btn btn-primary" style="text-decoration:none" title="Factor &amp; sector rotation monitor (ETF proxies)">&#128260; Rotation</a>
   <button class="btn btn-fetch"   onclick="openFetchModal()">&#8659; Fetch US Data</button>
   <button class="btn btn-primary" onclick="refreshCurrent()">&#8635; Refresh</button>
   <a href="/api/backup/download" download>
@@ -395,6 +396,7 @@
   <button class="tab-btn"        onclick="showTab('surge')">Surge Strategy<span id="surge-badge" style="margin-left:5px;color:var(--green);font-weight:700"></span></button>
   <button class="tab-btn"        onclick="showTab('hk')">HK Surge<span id="hk-badge" style="margin-left:5px;color:var(--green);font-weight:700"></span></button>
   <button class="tab-btn"        onclick="showTab('weekly')">Weekly / Daily</button>
+  <button class="tab-btn"        onclick="showTab('rotation')">Rotation</button>
 </nav>
 
 <!-- ════════════ MAIN ════════════ -->
@@ -1584,6 +1586,7 @@
         <input type="checkbox" id="dv-tracked-only" onchange="_dvFilter()"> Tracked only
       </label>
       <span id="dv-count" style="font-size:12px;color:var(--muted);align-self:center"></span>
+      <span id="dv-live-note" style="font-size:12px;color:var(--muted);align-self:center"></span>
     </div>
 
     <!-- Trend Template filter panel -->
@@ -1614,6 +1617,8 @@
             <th class="sortable"      data-col="date"        onclick="_dvSort(this)">Date</th>
             <th class="sortable"      data-col="close"       onclick="_dvSort(this)">Close</th>
             <th class="sortable"      data-col="pct_change"  onclick="_dvSort(this)">Day&nbsp;%</th>
+            <th class="sortable"      data-col="live_price"  onclick="_dvSort(this)" title="Latest price from the hourly intraday monitor (Yahoo quote, ~15 min delayed). Shown only when it is newer than the stored close; display only — the daily data and scans update after the close (Nightly Scan 23:15).">Live</th>
+            <th class="sortable"      data-col="live_pct"    onclick="_dvSort(this)" title="Live price vs the previous close">Live&nbsp;%</th>
             <th class="sortable"      data-col="volume"      onclick="_dvSort(this)">Volume</th>
             <th class="sortable"      data-col="ma10"        onclick="_dvSort(this)">MA10</th>
             <th class="sortable"      data-col="ma30"        onclick="_dvSort(this)">MA30</th>
@@ -1635,7 +1640,7 @@
           </tr>
         </thead>
         <tbody id="dv-body">
-          <tr><td colspan="22" class="state-msg">Click Refresh to load data.</td></tr>
+          <tr><td colspan="24" class="state-msg">Click Refresh to load data.</td></tr>
         </tbody>
       </table>
     </div>
@@ -1840,6 +1845,13 @@
       </tr></thead>
       <tbody id="hk-closed-body"></tbody>
     </table></div>
+  </div>
+
+  <!-- ── FACTOR & SECTOR ROTATION (rotation.py) — the /rotation page embedded ── -->
+  <div id="tab-rotation" class="tab-pane">
+    <div style="text-align:right;margin:-4px 0 6px"><a href="/rotation" target="_blank" style="font-size:12px;color:var(--accent)">Open in a new window &#8599;</a></div>
+    <iframe id="rotation-frame" title="Factor &amp; Sector Rotation"
+            style="width:100%;height:calc(100vh - var(--header-h) - var(--tabs-h) - 70px);min-height:500px;border:1px solid var(--border);border-radius:10px;background:#f1f5f9"></iframe>
   </div>
 
   <!-- ── WEEKLY UP/DOWN COUNTER (weekly_stats.py, /api/weekly-stats) ── -->
@@ -2080,7 +2092,7 @@ let _pollTimer        = null;
 let _lastLogLen       = 0;
 let _fetchRunning     = false;
 
-const TABS = ['holdings', 'signals', 'sold', 'monitor', 'patterns', 'tickers', 'backtester', 'insider', 'congress', 'market', 'dataview', 'surge', 'hk', 'weekly'];
+const TABS = ['holdings', 'signals', 'sold', 'monitor', 'patterns', 'tickers', 'backtester', 'insider', 'congress', 'market', 'dataview', 'surge', 'hk', 'weekly', 'rotation'];
 
 // ═══════════════════════════════════════
 //  Formatting
@@ -2830,7 +2842,7 @@ function showTab(name) {
   ({holdings: loadHoldings, signals: loadSignals, sold: loadSold,
     monitor: loadMonitor, patterns: loadPatterns, tickers: loadTickerList,
     backtester: loadBacktester, insider: loadInsider, congress: loadCongress,
-    market: loadMarket, dataview: loadDataView, surge: loadSurge, hk: loadHkSurge, weekly: loadWeekly})[name]();
+    market: loadMarket, dataview: loadDataView, surge: loadSurge, hk: loadHkSurge, weekly: loadWeekly, rotation: loadRotation})[name]();
 }
 
 // ═══════════════════════════════════════
@@ -3368,7 +3380,7 @@ function renderSignals(rows) {
       <td class="left ticker-cell">${r.ticker}${_actBadges(r.ticker)}</td>
       ${sigCell}
       ${trackedCell}
-      <td>${fmtDate(r.signal_date)}</td><td>$${fmt(r.signal_close)}</td>
+      <td>${fmtDate(r.signal_date)}${_formingTag(r.signal_date)}</td><td>$${fmt(r.signal_close)}</td>
       <td>${fmtVal(r.day_low, '$')}</td>
       <td>${fmtVal(r.day_high, '$')}</td>
       <td>${rsiCell(r.rsi14)}</td>
@@ -4474,7 +4486,7 @@ async function _loadScanDates() {
     (data.dates || []).forEach(d => {
       const o = document.createElement('option');
       o.value = d.scan_date;
-      o.textContent = `${d.scan_date}  (${d.count} hits)`;
+      o.textContent = `${d.scan_date}  (${d.count} hits)${_isFormingDate(d.scan_date) ? '  - intraday, updates hourly' : ''}`;
       sel.appendChild(o);
     });
   } catch {}
@@ -4965,7 +4977,7 @@ function _renderPatternRows(rows) {
       : '—';
     return `<tr class="${rowCls}">
       <td class="left ticker-cell">${r.ticker}${_actBadges(r.ticker)}</td>
-      <td class="scan-date-col" style="font-size:11px;color:var(--muted);font-family:monospace">${fmtDate(r.scan_date)}</td>
+      <td class="scan-date-col" style="font-size:11px;color:var(--muted);font-family:monospace">${fmtDate(r.scan_date)}${_formingTag(r.scan_date)}</td>
       <td class="left"><span class="ppill ${pillCls}">${r.pattern_name}</span></td>
       <td class="left" style="color:var(--muted);font-size:11px;white-space:normal;max-width:240px">${r.signal_detail || '—'}</td>
       <td>${fmtDate(r.signal_date)}</td>
@@ -5758,6 +5770,12 @@ function btShowDetail(idx) {
 // ═══════════════════════════════════════
 //  Refresh
 // ═══════════════════════════════════════
+function loadRotation() {
+  const f = document.getElementById('rotation-frame');
+  if (!f.getAttribute('src')) f.src = '/rotation';          // first visit
+  else if (f.contentWindow) f.contentWindow.location.reload(); // Refresh button / revisit
+}
+
 function refreshCurrent() {
   document.getElementById('last-updated').textContent =
     'Updated ' + new Date().toLocaleTimeString();
@@ -5792,6 +5810,9 @@ function renderIntraday() {
   parts.push(m.market_open ? 'market open' : 'market closed');
   if (m.last_run) parts.push(`last pass ${m.last_run.slice(5, 16)} ET (${m.last_reason})`);
   if (m.summary) parts.push(`${m.summary.focus_tickers} focus tickers, ${m.summary.market_quotes} market quotes`);
+  const sb = m.summary && m.summary.bars;
+  if (sb && typeof sb === 'object') parts.push(`today's bar stored for ${sb.stored} tickers (indicators/RS/Trend Template${m.summary.pattern_scan ? `, pattern scan ${m.summary.pattern_scan.hits} hits` : ''}, ${Math.round(sb.seconds + (m.summary.pattern_scan ? m.summary.pattern_scan.seconds : 0))}s)`);
+  else if (sb) parts.push(`today's bars: ${sb}`);
   if (m.next_run) parts.push(`next ≈ ${m.next_run.slice(5).replace('-', '/')} ET`);
   if (m.running) parts.push('<span class="spinner"></span>running…');
   if (m.last_error) parts.push(`<span style="color:var(--red)">${m.last_error}</span>`);
@@ -5838,6 +5859,9 @@ async function pollIntraday(firstLoad = false) {
     const d = await apiFetch('/api/intraday/alerts');
     const lr = d.monitor && d.monitor.last_run;
     _intraApply(d, !firstLoad && lr !== _intraLastRun);
+    if (!firstLoad && lr && lr !== _intraLastRun && currentTab === 'dataview' && _dvInitialised) {
+      _dvLoadLive().then(_dvRender);                 // a new hourly pass -> fresh Live column
+    }
     _intraLastRun = lr || _intraLastRun;
   } catch (e) { /* server busy — next minute */ }
 }
@@ -6103,10 +6127,11 @@ async function loadDataView(force) {
   if (_dvInitialised && !force) {
     await _refreshMonitorSet();
     await _loadScreenerMeta();
+    await _dvLoadLive();
     _dvRender(); // re-render in case monitor set changed (e.g. added from another tab)
     return;
   }
-  loading('dv-body', 22);
+  loading('dv-body', 24);
   document.getElementById('dv-count').textContent = '';
   try {
     const qs = dateEl.value ? `?date=${encodeURIComponent(dateEl.value)}` : '';
@@ -6115,9 +6140,10 @@ async function loadDataView(force) {
     ]);
     _dvData = data;
     _dvInitialised = true;
+    await _dvLoadLive();
     _dvRender();
   } catch(e) {
-    empty('dv-body', 22, 'Error: ' + e.message);
+    empty('dv-body', 24, 'Error: ' + e.message);
   }
 }
 
@@ -6147,7 +6173,7 @@ function _dvRender() {
     ? `${allRows.length} match${allRows.length !== 1 ? '' : 'es'} TT filter`
     : '';
 
-  if (!allRows.length) { empty('dv-body', 22, 'No tickers match.'); return; }
+  if (!allRows.length) { empty('dv-body', 24, 'No tickers match.'); return; }
 
   document.getElementById('dv-body').innerHTML = allRows.map(r => {
     const pct     = r.pct_change;
@@ -6173,9 +6199,11 @@ function _dvRender() {
       : `<button class="del-btn" onclick="dvAddToBacktest('${r.ticker}',${r.close||0},'${r.date||''}',this)">+ Backtest</button>`;
     return `<tr>
       <td class="left ticker-cell">${trackedDot}<strong>${r.ticker}</strong>${_actBadges(r.ticker)}</td>
-      <td>${r.date || '—'}</td>
+      <td>${r.date || '—'}${_formingTag(r.date)}</td>
       <td><strong>${fmt(r.close)}</strong></td>
       <td>${pctCell}</td>
+      <td title="${r.live_time ? r.live_time + ' ET' + (r.live_state && r.live_state !== 'REGULAR' ? ' · ' + r.live_state : '') : 'No live quote newer than the stored close'}">${r.live_price != null ? '<strong>' + fmt(r.live_price) + '</strong>' : '<span class="dim">—</span>'}</td>
+      <td>${r.live_pct != null ? `<span style="color:${r.live_pct >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:600">${r.live_pct >= 0 ? '+' : ''}${r.live_pct.toFixed(2)}%</span>` : '<span class="dim">—</span>'}</td>
       <td style="font-size:12px">${vol(r.volume)}</td>
       <td>${fmt(r.ma10)}</td>
       <td>${fmt(r.ma30)}</td>
@@ -6196,6 +6224,36 @@ function _dvRender() {
       <td><button class="del-btn" onclick="openDvHistory('${r.ticker}')">History</button></td>
     </tr>`;
   }).join('');
+}
+
+// Today's bar is still forming (stored by the hourly monitor) until the 16:20 ET post-close pass.
+function _isFormingDate(d) {
+  if (!d) return false;
+  const now = new Date();
+  const et = now.toLocaleDateString('en-CA', {timeZone: 'America/New_York'});
+  const hm = now.toLocaleTimeString('en-GB', {timeZone: 'America/New_York', hour12: false}).slice(0, 5);
+  return String(d).slice(0, 10) === et && hm < '16:20';
+}
+function _formingTag(d) {
+  return _isFormingDate(d) ? ' <span class="pill" style="background:#fef3c7;color:#b45309;font-size:10px" title="Today&#39;s bar is still forming: close = latest hourly quote (~15 min delayed), volume so far. Final after the US close (16:20 ET pass / Nightly Scan).">intraday</span>' : '';
+}
+
+// Live columns: latest hourly-monitor quote, shown only when newer than the stored close.
+let _dvLive = null;
+async function _dvLoadLive() {
+  try { _dvLive = await apiFetch('/api/live-quotes'); } catch (e) { return; }
+  const q = (_dvLive && _dvLive.quotes) || {}, td = _dvLive && _dvLive.trade_date;
+  let n = 0;
+  _dvData.forEach(r => {
+    const x = q[r.ticker];
+    if (x && td && (!r.date || td > r.date)) {
+      r.live_price = x.price; r.live_pct = x.change_pct; r.live_time = x.time; r.live_state = x.state; n++;
+    } else { r.live_price = r.live_pct = r.live_time = r.live_state = null; }
+  });
+  const note = document.getElementById('dv-live-note');
+  if (note) note.textContent = n
+    ? `· Live = hourly quote ${td} ${(_dvLive.updated_at || '').slice(11, 16)} ET (${n} tickers, display only)`
+    : (td ? `· Live: stored data is already up to date (last quotes ${td})` : '');
 }
 
 function _dvFilter() { _dvRender(); }

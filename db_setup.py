@@ -348,6 +348,68 @@ def setup_database():
             );
             CREATE INDEX IF NOT EXISTS idx_intraday_alerts_date ON intraday_alerts(trade_date);
 
+            -- Latest live quote per ticker from the hourly intraday monitor (whole-market
+            -- batch quotes). Display only (Data tab "Live" columns) — never mixed into
+            -- the daily bar tables, which hold closed sessions only.
+            CREATE TABLE IF NOT EXISTS live_quotes (
+                ticker      TEXT PRIMARY KEY,
+                trade_date  TEXT NOT NULL,           -- ET session date of the quote
+                price       REAL,
+                prev_close  REAL,
+                change_pct  REAL,
+                volume      REAL,
+                quote_time  TEXT,                    -- ET 'YYYY-MM-DD HH:MM'
+                market_state TEXT,                   -- Yahoo: PRE / REGULAR / POST / CLOSED
+                updated_at  TEXT
+            );
+
+            -- Factor & Sector Rotation (rotation.py). Raw adjusted closes, stored apart
+            -- from everything computed from them.
+            CREATE TABLE IF NOT EXISTS rotation_prices (
+                ticker      TEXT NOT NULL,
+                date        TEXT NOT NULL,
+                close       REAL NOT NULL,
+                volume      REAL,
+                fetched_at  TEXT,
+                PRIMARY KEY (ticker, date)
+            );
+            -- Computed daily series (rebuilt by rotation.recompute(), no download needed).
+            CREATE TABLE IF NOT EXISTS rotation_series (
+                series_id   TEXT NOT NULL,
+                date        TEXT NOT NULL,
+                kind        TEXT NOT NULL,          -- factor | sector
+                long_ret    REAL,
+                short_ret   REAL,
+                spread      REAL,                   -- long_ret - short_ret
+                zscore      REAL,                   -- vs the 60 days BEFORE date
+                rs_ratio    REAL,
+                rs_momentum REAL,
+                PRIMARY KEY (series_id, date)
+            );
+            CREATE INDEX IF NOT EXISTS idx_rotation_series_date ON rotation_series(date);
+            -- Regime episodes; end_date NULL = current.
+            CREATE TABLE IF NOT EXISTS rotation_regimes (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                regime      TEXT NOT NULL,          -- defensive | risk_on | momentum_crash | neutral
+                start_date  TEXT NOT NULL,
+                end_date    TEXT,
+                days        INTEGER,
+                detail      TEXT,                   -- JSON z-scores on the start day
+                detected_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS rotation_meta (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            );
+            -- Extension point (not used yet): 13F / FINRA short interest / CFTC COT series.
+            CREATE TABLE IF NOT EXISTS rotation_ext_series (
+                source     TEXT NOT NULL,
+                series_id  TEXT NOT NULL,
+                date       TEXT NOT NULL,
+                value      REAL,
+                PRIMARY KEY (source, series_id, date)
+            );
+
             -- One row per nightly_collect.py run (what ran, how it went).
             CREATE TABLE IF NOT EXISTS data_collection_runs (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
