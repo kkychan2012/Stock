@@ -79,6 +79,7 @@ from congress_trades import fetch_congress_trades
 from volume_profile import analyze as analyze_volume_profile, VP_LOOKBACK_DAYS, VP_TOP_N, VP_PIVOT_LOOKBACK_DAYS, VP_PIVOT_WINDOW
 import surge_strategy
 import intraday_monitor
+import rotation
 from weekly_stats import weekly_up_down, rank_volume_ratio, RANK_TOP_N, RANK_MIN_CHANGE_PCT
 
 # Hong Kong Surge Strategy: separate blueprint + database (hk/hk_stocks.db); the US code paths are untouched.
@@ -158,6 +159,8 @@ def _require_auth():
 # ---------------------------------------------------------------------------
 
 _fetch_state = {"running": False, "total": 0, "done": 0, "log": [], "error": None, "mode": None, "summary": None}
+# the hourly intraday monitor stores today's forming bars; it skips that step while a Fetch runs
+intraday_monitor.BAR_STORE_BLOCKER = lambda: _fetch_state["running"]
 _fetch_lock  = threading.Lock()
 
 _scan_state = {
@@ -228,6 +231,46 @@ def morning_brief_list():
             "Arial,sans-serif;max-width:640px;margin:24px auto;padding:0 16px'>"
             "<h2 style='color:#0b2545'>Morning Brief — archive</h2>"
             f"<ul>{items or '<li>No reports yet.</li>'}</ul><p><a href='/'>← dashboard</a></p></body>")
+
+
+# ---------------------------------------------------------------------------
+# Factor & Sector Rotation (rotation.py — ETF proxies, own page at /rotation)
+# ---------------------------------------------------------------------------
+
+@app.get("/rotation")
+def rotation_page():
+    return render_template("rotation.html")
+
+
+@app.get("/api/rotation/summary")
+def rotation_summary():
+    return jsonify(rotation.summary())
+
+
+@app.get("/api/rotation/series")
+def rotation_series():
+    kind = request.args.get("kind", "factor")
+    return jsonify(rotation.cumulative_series("sector" if kind == "sector" else "factor",
+                                              request.args.get("range", "3M")))
+
+
+@app.get("/api/rotation/calendar")
+def rotation_calendar():
+    return jsonify(rotation.calendar("weekly" if request.args.get("freq") == "weekly" else "monthly"))
+
+
+@app.get("/api/rotation/regimes")
+def rotation_regimes():
+    return jsonify(rotation.regime_history())
+
+
+@app.post("/api/rotation/refresh")
+def rotation_refresh():
+    try:
+        res = rotation.refresh()
+    except Exception as exc:
+        return jsonify({"status": "error", "error": f"{type(exc).__name__}: {exc}"}), 500
+    return jsonify(res), (409 if res.get("status") == "busy" else 200)
 
 
 # ---------------------------------------------------------------------------
@@ -1905,6 +1948,9 @@ def start_fetch():
     with _fetch_lock:
         if _fetch_state["running"]:
             return jsonify({"status": "already_running"}), 409
+        if intraday_monitor.STATE.get("running"):
+            return jsonify({"status": "already_running",
+                            "error": "The hourly intraday update is writing prices - try again in a minute."}), 409
 
         body          = request.get_json(silent=True) or {}
         period        = body.get("period", "2y")
@@ -1963,6 +2009,9 @@ def start_us_quick_update():
     with _fetch_lock:
         if _fetch_state["running"]:
             return jsonify({"status": "already_running"}), 409
+        if intraday_monitor.STATE.get("running"):
+            return jsonify({"status": "already_running",
+                            "error": "The hourly intraday update is writing prices - try again in a minute."}), 409
         do_scan = bool((request.get_json(silent=True) or {}).get("scan", True))
         _fetch_state.update({"running": True, "total": 0, "done": 0, "log": [], "error": None,
                              "mode": "quick", "summary": None})
@@ -2782,6 +2831,12 @@ def intraday_alerts():
     """?date=YYYY-MM-DD (default: latest day with alerts) &scope=focus|market"""
     d, rows = intraday_monitor.get_alerts(request.args.get("date") or None, request.args.get("scope") or None)
     return jsonify({"trade_date": d, "alerts": rows, "monitor": intraday_monitor.status()})
+
+
+@app.get("/api/live-quotes")
+def live_quotes():
+    """Latest hourly-monitor quote per ticker (display only — Data tab Live columns)."""
+    return jsonify(intraday_monitor.get_live_quotes())
 
 
 @app.route("/api/intraday/refresh", methods=["POST"])

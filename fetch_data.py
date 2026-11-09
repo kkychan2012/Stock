@@ -540,7 +540,7 @@ def fetch_all(tickers: list[str], period: str = "2y", progress_cb=None, skip_uni
 # Ticker resolution
 # ---------------------------------------------------------------------------
 
-def quick_update(progress_cb=None, days: int = 20, chunk: int = 200) -> dict:
+def quick_update(progress_cb=None, days: int = 20, chunk: int = 200, bars: dict | None = None) -> dict:
     """FAST US update for the Surge Strategy (and everything else that reads recent prices).
 
     Downloads only the last `days` calendar days, in batches of `chunk` tickers, for every tracked
@@ -549,7 +549,12 @@ def quick_update(progress_cb=None, days: int = 20, chunk: int = 200) -> dict:
     for the recent rows only, then refreshes RS Rating, RS Rank and the Trend Template for those
     dates. Same result as the full Fetch for the recent dates, without the per-ticker requests and
     without rewriting two years of rows. Tracked tickers with no stored history are skipped (they
-    need one full Fetch first). Returns a summary dict."""
+    need one full Fetch first). Returns a summary dict.
+
+    bars: optional {ticker: DataFrame[Open, High, Low, Close, Volume] indexed by date} to use
+    INSTEAD of downloading — the hourly intraday monitor passes today's still-forming bar built
+    from Yahoo batch quotes, so indicators / RS / Trend Template / scans see the current price.
+    The next normal quick update (Nightly Scan) re-downloads the day and overwrites that bar."""
     def _emit(msg: str):
         (progress_cb or (lambda m: print(m, flush=True)))(msg)
 
@@ -557,6 +562,8 @@ def quick_update(progress_cb=None, days: int = 20, chunk: int = 200) -> dict:
     t0 = time.time()
     fetched_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     since = (date.today() - timedelta(days=days)).isoformat()
+    if bars:
+        since = min(pd.Timestamp(f.index.min()) for f in bars.values()).strftime("%Y-%m-%d")
     bench = rs_calculator.RS_BENCHMARK
 
     with get_connection() as conn:
@@ -569,12 +576,21 @@ def quick_update(progress_cb=None, days: int = 20, chunk: int = 200) -> dict:
     tracked_set = set(tracked)
     symbols = list(dict.fromkeys(tracked + active + [bench]))
     _emit(f"Quick US update: {len(symbols)} tickers ({len(tracked)} tracked + {len(active)} universe), "
-          f"last {days} days (from {since}); stored data currently runs through {prev_max}")
+          + (f"{len(bars)} intraday quote bars for {since}" if bars is not None else f"last {days} days (from {since})")
+          + f"; stored data currently runs through {prev_max}")
 
     stats = {"tickers": len(symbols), "tracked_updated": 0, "no_history": [], "universe_rows": 0}
     frames = {}
     with get_connection() as conn:
-        for i in range(0, len(symbols), chunk):
+        if bars is not None:                    # quote-built bars: no download
+            part = [t for t in symbols if t in bars]
+            if part:
+                df = pd.concat({t: bars[t] for t in part}, axis=1)
+                stats["universe_rows"] += rs_calculator._upsert_prices_from_download(
+                    conn, df, [t for t in part if t in uni_write], fetched_at)
+                frames = {t: bars[t][["Open", "High", "Low", "Close", "Volume"]] for t in part if t in tracked_set}
+            conn.commit()
+        for i in (range(0, len(symbols), chunk) if bars is None else ()):
             part = symbols[i:i + chunk]
             try:
                 df = yf.download(part, start=since, interval="1d", group_by="ticker",

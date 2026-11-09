@@ -57,6 +57,13 @@ MIN_DOLLAR_VOL = 10e6
 BIG_MOVE_PCT = 5.0
 PACE_HIGH = 1.5           # "on volume"
 PACE_HEAVY = 2.5          # focus-list heavy-volume alert
+# Store today's still-forming daily bar (built from the batch quotes) into stocks_daily /
+# universe_prices on every whole-market pass, recompute indicators / RS / Trend Template for
+# today and re-run the pattern scan for today -> Signals, Pattern Scanner and Data tabs show
+# the current price. The Nightly Scan's normal quick update overwrites the bar with the final one.
+STORE_INTRADAY_BARS = True
+SCAN_PATTERNS_INTRADAY = True
+BAR_STORE_BLOCKER = None  # api_server sets a callable -> True while a Fetch / quick update runs
 MA21_WINDOW = 21
 
 LABELS = {
@@ -141,6 +148,92 @@ def fetch_quotes(symbols):
             errors.append(f"quote batch {i // QUOTE_BATCH + 1}: {type(exc).__name__}: {exc}")
         _time.sleep(0.5)
     return out, errors
+
+
+def _live_rows(quotes):
+    """Batch-quote dicts (already limited to today's session) -> live_quotes rows."""
+    rows = []
+    for t, q in quotes.items():
+        price = q.get("regularMarketPrice")
+        if price is None or not q.get("regularMarketTime"):
+            continue
+        ts = datetime.fromtimestamp(q["regularMarketTime"], NY)
+        rows.append((t, ts.strftime("%Y-%m-%d"), price, q.get("regularMarketPreviousClose"),
+                     q.get("regularMarketChangePercent"), q.get("regularMarketVolume"),
+                     ts.strftime("%Y-%m-%d %H:%M"), q.get("marketState")))
+    return rows
+
+
+def save_live_quotes(conn, rows, stamp):
+    conn.executemany(
+        "INSERT INTO live_quotes (ticker, trade_date, price, prev_close, change_pct, volume, quote_time, "
+        "market_state, updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(ticker) DO UPDATE SET "
+        "trade_date=excluded.trade_date, price=excluded.price, prev_close=excluded.prev_close, "
+        "change_pct=excluded.change_pct, volume=excluded.volume, quote_time=excluded.quote_time, "
+        "market_state=excluded.market_state, updated_at=excluded.updated_at",
+        [r + (stamp,) for r in rows])
+
+
+def get_live_quotes():
+    """{trade_date, updated_at, quotes: {T: {...}}} — the latest session's quotes only."""
+    with get_connection() as conn:
+        last = conn.execute("SELECT MAX(trade_date) FROM live_quotes").fetchone()[0]
+        if not last:
+            return {"trade_date": None, "updated_at": None, "quotes": {}}
+        rows = conn.execute("SELECT * FROM live_quotes WHERE trade_date=?", (last,)).fetchall()
+    return {"trade_date": last, "updated_at": max((r["updated_at"] or "") for r in rows) or None,
+            "quotes": {r["ticker"]: {"price": r["price"], "prev_close": r["prev_close"],
+                                     "change_pct": r["change_pct"], "volume": r["volume"],
+                                     "time": r["quote_time"], "state": r["market_state"]} for r in rows}}
+
+
+def build_intraday_bars(quotes, today):
+    """Batch quotes -> {ticker: one-row DataFrame (today's forming bar)}; incomplete quotes skipped."""
+    import pandas as pd
+    ts, out = pd.Timestamp(today), {}
+    for t, q in quotes.items():
+        o, h, l, c = (q.get(k) for k in ("regularMarketOpen", "regularMarketDayHigh",
+                                         "regularMarketDayLow", "regularMarketPrice"))
+        if None in (o, h, l, c) or min(o, h, l, c) <= 0:
+            continue
+        out[t] = pd.DataFrame({"Open": [float(o)], "High": [float(max(h, o, c))], "Low": [float(min(l, o, c))],
+                               "Close": [float(c)], "Volume": [float(q.get("regularMarketVolume") or 0)]},
+                              index=[ts])
+    return out
+
+
+def store_intraday_bars(quotes, today, summary):
+    """Write today's forming bars + recompute today's indicators/RS/Trend Template, then rescan."""
+    if not STORE_INTRADAY_BARS:
+        return
+    if BAR_STORE_BLOCKER and BAR_STORE_BLOCKER():
+        summary["bars"] = "skipped (a Fetch / quick update is running)"
+        return
+    t0 = _time.time()
+    try:
+        import fetch_data
+        import rs_calculator
+        bars = build_intraday_bars(quotes, today)
+        bq, _ = fetch_quotes([rs_calculator.RS_BENCHMARK])           # RS Line needs the index too
+        bq = {t: q for t, q in bq.items() if q.get("regularMarketTime") and
+              datetime.fromtimestamp(q["regularMarketTime"], NY).strftime("%Y-%m-%d") == today}
+        bars.update(build_intraday_bars(bq, today))
+        if not bars:
+            summary["bars"] = "no complete quotes"
+            return
+        st = fetch_data.quick_update(progress_cb=lambda m: None, bars=bars)
+        summary["bars"] = {"stored": len(bars), "tracked_updated": st.get("tracked_updated"),
+                           "seconds": round(_time.time() - t0, 1)}
+        if SCAN_PATTERNS_INTRADAY:
+            import scan_patterns
+            t1 = _time.time()
+            scan_patterns.scan_all_patterns(today)
+            with get_connection() as conn:
+                n = conn.execute("SELECT COUNT(*) FROM pattern_scan_results WHERE scan_date=?",
+                                 (today,)).fetchone()[0]
+            summary["pattern_scan"] = {"hits": n, "seconds": round(_time.time() - t1, 1)}
+    except Exception as exc:
+        summary["errors"].append(f"intraday bars: {type(exc).__name__}: {exc}")
 
 
 def fetch_bars(tickers):
@@ -353,6 +446,7 @@ def run_pass(now=None, do_focus=True, do_market=True):
             alerts += fa
         summary["focus_alerts"] = len(alerts)
 
+    quotes = {}
     if do_market:
         quotes, errs = fetch_quotes(mkt)
         summary["errors"] += errs
@@ -361,6 +455,7 @@ def run_pass(now=None, do_focus=True, do_market=True):
         quotes = {t: q for t, q in quotes.items()
                   if q.get("regularMarketTime")
                   and datetime.fromtimestamp(q["regularMarketTime"], NY).strftime("%Y-%m-%d") == today}
+        live_rows = _live_rows(quotes)
         ma = market_alerts(quotes, ctx, frac, vol_mult)
         focus_keys = {(x["ticker"], x["alert_type"]) for x in alerts}
         ma = [x for x in ma if (x["ticker"], x["alert_type"]) not in focus_keys]
@@ -374,6 +469,9 @@ def run_pass(now=None, do_focus=True, do_market=True):
                 prices[t] = quotes[t].get("regularMarketPrice")
 
     with get_connection() as conn:
+        if do_market:
+            save_live_quotes(conn, live_rows, stamp)
+            summary["live_quotes"] = len(live_rows)
         _, hits = apply_monitor_ranges(conn, prices, stamp)
         for h in hits:
             alerts.append(_alert(h["ticker"], "range_hit", "focus", h["price"], None, None, h["low"],
@@ -383,6 +481,8 @@ def run_pass(now=None, do_focus=True, do_market=True):
         conn.commit()
     summary["range_hits"] = [h["ticker"] for h in hits]
     summary["alerts"] = len(alerts)
+    if do_market and quotes:
+        store_intraday_bars(quotes, today, summary)
     return summary
 
 

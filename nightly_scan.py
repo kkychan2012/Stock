@@ -9,7 +9,8 @@ UK time, pythonw, start-when-available), independent of the Morning Brief:
      Trend Template refreshed) — so the session that just closed is stored;
   3. Surge strategy scan (surge_signals);
   4. Pattern scan for the latest complete session -> pattern_scan_results +
-     vcp_signals (the Pattern Scanner tab's tables), default thresholds.
+     vcp_signals (the Pattern Scanner tab's tables), default thresholds;
+  5. Factor & Sector Rotation refresh (rotation.refresh(): ~23 ETFs, incremental).
 
 One row per run in data_collection_runs (job 'pattern_scan'). The Morning Brief
 (23:30) waits for this job and skips its own update + scan when it succeeded;
@@ -99,6 +100,15 @@ def run(as_of=None, update=True):
             detail["vcp_detected"] = conn.execute(
                 "SELECT COUNT(*) FROM vcp_signals WHERE scan_date=? AND vcp_detected=1", (as_of,)).fetchone()[0]
         log.info("Pattern scan for %s done: %s hits, %s VCP.", as_of, detail["pattern_hits"], detail["vcp_detected"])
+        if update:
+            try:                                       # Factor & Sector Rotation ETFs (~23 tickers, seconds)
+                import rotation
+                r = rotation.refresh()
+                detail["rotation"] = {k: r.get(k) for k in ("status", "as_of", "failed", "rebackfilled")}
+                log.info("Rotation refresh: %s", detail["rotation"])
+            except Exception as exc:
+                log.exception("rotation refresh failed: %s", exc)
+                detail["rotation_error"] = f"{type(exc).__name__}: {exc}"
     except Exception as exc:
         status = "error"
         detail["error"] = f"{type(exc).__name__}: {exc}"
