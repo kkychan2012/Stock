@@ -410,6 +410,89 @@ def setup_database():
                 PRIMARY KEY (source, series_id, date)
             );
 
+            -- Trade Journal (journal.py): one row per trade idea / position with its
+            -- Pre-Trade Check + Post-Trade Review; executions live in journal_fills
+            -- and P/L / holding days are recomputed from them.
+            CREATE TABLE IF NOT EXISTS journal_trades (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker           TEXT NOT NULL,
+                side             TEXT DEFAULT 'LONG',
+                status           TEXT NOT NULL,      -- cooling|planned|open|closed|reviewed|cancelled
+                created_at       TEXT,
+                planned_date     TEXT,
+                cooldown_until   TEXT,               -- ET; news-driven plans
+                confirmed_at     TEXT,
+                thesis           TEXT,
+                setup_type       TEXT,               -- breakout|pullback|event|other
+                setup_other      TEXT,
+                entry_price      REAL,               -- planned entry
+                shares           REAL,               -- planned shares
+                order_type       TEXT,
+                commission_est   REAL,
+                price_at_check   REAL,
+                day_high         REAL,
+                day_low          REAL,
+                support_price    REAL,
+                support_source   TEXT,               -- prior_low|ma|volume
+                support_note     TEXT,
+                resistance_price REAL,
+                dist_support_pct REAL,               -- (entry - support) / entry * 100
+                support_tested   INTEGER,
+                stab_signs       TEXT,               -- JSON list
+                stop_price       REAL,
+                target_price     REAL,
+                rr_ratio         REAL,
+                position_pct     REAL,
+                max_loss         REAL,
+                max_loss_pct     REAL,
+                capital_at_check REAL,
+                events           TEXT,               -- JSON [{date,type,label}] inside the window
+                earnings_date    TEXT,
+                news_driven      INTEGER,
+                event_developing INTEGER,
+                event_stabilized INTEGER,
+                chasing          INTEGER,            -- self-declared
+                chase_auto       INTEGER,            -- detected
+                chase_reasons    TEXT,
+                accept_no_fill   INTEGER,
+                warnings         TEXT,               -- JSON [{code,msg}] at save time
+                risk_ack         INTEGER DEFAULT 0,
+                pre_check_done   INTEGER DEFAULT 1,  -- 0 = retrospective entry
+                check_snapshot   TEXT,               -- JSON market data at check time
+                followed_plan    INTEGER,
+                error_tags       TEXT,               -- JSON list of codes
+                error_other      TEXT,
+                review_notes     TEXT,
+                lesson           TEXT,
+                reviewed_at      TEXT,
+                net_shares       REAL DEFAULT 0,
+                avg_cost         REAL,
+                realized_pl      REAL,
+                realized_pl_pct  REAL,
+                holding_days     INTEGER,
+                opened_at        TEXT,
+                closed_at        TEXT,
+                notes            TEXT,
+                updated_at       TEXT
+            );
+            CREATE TABLE IF NOT EXISTS journal_fills (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                trade_id    INTEGER NOT NULL REFERENCES journal_trades(id) ON DELETE CASCADE,
+                side        TEXT NOT NULL,           -- BUY | SELL
+                filled_at   TEXT NOT NULL,           -- 'YYYY-MM-DD HH:MM'
+                shares      REAL NOT NULL,
+                price       REAL NOT NULL,
+                commission  REAL DEFAULT 0,
+                order_type  TEXT,
+                note        TEXT,
+                created_at  TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_journal_fills_trade ON journal_fills(trade_id);
+            CREATE TABLE IF NOT EXISTS journal_settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            );
+
             -- One row per nightly_collect.py run (what ran, how it went).
             CREATE TABLE IF NOT EXISTS data_collection_runs (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,

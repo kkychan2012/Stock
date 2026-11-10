@@ -369,6 +369,7 @@
   <span id="last-updated"></span>
   <a href="/report" target="_blank" class="btn btn-primary" style="text-decoration:none" title="Tonight's 10 stock ideas (generated after the US close)">&#128240; Morning Brief</a>
   <a href="/rotation" target="_blank" class="btn btn-primary" style="text-decoration:none" title="Factor &amp; sector rotation monitor (ETF proxies)">&#128260; Rotation</a>
+  <a href="/journal" target="_blank" class="btn btn-primary" style="text-decoration:none" title="Trade journal + mandatory Pre-Trade Check">&#128221; Journal</a>
   <button class="btn btn-fetch"   onclick="openFetchModal()">&#8659; Fetch US Data</button>
   <button class="btn btn-primary" onclick="refreshCurrent()">&#8635; Refresh</button>
   <a href="/api/backup/download" download>
@@ -397,6 +398,7 @@
   <button class="tab-btn"        onclick="showTab('hk')">HK Surge<span id="hk-badge" style="margin-left:5px;color:var(--green);font-weight:700"></span></button>
   <button class="tab-btn"        onclick="showTab('weekly')">Weekly / Daily</button>
   <button class="tab-btn"        onclick="showTab('rotation')">Rotation</button>
+  <button class="tab-btn"        onclick="showTab('journal')">Journal</button>
 </nav>
 
 <!-- ════════════ MAIN ════════════ -->
@@ -1854,6 +1856,13 @@
             style="width:100%;height:calc(100vh - var(--header-h) - var(--tabs-h) - 70px);min-height:500px;border:1px solid var(--border);border-radius:10px;background:#f1f5f9"></iframe>
   </div>
 
+  <!-- ── TRADE JOURNAL (journal.py) — the /journal page embedded ── -->
+  <div id="tab-journal" class="tab-pane">
+    <div style="text-align:right;margin:-4px 0 6px"><a href="/journal" target="_blank" style="font-size:12px;color:var(--accent)">Open in a new window &#8599;</a></div>
+    <iframe id="journal-frame" title="Trade Journal"
+            style="width:100%;height:calc(100vh - var(--header-h) - var(--tabs-h) - 70px);min-height:500px;border:1px solid var(--border);border-radius:10px;background:#f1f5f9"></iframe>
+  </div>
+
   <!-- ── WEEKLY UP/DOWN COUNTER (weekly_stats.py, /api/weekly-stats) ── -->
   <div id="tab-weekly" class="tab-pane">
     <div class="toolbar">
@@ -2092,7 +2101,7 @@ let _pollTimer        = null;
 let _lastLogLen       = 0;
 let _fetchRunning     = false;
 
-const TABS = ['holdings', 'signals', 'sold', 'monitor', 'patterns', 'tickers', 'backtester', 'insider', 'congress', 'market', 'dataview', 'surge', 'hk', 'weekly', 'rotation'];
+const TABS = ['holdings', 'signals', 'sold', 'monitor', 'patterns', 'tickers', 'backtester', 'insider', 'congress', 'market', 'dataview', 'surge', 'hk', 'weekly', 'rotation', 'journal'];
 
 // ═══════════════════════════════════════
 //  Formatting
@@ -2842,7 +2851,7 @@ function showTab(name) {
   ({holdings: loadHoldings, signals: loadSignals, sold: loadSold,
     monitor: loadMonitor, patterns: loadPatterns, tickers: loadTickerList,
     backtester: loadBacktester, insider: loadInsider, congress: loadCongress,
-    market: loadMarket, dataview: loadDataView, surge: loadSurge, hk: loadHkSurge, weekly: loadWeekly, rotation: loadRotation})[name]();
+    market: loadMarket, dataview: loadDataView, surge: loadSurge, hk: loadHkSurge, weekly: loadWeekly, rotation: loadRotation, journal: loadJournal})[name]();
 }
 
 // ═══════════════════════════════════════
@@ -5774,6 +5783,12 @@ function loadRotation() {
   const f = document.getElementById('rotation-frame');
   if (!f.getAttribute('src')) f.src = '/rotation';          // first visit
   else if (f.contentWindow) f.contentWindow.location.reload(); // Refresh button / revisit
+}
+
+function loadJournal() {
+  const f = document.getElementById('journal-frame');
+  if (!f.getAttribute('src')) f.src = '/journal';
+  else if (f.contentWindow) f.contentWindow.location.reload();
 }
 
 function refreshCurrent() {

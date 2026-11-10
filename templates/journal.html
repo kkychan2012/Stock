@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trade Journal</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f1f5f9; --surface: #ffffff; --border: #e2e8f0; --text: #1e293b; --muted: #64748b;
+    --accent: #2563eb; --accent-h: #1d4ed8; --green: #15803d; --green-bg: #dcfce7;
+    --red: #dc2626; --red-bg: #fee2e2; --neutral: #f8fafc; --amber: #b45309; --amber-bg: #fef3c7;
+    --blue-bg: #dbeafe;
+  }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Microsoft JhengHei', sans-serif;
+         font-size: 13px; color: var(--text); background: var(--bg); }
+  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 10px 16px;
+           display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+  header h1 { font-size: 17px; font-weight: 700; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  header .spacer { flex: 1; }
+  main { max-width: 1200px; margin: 0 auto; padding: 14px 16px 60px; min-width: 0; }
+  .btn { padding: 6px 12px; border-radius: 6px; border: none; cursor: pointer; font-size: 12.5px;
+         font-weight: 600; text-decoration: none; display: inline-block; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-h); }
+  .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+  .btn-ghost { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+  .btn-danger { background: var(--surface); color: var(--red); border: 1px solid #fecaca; }
+  .btn-sm { padding: 3px 8px; font-size: 11.5px; }
+  .seg-group { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex-wrap: wrap; }
+  .seg-btn { padding: 7px 14px; background: var(--surface); border: none; border-right: 1px solid var(--border);
+             cursor: pointer; font-size: 13px; color: var(--muted); font-weight: 600; }
+  .seg-btn:last-child { border-right: none; }
+  .seg-btn.active { background: var(--accent); color: #fff; }
+  .badge { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--red);
+           color: #fff; font-size: 11px; margin-left: 4px; text-align: center; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+           padding: 14px; margin-bottom: 12px; min-width: 0; }
+  .panel h2 { font-size: 14px; margin-bottom: 4px; }
+  .hint { color: var(--muted); font-size: 12px; margin-bottom: 8px; line-height: 1.5; }
+  .q { border-left: 4px solid var(--border); }
+  .q.done { border-left-color: var(--green); }
+  .q.bad { border-left-color: var(--red); }
+  .q h3 { font-size: 13.5px; margin-bottom: 8px; }
+  .q h3 .n { display: inline-block; width: 22px; height: 22px; line-height: 22px; text-align: center;
+             border-radius: 50%; background: var(--neutral); border: 1px solid var(--border); font-size: 12px; margin-right: 6px; }
+  .q.done h3 .n { background: var(--green-bg); color: var(--green); border-color: #bbf7d0; }
+  .q.bad h3 .n { background: var(--red-bg); color: var(--red); border-color: #fecaca; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; margin-bottom: 8px; }
+  .fld { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .fld label, .lbl { color: var(--muted); font-size: 11.5px; font-weight: 600; }
+  input[type=text], input[type=number], input[type=date], input[type=datetime-local], select, textarea {
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font: inherit; background: #fff; color: var(--text);
+    max-width: 100%; }
+  input[type=number] { width: 120px; }
+  textarea { width: 100%; resize: vertical; min-height: 54px; }
+  .w-full { width: 100%; }
+  .yn { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .yn button { padding: 5px 14px; border: none; background: #fff; cursor: pointer; font: inherit; color: var(--muted);
+               border-right: 1px solid var(--border); }
+  .yn button:last-child { border-right: none; }
+  .yn button.on { background: var(--accent); color: #fff; font-weight: 600; }
+  .chk { display: inline-flex; align-items: center; gap: 5px; margin-right: 12px; cursor: pointer; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; cursor: pointer; background: #fff;
+          font-size: 12px; }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .chip .d { color: var(--muted); margin-left: 4px; }
+  .calc { background: var(--neutral); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;
+          font-size: 12.5px; display: inline-block; }
+  .calc.red { background: var(--red-bg); border-color: #fecaca; color: var(--red); font-weight: 600; }
+  .calc.ok { background: var(--green-bg); border-color: #bbf7d0; color: var(--green); font-weight: 600; }
+  .ctx { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; margin: 8px 0; }
+  .ctx div { background: var(--neutral); border-radius: 6px; padding: 6px 8px; }
+  .ctx b { display: block; font-size: 14px; font-variant-numeric: tabular-nums; }
+  .ctx span { color: var(--muted); font-size: 11px; }
+  .warnbox { background: var(--red-bg); border: 2px solid var(--red); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+  .warnbox h2 { color: var(--red); font-size: 14px; margin-bottom: 6px; }
+  .warnbox li { color: #991b1b; margin: 3px 0 3px 18px; line-height: 1.45; }
+  .ack { margin-top: 10px; font-weight: 700; color: var(--red); display: flex; gap: 8px; align-items: center; cursor: pointer; }
+  .ack input { width: 18px; height: 18px; }
+  .todo { background: var(--amber-bg); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; color: var(--amber); }
+  .todo li { margin: 2px 0 2px 18px; }
+  .okbox { background: var(--green-bg); color: var(--green); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; font-weight: 600; }
+  .savebar { position: sticky; bottom: 0; background: var(--surface); border-top: 1px solid var(--border);
+             padding: 10px 14px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; border-radius: 10px 10px 0 0;
+             box-shadow: 0 -4px 12px rgba(0,0,0,.05); }
+  .tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th { text-align: left; font-size: 11px; color: var(--muted); font-weight: 600; padding: 6px 8px;
+       border-bottom: 1px solid var(--border); white-space: nowrap; background: var(--neutral); }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; vertical-align: top; }
+  td.num, th.num { text-align: right; }
+  tr.trow { cursor: pointer; }
+  tr.trow:hover td { background: #f8fafc; }
+  tr.sel td { background: #eff6ff; }
+  .pos { color: var(--green); } .neg { color: var(--red); }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
+  .st-cooling { background: var(--amber-bg); color: var(--amber); }
+  .st-planned { background: var(--blue-bg); color: #1d4ed8; }
+  .st-open { background: #e0e7ff; color: #4338ca; }
+  .st-closed { background: var(--red-bg); color: var(--red); }
+  .st-reviewed { background: var(--green-bg); color: var(--green); }
+  .st-cancelled { background: var(--neutral); color: var(--muted); }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 4px; background: var(--red-bg); color: #991b1b; font-size: 11.5px; margin: 1px 2px; }
+  .retro { background: var(--neutral); color: var(--muted); border: 1px dashed var(--border); }
+  .detail { background: #fbfdff; padding: 12px; white-space: normal; }
+  .grid2 { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; }
+  @media (max-width: 860px) { .grid2 { grid-template-columns: minmax(0,1fr); } }
+  .kv { display: grid; grid-template-columns: max-content minmax(0,1fr); gap: 4px 10px; font-size: 12.5px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { word-break: break-word; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }
+  .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .tile .v { font-size: 20px; font-weight: 700; margin-top: 2px; }
+  .tile .s { color: var(--muted); font-size: 11.5px; }
+  .chart-box { position: relative; height: 300px; }
+  .hidden { display: none !important; }
+  .empty { padding: 26px; text-align: center; color: var(--muted); }
+  .msg { padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; }
+  .msg.err { background: var(--red-bg); color: var(--red); }
+  .msg.info { background: var(--blue-bg); color: #1d4ed8; }
+  @media (max-width: 600px) { input[type=number] { width: 100px; } header h1 { font-size: 15px; } }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Trade Journal 交易日誌</h1>
+    <div class="sub">每一筆交易落單前做 Pre-Trade Check，平倉後做 Review</div>
+  </div>
+  <div class="spacer"></div>
+  <div class="seg-group" id="view-seg">
+    <button class="seg-btn active" data-v="check">落單前檢查</button>
+    <button class="seg-btn" data-v="trades">交易紀錄<span id="rev-badge" class="badge hidden"></span></button>
+    <button class="seg-btn" data-v="stats">統計</button>
+    <button class="seg-btn" data-v="settings">Settings</button>
+  </div>
+  <a class="btn btn-ghost" href="/" target="_top" id="dash-link">← Dashboard</a>
+</header>
+
+<main>
+  <div id="global-msg"></div>
+
+  <!-- ═════════════ PRE-TRADE CHECK ═════════════ -->
+  <div id="view-check">
+    <section class="panel">
+      <div class="row">
+        <div class="fld"><label>Ticker</label><input type="text" id="f-ticker" style="width:110px;text-transform:uppercase" placeholder="NVDA"></div>
+        <button class="btn btn-ghost" onclick="loadContext(true)">Load market data</button>
+        <span class="hint" id="ctx-stamp" style="margin:0"></span>
+      </div>
+      <div id="ctx-box"></div>
+    </section>
+
+    <section class="panel q" id="q-entry">
+      <h3><span class="n">$</span>計劃入場</h3>
+      <div class="row">
+        <div class="fld"><label>入場價（計劃 / 掛單價）</label><input type="number" step="0.01" id="f-entry_price"></div>
+        <div class="fld"><label>股數</label><input type="number" step="1" id="f-shares"></div>
+        <div class="fld"><label>訂單類型</label><select id="f-order_type"></select></div>
+        <div class="fld"><label>預計佣金（每邊）</label><input type="number" step="0.01" id="f-commission"></div>
+        <div class="fld"><label>計劃日期</label><input type="date" id="f-planned_date"></div>
+      </div>
+    </section>
+
+    <section class="panel q" data-q="1">
+      <h3><span class="n">1</span>入場理由 — 一句講晒（唔可以只寫「博反彈」）</h3>
+      <textarea id="f-thesis" placeholder="例：回踩 164 前低（52 週低位）出現長下影線，翌日收復前日高位，掛 165 等"></textarea>
+      <div class="row" style="margin-top:8px">
+        <div class="fld"><label>Setup 類型</label><select id="f-setup_type"><option value="">— 揀 —</option></select></div>
+        <div class="fld hidden" id="setup-other-wrap"><label>其他 setup</label><input type="text" id="f-setup_other"></div>
+      </div>
+    </section>
+
+    <section class="panel q" data-q="2">
+      <h3><span class="n">2</span>支持位／阻力位 — 具體價位同來源</h3>
+      <div class="hint">撳下面嘅候選位自動填入（來自圖表數據：前低、均線、成交密集區）</div>
+      <div class="chips" id="sup-chips" style="margin-bottom:8px"></div>
+      <div class="row">
+        <div class="fld"><label>支持位價格</label><input type="number" step="0.01" id="f-support_price"></div>
+        <div class="fld"><label>來源</label><select id="f-support_source"><option value="">— 揀 —</option></select></div>
+        <div class="fld" style="flex:1;min-width:160px"><label>備註（點樣喺圖表上睇到）</label><input type="text" class="w-full" id="f-support_note"></div>
+        <div class="fld"><label>阻力位（可選）</label><input type="number" step="0.01" id="f-resistance_price"></div>
+      </div>
+      <div id="calc-dist" class="calc">入場價離支持位：—</div>
+    </section>
+
+    <section class="panel q" data-q="3">
+      <h3><span class="n">3</span>支持位確認 — 價格有冇測試支持位，並出現企穩跡象？</h3>
+      <div class="row">
+        <div class="fld"><label>有冇測試過支持位？</label><div class="yn" data-f="support_tested"></div></div>
+        <div class="fld"><label>企穩跡象（可多選）</label><div id="stab-box"></div></div>
+      </div>
+      <div id="calc-stab" class="hint" style="margin:0"></div>
+    </section>
+
+    <section class="panel q" data-q="4">
+      <h3><span class="n">4</span>止蝕位 — 跌穿幾多我必須走？</h3>
+      <div class="row">
+        <div class="fld"><label>止蝕位</label><input type="number" step="0.01" id="f-stop_price"></div>
+        <span id="calc-stop" class="calc">—</span>
+      </div>
+    </section>
+
+    <section class="panel q" data-q="5">
+      <h3><span class="n">5</span>目標位同風險回報比（要 ≥ <span class="rrmin">2</span> : 1）</h3>
+      <div class="row">
+        <div class="fld"><label>目標位</label><input type="number" step="0.01" id="f-target_price"></div>
+        <span id="calc-rr" class="calc">風險回報比：—</span>
+      </div>
+    </section>
+
+    <section class="panel q" data-q="6">
+      <h3><span class="n">6</span>倉位大小同最大虧損金額</h3>
+      <div id="calc-size" class="calc">—</div>
+      <div class="hint" style="margin:6px 0 0">總資金：<b id="cap-show">—</b>（喺 Settings 改）。最大虧損 = (入場 − 止蝕) × 股數 + 兩邊佣金</div>
+    </section>
+
+    <section class="panel q" data-q="7">
+      <h3><span class="n">7</span>未來 5 日有冇業績、CPI、FOMC 或其他大事件？</h3>
+      <div class="row">
+        <div class="fld"><label>下次業績日（自動，可改）</label><input type="date" id="f-earnings_date"></div>
+        <div class="fld"><label>其他事件日期</label><input type="date" id="ev-date"></div>
+        <div class="fld" style="min-width:160px"><label>事件</label><input type="text" id="ev-label" placeholder="例：法院判決"></div>
+        <button class="btn btn-ghost" onclick="addOtherEvent()">+ 加事件</button>
+      </div>
+      <div id="ev-list" style="margin-bottom:8px"></div>
+      <label class="chk"><input type="checkbox" id="f-events_checked"> 我已檢查未來 5 日事件日曆</label>
+    </section>
+
+    <section class="panel q" data-q="8">
+      <h3><span class="n">8</span>係咪新聞／事件驅動？</h3>
+      <div class="row">
+        <div class="fld"><label>新聞／事件驅動？</label><div class="yn" data-f="news_driven"></div></div>
+        <div class="fld news-only hidden"><label>事件仲發展緊（調查、訴訟、監管）？</label><div class="yn" data-f="event_developing"></div></div>
+        <div class="fld news-only hidden"><label>價格有冇企穩？</label><div class="yn" data-f="event_stabilized"></div></div>
+      </div>
+    </section>
+
+    <section class="panel q" data-q="9">
+      <h3><span class="n">9</span>我係咪喺追價？（入場價接近當日高位，或者由低位反彈咗好多先入）</h3>
+      <div class="row">
+        <div class="fld"><label>你自己判斷</label><div class="yn" data-f="chasing"></div></div>
+        <div class="fld"><label>當日高位</label><input type="number" step="0.01" id="f-day_high"></div>
+        <div class="fld"><label>當日低位</label><input type="number" step="0.01" id="f-day_low"></div>
+        <span id="calc-chase" class="calc">—</span>
+      </div>
+    </section>
+
+    <section class="panel q" data-q="10">
+      <h3><span class="n">10</span>如果入唔到貨，我接唔接受？（接受先可以落單）</h3>
+      <div class="yn" data-f="accept_no_fill"></div>
+    </section>
+
+    <section class="panel q" data-q="11">
+      <h3><span class="n">11</span>新聞驅動交易強制冷靜 <span class="cool">30</span> 分鐘</h3>
+      <div id="calc-cool" class="hint" style="margin:0">唔係新聞驅動 — 儲存後即可落單。</div>
+    </section>
+
+    <div id="eval-out"></div>
+    <div class="savebar">
+      <button class="btn btn-primary" id="save-btn" onclick="saveTrade()" disabled>儲存計劃</button>
+      <button class="btn btn-ghost" onclick="resetForm()">清空</button>
+      <span id="save-state" class="hint" style="margin:0"></span>
+    </div>
+  </div>
+
+  <!-- ═════════════ TRADES ═════════════ -->
+  <div id="view-trades" class="hidden">
+    <section class="panel">
+      <div class="row">
+        <div class="fld"><label>狀態</label>
+          <select id="tr-filter" onchange="renderTrades()">
+            <option value="">全部</option><option value="active">進行中（冷靜／計劃／持倉）</option>
+            <option value="closed">待檢討</option><option value="reviewed">已檢討</option><option value="cancelled">已取消</option>
+          </select></div>
+      </div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Ticker</th><th>狀態</th><th>日期</th><th class="num">計劃價</th><th class="num">止蝕</th>
+          <th class="num">目標</th><th class="num">R:R</th><th class="num">持有</th><th class="num">已實現盈虧</th>
+          <th class="num">%</th><th class="num">日數</th><th>警告／錯誤</th></tr></thead>
+        <tbody id="tr-body"><tr><td colspan="12" class="empty">Loading…</td></tr></tbody>
+      </table></div>
+    </section>
+    <section class="panel hidden" id="tr-detail"></section>
+  </div>
+
+  <!-- ═════════════ STATS ═════════════ -->
+  <div id="view-stats" class="hidden">
+    <div class="tiles" id="st-tiles"></div>
+    <div class="grid2">
+      <section class="panel">
+        <h2>跟足計劃 vs 冇跟計劃</h2>
+        <div class="tbl-wrap"><table><thead><tr><th></th><th class="num">交易</th><th class="num">勝率</th>
+          <th class="num">總盈虧</th><th class="num">平均</th></tr></thead><tbody id="st-plan"></tbody></table></div>
+      </section>
+      <section class="panel">
+        <h2>錯誤標籤</h2>
+        <div class="hint">一筆交易有幾個標籤，佢嘅虧損會喺每個標籤都計一次</div>
+        <div class="tbl-wrap"><table><thead><tr><th>標籤</th><th class="num">次數</th><th class="num">累計虧損</th>
+          <th class="num">合計盈虧</th></tr></thead><tbody id="st-tags"></tbody></table></div>
+      </section>
+    </div>
+    <section class="panel">
+      <h2>每月盈虧</h2>
+      <div class="hint">柱 = 當月已實現盈虧（按平倉月份），線 = 累計</div>
+      <div class="chart-box"><canvas id="st-chart"></canvas></div>
+      <div class="tbl-wrap" style="margin-top:10px"><table><thead><tr><th>月份</th><th class="num">交易</th>
+        <th class="num">盈虧</th><th class="num">累計</th></tr></thead><tbody id="st-months"></tbody></table></div>
+    </section>
+  </div>
+
+  <!-- ═════════════ SETTINGS ═════════════ -->
+  <div id="view-settings" class="hidden">
+    <section class="panel">
+      <h2>帳戶</h2>
+      <div class="row">
+        <div class="fld"><label>總資金 (USD)</label><input type="number" step="100" id="s-capital"></div>
+        <div class="fld"><label>USD → HKD</label><input type="number" step="0.01" id="s-fx_hkd"></div>
+        <div class="fld"><label>預設佣金（每邊）</label><input type="number" step="0.01" id="s-default_commission"></div>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>宏觀事件日曆（CPI / FOMC / 其他）</h2>
+      <div class="hint">預設日期請對照 bls.gov（CPI）同 federalreserve.gov（FOMC）。業績日每隻股自動由 Yahoo 攞。</div>
+      <div class="tbl-wrap"><table><thead><tr><th>日期</th><th>類型</th><th>名稱</th><th></th></tr></thead>
+        <tbody id="s-events"></tbody></table></div>
+      <div class="row" style="margin-top:8px">
+        <input type="date" id="s-ev-date"><select id="s-ev-type"></select>
+        <input type="text" id="s-ev-label" placeholder="名稱">
+        <button class="btn btn-ghost" onclick="addMacroEvent()">+ 加</button>
+      </div>
+    </section>
+    <button class="btn btn-primary" onclick="saveSettings()">儲存 Settings</button>
+    <span id="s-state" class="hint"></span>
+    <section class="panel" style="margin-top:14px">
+      <h2>規則（journal.py CONFIG）</h2>
+      <div class="hint" id="rules"></div>
+    </section>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+if (window.top !== window.self) document.getElementById('dash-link').style.display = 'none';
+
+let META = null, CTX = null, TRADES = [], OPEN_ID = null, CHART = null;
+const ANS = {};          // yes/no answers: field -> true/false
+let OTHER_EVENTS = [];
+let evalTimer = null, lastEval = null;
+const NUM_FIELDS = ['entry_price','shares','commission','support_price','resistance_price','stop_price','target_price','day_high','day_low'];
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const f2 = v => (v === null || v === undefined || v === '' || isNaN(v)) ? '—' : Number(v).toFixed(2);
+const hkd = v => (v < 0 ? '-HK$' : 'HK$') + Math.abs(Math.round(v)).toLocaleString();
+const money = v => (v === null || v === undefined) ? '—' : (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const cls = v => v > 0 ? 'pos' : v < 0 ? 'neg' : '';
+const STATUS = {cooling: '冷靜中', planned: '已計劃', open: '持倉中', closed: '待檢討', reviewed: '已檢討', cancelled: '已取消'};
+
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  let j = null;
+  try { j = await r.json(); } catch (_e) { j = {error: 'HTTP ' + r.status}; }
+  if (!r.ok) throw Object.assign(new Error(j.error || ('HTTP ' + r.status)), {data: j});
+  return j;
+}
+const post = (url, body) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})});
+
+function flash(text, kind) {
+  const el = $('global-msg');
+  el.innerHTML = `<div class="msg ${kind || 'info'}">${esc(text)}</div>`;
+  clearTimeout(flash.t); flash.t = setTimeout(() => el.innerHTML = '', 6000);
+}
+
+// ───────── views ─────────
+document.querySelectorAll('#view-seg .seg-btn').forEach(b => b.onclick = () => showView(b.dataset.v));
+function showView(v) {
+  document.querySelectorAll('#view-seg .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.v === v));
+  ['check','trades','stats','settings'].forEach(k => $('view-' + k).classList.toggle('hidden', k !== v));
+  if (v === 'trades') loadTrades();
+  if (v === 'stats') loadStats();
+  if (v === 'settings') renderSettings();
+  try { history.replaceState(null, '', v === 'check' ? location.pathname : '#' + v); } catch (_e) {}
+}
+
+// ───────── init ─────────
+async function init() {
+  META = await api('/api/journal/meta');
+  const opt = (sel, obj, keep) => { const s = $(sel); s.innerHTML = (keep ? s.innerHTML : '') + Object.entries(obj).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join(''); };
+  opt('f-setup_type', META.setup_types, true);
+  opt('f-support_source', META.support_sources, true);
+  $('f-order_type').innerHTML = META.order_types.map(o => `<option>${o}</option>`).join('');
+  opt('s-ev-type', META.event_types);
+  $('stab-box').innerHTML = Object.entries(META.stab_signs).map(([k, v]) =>
+    `<label class="chk"><input type="checkbox" class="stab" value="${k}"> ${esc(v)}</label>`).join('');
+  document.querySelectorAll('.yn').forEach(el => {
+    el.innerHTML = '<button data-v="1">是</button><button data-v="0">否</button>';
+    el.querySelectorAll('button').forEach(b => b.onclick = () => setYN(el.dataset.f, b.dataset.v === '1'));
+  });
+  document.querySelectorAll('.rrmin').forEach(e => e.textContent = META.config.RR_MIN);
+  document.querySelectorAll('.cool').forEach(e => e.textContent = META.config.NEWS_COOLDOWN_MIN);
+  resetForm();
+  document.querySelectorAll('#view-check input, #view-check select, #view-check textarea').forEach(el => {
+    el.addEventListener('input', scheduleEval); el.addEventListener('change', scheduleEval);
+  });
+  $('f-ticker').addEventListener('change', () => loadContext(false));
+  $('f-setup_type').addEventListener('change', () => $('setup-other-wrap').classList.toggle('hidden', $('f-setup_type').value !== 'other'));
+  const [h, hid] = location.hash.slice(1).split('/');
+  if (hid) OPEN_ID = Number(hid);
+  if (['trades','stats','settings'].includes(h)) showView(h);
+  refreshBadge();
+}
+
+function setYN(f, v) {
+  ANS[f] = v;
+  document.querySelectorAll(`.yn[data-f="${f}"] button`).forEach(b => b.classList.toggle('on', (b.dataset.v === '1') === v));
+  if (f === 'news_driven') document.querySelectorAll('.news-only').forEach(e => e.classList.toggle('hidden', !v));
+  scheduleEval();
+}
+
+function resetForm() {
+  document.querySelectorAll('#view-check input[type=number], #view-check input[type=text], #view-check textarea, #view-check input[type=date]').forEach(e => e.value = '');
+  document.querySelectorAll('#view-check input[type=checkbox]').forEach(e => e.checked = false);
+  Object.keys(ANS).forEach(k => delete ANS[k]);
+  document.querySelectorAll('.yn button').forEach(b => b.classList.remove('on'));
+  document.querySelectorAll('.news-only').forEach(e => e.classList.add('hidden'));
+  OTHER_EVENTS = []; CTX = null;
+  $('f-planned_date').value = META.today_et;
+  $('f-commission').value = META.settings.default_commission ?? '';
+  $('f-order_type').value = 'Limit';
+  $('ctx-box').innerHTML = ''; $('sup-chips').innerHTML = '<span class="hint">先輸入 ticker</span>'; $('ctx-stamp').textContent = '';
+  $('cap-show').textContent = META.settings.capital ? money(META.settings.capital) : '未設定';
+  renderOtherEvents(); scheduleEval();
+}
+
+// ───────── market context ─────────
+async function loadContext(force) {
+  const t = $('f-ticker').value.trim().toUpperCase();
+  if (!t) return;
+  $('ctx-stamp').textContent = 'Loading ' + t + '…';
+  try {
+    CTX = await api('/api/journal/context?ticker=' + encodeURIComponent(t) + (force ? '&refresh=1' : ''));
+  } catch (e) { $('ctx-stamp').textContent = e.message; return; }
+  if (CTX.error) { $('ctx-stamp').textContent = CTX.error; $('ctx-box').innerHTML = ''; return; }
+  $('ctx-stamp').textContent = `${CTX.source === 'yahoo' ? 'Yahoo (~15 min delayed)' : 'stored data'} · bar ${CTX.bar_date}${CTX.bar_forming ? ' (still forming)' : ''}`;
+  const c = (l, v) => `<div><span>${l}</span><b>${v}</b></div>`;
+  $('ctx-box').innerHTML = '<div class="ctx">' + [
+    c('現價', f2(CTX.price)), c('今日開', f2(CTX.day_open)), c('今日高', f2(CTX.day_high)), c('今日低', f2(CTX.day_low)),
+    c('前收', f2(CTX.prev_close)), c('MA20', f2(CTX.ma20)), c('MA50', f2(CTX.ma50)), c('MA200', f2(CTX.ma200)),
+    c('52 週低', f2(CTX.low_52w)), c('52 週高', f2(CTX.high_52w)), c('下次業績', esc(CTX.earnings_date || '未知'))].join('') + '</div>';
+  $('sup-chips').innerHTML = (CTX.support_candidates || []).map((s, i) =>
+    `<span class="chip" onclick="pickSupport(${i})">${f2(s.price)} · ${esc(s.label)}<span class="d">-${s.dist_pct}%</span></span>`).join('') || '<span class="hint">冇候選位</span>';
+  if (!$('f-entry_price').value) $('f-entry_price').value = f2(CTX.price);
+  if (!$('f-day_high').value) $('f-day_high').value = CTX.day_high ? f2(CTX.day_high) : '';
+  if (!$('f-day_low').value) $('f-day_low').value = CTX.day_low ? f2(CTX.day_low) : '';
+  if (!$('f-earnings_date').value && CTX.earnings_date) $('f-earnings_date').value = CTX.earnings_date;
+  scheduleEval();
+}
+function pickSupport(i) {
+  const s = CTX.support_candidates[i];
+  $('f-support_price').value = s.price; $('f-support_source').value = s.source; $('f-support_note').value = s.label;
+  scheduleEval();
+}
+function addOtherEvent() {
+  const d = $('ev-date').value, l = $('ev-label').value.trim();
+  if (!d) return;
+  OTHER_EVENTS.push({date: d, label: l || '其他事件'}); $('ev-date').value = ''; $('ev-label').value = '';
+  renderOtherEvents(); scheduleEval();
+}
+function renderOtherEvents() {
+  $('ev-list').innerHTML = OTHER_EVENTS.map((e, i) => `<span class="chip">${esc(e.date)} ${esc(e.label)} <a href="#" onclick="OTHER_EVENTS.splice(${i},1);renderOtherEvents();scheduleEval();return false">✕</a></span>`).join(' ');
+}
+
+// ───────── evaluation ─────────
+function collect() {
+  const f = {ticker: $('f-ticker').value.trim().toUpperCase()};
+  NUM_FIELDS.forEach(k => { const v = $('f-' + k).value; f[k] = v === '' ? null : Number(v); });
+  ['thesis','setup_type','setup_other','support_source','support_note','order_type','planned_date','earnings_date'].forEach(k => f[k] = $('f-' + k).value || null);
+  f.stab_signs = [...document.querySelectorAll('.stab:checked')].map(e => e.value);
+  f.events_checked = $('f-events_checked').checked;
+  f.other_events = OTHER_EVENTS;
+  Object.assign(f, ANS);
+  f.risk_ack = !!($('risk-ack') && $('risk-ack').checked);
+  return f;
+}
+function scheduleEval() { clearTimeout(evalTimer); evalTimer = setTimeout(runEval, 300); }
+
+async function runEval() {
+  let r;
+  try { r = await post('/api/journal/evaluate', collect()); } catch (e) { return; }
+  lastEval = r;
+  const C = r.computed, errF = new Set(r.errors.map(e => e.field)), wc = new Set(r.warnings.map(w => w.code));
+  // per-question status
+  const qf = {1: ['thesis','setup_type','setup_other'], 2: ['support_price','support_source'], 3: ['support_tested'],
+              4: ['stop_price'], 5: ['target_price'], 6: ['shares','capital'], 7: ['events_checked'],
+              8: ['news_driven','event_developing','event_stabilized'], 9: ['chasing'], 10: ['accept_no_fill']};
+  const qw = {2: ['far_from_support'], 3: ['knife','support_broken'], 5: ['low_rr'], 6: ['oversized','risk_too_big'],
+              7: [...wc].filter(c => c.startsWith('event_')), 8: ['news_unstable'], 9: ['chasing']};
+  document.querySelectorAll('.q[data-q]').forEach(el => {
+    const n = el.dataset.q, missing = (qf[n] || []).some(x => errF.has(x)), red = (qw[n] || []).some(x => wc.has(x));
+    el.classList.toggle('bad', red); el.classList.toggle('done', !missing && !red && n !== '11');
+  });
+  const setCalc = (id, text, kind) => { const e = $(id); e.textContent = text; e.className = 'calc' + (kind ? ' ' + kind : ''); };
+  setCalc('calc-dist', C.dist_support_pct != null ? `入場價離支持位：${C.dist_support_pct}%（跌 ${C.dist_support_pct}% 先到支持位）` : '入場價離支持位：—',
+          C.dist_support_pct == null ? '' : wc.has('far_from_support') ? 'red' : 'ok');
+  const entry = Number($('f-entry_price').value), stop = Number($('f-stop_price').value);
+  setCalc('calc-stop', entry && stop && stop < entry ? `跌穿 ${f2(stop)} 就走 = 每股 -${f2(entry - stop)}（-${((entry - stop) / entry * 100).toFixed(1)}%）` : '未填止蝕 = 冇計劃', entry && stop && stop < entry ? '' : 'red');
+  setCalc('calc-rr', C.rr != null ? `風險回報比：${C.rr} : 1` : '風險回報比：—', C.rr == null ? '' : wc.has('low_rr') ? 'red' : 'ok');
+  setCalc('calc-size', C.position_value != null ? `倉位 ${money(C.position_value)}${C.position_pct != null ? `（總資金 ${C.position_pct}%）` : ''} · 最大虧損 ${money(C.max_loss)}${C.max_loss_pct != null ? `（${C.max_loss_pct}%）` : ''}` : '—',
+          (wc.has('oversized') || wc.has('risk_too_big')) ? 'red' : C.max_loss_pct != null ? 'ok' : '');
+  const sa = C.support_auto;
+  $('calc-stab').innerHTML = sa ? `自動判斷（最近 ${META.config.SUPPORT_LOOKBACK_BARS} 日）：${sa.tested ? '已測試 ' + sa.test_date : '未測試支持位'}；` +
+    Object.entries(sa.signs).map(([k, d]) => `${META.stab_signs[k]} ${d ? '✓ ' + d : '✗'}`).join('；') +
+    (sa.broken ? '；<b style="color:var(--red)">已跌穿</b>' : '') + ' — 自己對照圖表確認' : '';
+  const ch = C.chase_auto || {};
+  const canChase = $('f-entry_price').value && ($('f-day_high').value || $('f-day_low').value);
+  setCalc('calc-chase', ch.chasing ? '自動判斷：追價 — ' + ch.reasons.join('；') : canChase ? '自動判斷：唔似追價' : '自動判斷：要入場價同當日高低位', ch.chasing ? 'red' : canChase ? 'ok' : '');
+  $('calc-cool').textContent = ANS.news_driven ? `新聞驅動 — 儲存後要等 ${META.config.NEWS_COOLDOWN_MIN} 分鐘先可以確認同記錄買入。` : '唔係新聞驅動 — 儲存後即可落單。';
+  // event list
+  const up = C.events_upcoming || [];
+  const flagged = new Set((C.events_flagged || []).map(e => e.date + e.label));
+  const evHtml = up.length ? up.map(e => `<span class="chip" style="${flagged.has(e.date + e.label) ? 'border-color:var(--red);color:var(--red);font-weight:600' : ''}">${esc(e.date)} ${esc(e.label)} · ${e.tdays === 0 ? '今日' : e.tdays + ' 交易日後'}</span>`).join(' ') : '<span class="hint">未來 15 個交易日冇已知事件</span>';
+  $('ev-list').innerHTML = evHtml + ' ' + OTHER_EVENTS.map((e, i) => `<a href="#" class="hint" onclick="OTHER_EVENTS.splice(${i},1);renderOtherEvents();scheduleEval();return false">✕ ${esc(e.label)}</a>`).join(' ');
+  // warnings + todo
+  const acked = $('risk-ack') && $('risk-ack').checked;
+  let html = '';
+  if (r.warnings.length) {
+    html += `<div class="warnbox"><h2>⚠ 紅色警告（${r.warnings.length}）</h2><ul>${r.warnings.map(w => `<li>${esc(w.msg)}</li>`).join('')}</ul>
+      <label class="ack"><input type="checkbox" id="risk-ack" ${acked ? 'checked' : ''} onchange="scheduleEval()"> 我明白風險</label></div>`;
+  }
+  const todo = r.errors.filter(e => e.field !== 'risk_ack');
+  if (todo.length) html += `<div class="todo"><b>未完成（${todo.length}）— 完成晒先可以儲存</b><ul>${todo.map(e => `<li>${esc(e.msg)}</li>`).join('')}</ul></div>`;
+  else if (!r.errors.length) html += `<div class="okbox">✓ Pre-Trade Check 完成${r.warnings.length ? '（已確認風險）' : ''}</div>`;
+  $('eval-out').innerHTML = html;
+  $('save-btn').disabled = r.errors.length > 0;
+  $('save-state').textContent = todo.length ? `${todo.length} 項未完成` : r.errors.length ? '要剔「我明白風險」' : '';
+}
+
+async function saveTrade() {
+  $('save-btn').disabled = true;
+  try {
+    const r = await post('/api/journal/trades', collect());
+    const t = r.trade;
+    flash(t.status === 'cooling' ? `已儲存 ${t.ticker} — 冷靜期到 ${t.cooldown_until} ET 先可以確認` : `已儲存 ${t.ticker} 計劃 — 成交後喺「交易紀錄」記錄買入`, 'info');
+    resetForm(); OPEN_ID = t.id; showView('trades');
+  } catch (e) {
+    flash(e.message + (e.data && e.data.errors ? '：' + e.data.errors.map(x => x.msg).join('；') : ''), 'err');
+    runEval();
+  }
+}
+
+// ───────── trades ─────────
+async function loadTrades() {
+  try { TRADES = await api('/api/journal/trades'); } catch (e) { $('tr-body').innerHTML = `<tr><td colspan="12" class="empty">${esc(e.message)}</td></tr>`; return; }
+  renderTrades(); refreshBadge(TRADES);
+}
+async function refreshBadge(list) {
+  if (!list) { try { list = await api('/api/journal/trades?status=closed'); } catch (_e) { return; } }
+  const n = list.filter(t => t.status === 'closed').length;
+  $('rev-badge').textContent = n; $('rev-badge').classList.toggle('hidden', !n);
+}
+function renderTrades() {
+  const f = $('tr-filter').value;
+  const rows = TRADES.filter(t => !f || (f === 'active' ? ['cooling','planned','open'].includes(t.status) : t.status === f));
+  if (!rows.length) { $('tr-body').innerHTML = '<tr><td colspan="12" class="empty">冇紀錄 — 喺「落單前檢查」開始第一筆</td></tr>'; $('tr-detail').classList.add('hidden'); return; }
+  $('tr-body').innerHTML = rows.map(t => {
+    const tags = (t.error_tags || []).map(x => `<span class="tag">${esc(META.error_tags[x] || x)}</span>`).join('');
+    const w = (t.warnings || []).length;
+    return `<tr class="trow ${t.id === OPEN_ID ? 'sel' : ''}" onclick="toggleTrade(${t.id})">
+      <td><b>${esc(t.ticker)}</b>${t.pre_check_done ? '' : ' <span class="pill retro" title="Entered after the fact, no Pre-Trade Check">補錄</span>'}</td>
+      <td><span class="pill st-${t.status}">${STATUS[t.status] || t.status}</span></td>
+      <td>${esc((t.opened_at || t.planned_date || '').slice(0, 10))}</td>
+      <td class="num">${f2(t.entry_price)}</td><td class="num">${f2(t.stop_price)}</td><td class="num">${f2(t.target_price)}</td>
+      <td class="num">${t.rr_ratio ?? '—'}</td><td class="num">${t.net_shares ? t.net_shares : '—'}</td>
+      <td class="num ${cls(t.realized_pl)}">${money(t.realized_pl)}</td>
+      <td class="num ${cls(t.realized_pl_pct)}">${t.realized_pl_pct != null ? t.realized_pl_pct + '%' : '—'}</td>
+      <td class="num">${t.holding_days ?? '—'}</td>
+      <td>${w ? `<span class="tag">⚠ ${w}</span>` : ''}${tags}</td></tr>`;
+  }).join('');
+  const open = TRADES.find(t => t.id === OPEN_ID);
+  $('tr-detail').classList.toggle('hidden', !open);
+  $('tr-detail').innerHTML = open ? `<h2 style="margin-bottom:10px">${esc(open.ticker)} <span class="pill st-${open.status}">${STATUS[open.status] || open.status}</span>
+    <a href="#" class="hint" style="float:right" onclick="toggleTrade(${open.id});return false">✕ 收起</a></h2>${tradeDetail(open)}` : '';
+}
+function toggleTrade(id) {
+  OPEN_ID = OPEN_ID === id ? null : id; renderTrades();
+  if (OPEN_ID) $('tr-detail').scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+function yn(v) { return v === 1 || v === true ? '是' : v === 0 || v === false ? '否' : '—'; }
+function tradeDetail(t) {
+  const evs = (t.events || []).map(e => `${esc(e.date)} ${esc(e.label)}`).join('、') || '—';
+  const signs = (t.stab_signs || []).map(s => META.stab_signs[s] || s).join('、') || '冇';
+  const snap = t.check_snapshot || {};
+  const plan = `<dl class="kv">
+    <dt>入場理由</dt><dd>${esc(t.thesis)}</dd>
+    <dt>Setup</dt><dd>${esc(META.setup_types[t.setup_type] || t.setup_type || '—')}${t.setup_other ? ' — ' + esc(t.setup_other) : ''}</dd>
+    <dt>支持位</dt><dd>${f2(t.support_price)}（${esc(META.support_sources[t.support_source] || t.support_source || '—')}${t.support_note ? '：' + esc(t.support_note) : ''}）· 離支持位 ${t.dist_support_pct ?? '—'}%</dd>
+    <dt>阻力位</dt><dd>${f2(t.resistance_price)}</dd>
+    <dt>測試／企穩</dt><dd>測試：${yn(t.support_tested)} · 跡象：${esc(signs)}</dd>
+    <dt>止蝕 / 目標</dt><dd>${f2(t.stop_price)} / ${f2(t.target_price)} · R:R ${t.rr_ratio ?? '—'}</dd>
+    <dt>倉位</dt><dd>${t.shares ?? '—'} 股 @ ${f2(t.entry_price)} · ${t.position_pct ?? '—'}% 資金 · 最大虧損 ${money(t.max_loss)}${t.max_loss_pct != null ? '（' + t.max_loss_pct + '%）' : ''}</dd>
+    <dt>事件</dt><dd>${evs}${t.earnings_date && !(t.events || []).some(e => e.type === 'earnings') ? ' · 下次業績 ' + esc(t.earnings_date) : ''}</dd>
+    <dt>新聞驅動</dt><dd>${yn(t.news_driven)}${t.news_driven ? ` · 發展緊：${yn(t.event_developing)} · 企穩：${yn(t.event_stabilized)}` : ''}</dd>
+    <dt>追價</dt><dd>自己：${yn(t.chasing)} · 自動：${t.chase_auto ? '是 — ' + esc((t.chase_reasons || []).join('；')) : '否'}</dd>
+    <dt>入唔到貨接受</dt><dd>${yn(t.accept_no_fill)}</dd>
+    <dt>當時市況</dt><dd>${snap.price != null ? `價 ${f2(snap.price)} · 高 ${f2(snap.day_high)} · 低 ${f2(snap.day_low)} · 52 週低 ${f2(snap.low_52w)}` : '—'}</dd>
+    <dt>計劃時間</dt><dd>${esc(t.created_at || '')}${t.pre_check_done ? '' : ' · <b>補錄，冇做 Pre-Trade Check</b>'}${t.risk_ack ? ' · 已剔「我明白風險」' : ''}</dd>
+    ${t.notes ? `<dt>備註</dt><dd style="white-space:pre-wrap">${esc(t.notes)}</dd>` : ''}
+  </dl>${(t.warnings || []).length ? `<div class="warnbox" style="margin-top:10px"><h2>儲存時嘅紅色警告</h2><ul>${t.warnings.map(w => `<li>${esc(w.msg)}</li>`).join('')}</ul></div>` : ''}`;
+
+  let actions = '';
+  if (t.status === 'cooling') {
+    const left = cooldownLeft(t.cooldown_until);
+    actions += `<div class="msg info">新聞驅動 — 冷靜期到 ${esc(t.cooldown_until)} ET${left > 0 ? `（仲有約 ${left} 分鐘）` : ''}</div>
+      <button class="btn btn-primary" ${left > 0 ? 'disabled' : ''} onclick="confirmTrade(${t.id})">確認計劃</button> `;
+  }
+  if (['cooling','planned'].includes(t.status)) actions += `<button class="btn btn-ghost" onclick="cancelTrade(${t.id})">取消（入唔到貨／放棄）</button> `;
+  const fills = (t.fills || []).map(f => `<tr><td>${f.side === 'BUY' ? '<b class="pos">買</b>' : '<b class="neg">賣</b>'}</td><td>${esc(f.filled_at)}</td>
+    <td class="num">${f.shares}</td><td class="num">${f2(f.price)}</td><td class="num">${f2(f.commission)}</td><td>${esc(f.order_type || '')}</td>
+    <td><button class="btn btn-danger btn-sm" onclick="delFill(${f.id})">✕</button></td></tr>`).join('');
+  const canBuy = ['planned','open'].includes(t.status), canSell = t.net_shares > 0;
+  const fillForm = (canBuy || canSell) ? `<div class="row" style="margin-top:8px">
+      <div class="fld"><label>方向</label><select id="fl-side-${t.id}">${canBuy ? '<option value="BUY">買入</option>' : ''}${canSell ? '<option value="SELL">賣出</option>' : ''}</select></div>
+      <div class="fld"><label>日期時間</label><input type="datetime-local" id="fl-at-${t.id}" value="${META.now_et.replace(' ', 'T')}"></div>
+      <div class="fld"><label>股數</label><input type="number" id="fl-sh-${t.id}" value="${canSell && !canBuy ? t.net_shares : (t.shares || '')}"></div>
+      <div class="fld"><label>成交價</label><input type="number" step="0.01" id="fl-px-${t.id}"></div>
+      <div class="fld"><label>佣金</label><input type="number" step="0.01" id="fl-cm-${t.id}" value="${META.settings.default_commission ?? ''}"></div>
+      <div class="fld"><label>訂單類型</label><select id="fl-ot-${t.id}">${META.order_types.map(o => `<option ${o === t.order_type ? 'selected' : ''}>${o}</option>`).join('')}</select></div>
+      <button class="btn btn-primary" onclick="addFill(${t.id})">記錄成交</button></div>` : '';
+  const fillBox = `<h2 style="font-size:13.5px;margin:4px 0 6px">成交紀錄</h2>
+    ${fills ? `<div class="tbl-wrap"><table><thead><tr><th>方向</th><th>時間</th><th class="num">股數</th><th class="num">價</th><th class="num">佣金</th><th>類型</th><th></th></tr></thead><tbody>${fills}</tbody></table></div>` : '<div class="hint">未有成交</div>'}
+    ${fillForm}
+    ${t.realized_pl != null ? `<div class="calc ${t.realized_pl < 0 ? 'red' : 'ok'}" style="margin-top:8px">已實現盈虧 ${money(t.realized_pl)}（${t.realized_pl_pct}%${META.settings.fx_hkd ? ' · 約 ' + hkd(t.realized_pl * META.settings.fx_hkd) : ''}）· 持倉 ${t.holding_days} 日</div>` : ''}`;
+
+  let review = '';
+  if (t.status === 'closed') {
+    review = `<div class="panel" style="border:2px solid var(--red);margin-top:10px"><h2>Post-Trade Review（平倉後必填）</h2>
+      <div class="row"><div class="fld"><label>有冇跟足計劃？</label><select id="rv-fp-${t.id}"><option value="">— 揀 —</option><option value="yes">是</option><option value="no">否</option></select></div></div>
+      <div class="lbl" style="margin-bottom:4px">錯誤標籤</div>
+      <div style="margin-bottom:8px">${Object.entries(META.error_tags).map(([k, v]) => `<label class="chk"><input type="checkbox" class="rv-tag-${t.id}" value="${k}"> ${esc(v)}</label>`).join('')}</div>
+      <div class="fld" style="margin-bottom:8px"><label>其他（如有）</label><input type="text" id="rv-oth-${t.id}"></div>
+      <div class="fld" style="margin-bottom:8px"><label>事後檢討</label><textarea id="rv-notes-${t.id}"></textarea></div>
+      <div class="fld" style="margin-bottom:8px"><label>教訓一句話</label><input type="text" class="w-full" id="rv-lesson-${t.id}"></div>
+      <button class="btn btn-primary" onclick="saveReview(${t.id})">儲存檢討</button></div>`;
+  } else if (t.status === 'reviewed') {
+    review = `<div class="panel" style="margin-top:10px"><h2>Post-Trade Review</h2><dl class="kv">
+      <dt>跟足計劃</dt><dd>${yn(t.followed_plan)}</dd>
+      <dt>錯誤標籤</dt><dd>${(t.error_tags || []).map(x => `<span class="tag">${esc(META.error_tags[x] || x)}</span>`).join('') || '—'}${t.error_other ? ' ' + esc(t.error_other) : ''}</dd>
+      <dt>事後檢討</dt><dd style="white-space:pre-wrap">${esc(t.review_notes || '—')}</dd>
+      <dt>教訓</dt><dd><b>${esc(t.lesson || '—')}</b></dd></dl></div>`;
+  }
+  return `<div class="grid2"><div>${plan}</div><div>${actions ? '<div style="margin-bottom:10px">' + actions + '</div>' : ''}${fillBox}${review}
+    <div style="margin-top:12px;text-align:right"><button class="btn btn-danger btn-sm" onclick="delTrade(${t.id})">刪除紀錄</button></div></div></div>`;
+}
+function cooldownLeft(until) {
+  if (!until) return 0;
+  const now = new Date(new Date().toLocaleString('en-US', {timeZone: 'America/New_York'}));
+  const u = new Date(until.replace(' ', 'T'));
+  return Math.ceil((u - now) / 60000);
+}
+async function act(p, okMsg) {
+  try { await p; if (okMsg) flash(okMsg, 'info'); } catch (e) { flash(e.message, 'err'); }
+  META = await api('/api/journal/meta'); loadTrades();
+}
+const confirmTrade = id => act(post(`/api/journal/trades/${id}/confirm`), '已確認 — 成交後記錄買入');
+const cancelTrade = id => act(post(`/api/journal/trades/${id}/cancel`, {reason: '入唔到貨／放棄'}), '已取消 — 入唔到貨都 OK');
+const delFill = id => { if (window.confirm('刪除呢個成交紀錄？')) act(api(`/api/journal/fills/${id}`, {method: 'DELETE'})); };
+const delTrade = id => { if (window.confirm('刪除成筆交易紀錄（包括成交同檢討）？呢個動作冇得還原。')) { OPEN_ID = null; act(api(`/api/journal/trades/${id}`, {method: 'DELETE'})); } };
+function addFill(id) {
+  act(post(`/api/journal/trades/${id}/fills`, {
+    side: $('fl-side-' + id).value, filled_at: $('fl-at-' + id).value.replace('T', ' '),
+    shares: $('fl-sh-' + id).value, price: $('fl-px-' + id).value, commission: $('fl-cm-' + id).value,
+    order_type: $('fl-ot-' + id).value}), '已記錄成交');
+}
+function saveReview(id) {
+  act(post(`/api/journal/trades/${id}/review`, {
+    followed_plan: $('rv-fp-' + id).value || null,
+    error_tags: [...document.querySelectorAll('.rv-tag-' + id + ':checked')].map(e => e.value),
+    error_other: $('rv-oth-' + id).value, review_notes: $('rv-notes-' + id).value, lesson: $('rv-lesson-' + id).value}), '檢討已儲存');
+}
+
+// ───────── stats ─────────
+async function loadStats() {
+  let s;
+  try { s = await api('/api/journal/stats'); } catch (e) { $('st-tiles').innerHTML = esc(e.message); return; }
+  const tile = (l, v, sub, c) => `<div class="tile"><div class="s">${l}</div><div class="v ${c || ''}">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
+  $('st-tiles').innerHTML = [
+    tile('已平倉交易', s.count, s.open_reviews ? `<span class="neg">${s.open_reviews} 筆待檢討</span>` : ''),
+    tile('勝率', s.win_rate != null ? s.win_rate + '%' : '—', `${s.wins} 勝 / ${s.losses} 負`),
+    tile('平均盈利 / 平均虧損', `${money(s.avg_win)} / ${money(s.avg_loss)}`),
+    tile('平均盈虧比', s.payoff_ratio ?? '—', '平均盈利 ÷ |平均虧損|'),
+    tile('每筆期望值', money(s.expectancy), '', cls(s.expectancy)),
+    tile('總已實現盈虧', money(s.total_pl), s.total_pl_hkd != null ? '約 ' + hkd(s.total_pl_hkd) : '', cls(s.total_pl)),
+  ].join('');
+  const pr = (l, g) => `<tr><td>${l}</td><td class="num">${g.count}</td><td class="num">${g.win_rate != null ? g.win_rate + '%' : '—'}</td>
+    <td class="num ${cls(g.total_pl)}">${money(g.total_pl)}</td><td class="num ${cls(g.avg_pl)}">${money(g.avg_pl)}</td></tr>`;
+  $('st-plan').innerHTML = pr('跟足計劃', s.plan.followed) + pr('冇跟計劃', s.plan.not_followed) + (s.plan.not_reviewed.count ? pr('未檢討', s.plan.not_reviewed) : '');
+  $('st-tags').innerHTML = s.tags.map(g => `<tr><td><span class="tag">${esc(g.label)}</span></td><td class="num">${g.count}</td>
+    <td class="num neg">${money(g.loss)}</td><td class="num ${cls(g.total_pl)}">${money(g.total_pl)}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">未有</td></tr>';
+  $('st-months').innerHTML = s.monthly.slice().reverse().map(m => `<tr><td>${m.month}</td><td class="num">${m.count}</td>
+    <td class="num ${cls(m.pl)}">${money(m.pl)}</td><td class="num ${cls(m.cum)}">${money(m.cum)}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">未有</td></tr>';
+  if (CHART) CHART.destroy();
+  if (!window.Chart || !s.monthly.length) return;
+  CHART = new Chart($('st-chart'), {
+    data: {labels: s.monthly.map(m => m.month), datasets: [
+      {type: 'bar', label: '當月盈虧', data: s.monthly.map(m => m.pl), order: 2, maxBarThickness: 36, borderRadius: 4,
+       backgroundColor: s.monthly.map(m => m.pl >= 0 ? '#15803d' : '#dc2626')},
+      {type: 'line', label: '累計', data: s.monthly.map(m => m.cum), order: 1, borderColor: '#2a78d6', backgroundColor: '#2a78d6',
+       borderWidth: 2, pointRadius: 4, tension: 0}]},
+    options: {responsive: true, maintainAspectRatio: false, interaction: {mode: 'index', intersect: false},
+      plugins: {legend: {position: 'top', align: 'end', labels: {boxWidth: 12}},
+                tooltip: {callbacks: {label: c => `${c.dataset.label}: ${money(c.parsed.y)}`}}},
+      scales: {y: {grid: {color: '#e2e8f0'}, ticks: {callback: v => money(v).replace('.00', '')}}, x: {grid: {display: false}}}}
+  });
+}
+
+// ───────── settings ─────────
+let S_EVENTS = [];
+function renderSettings() {
+  const s = META.settings;
+  $('s-capital').value = s.capital ?? ''; $('s-fx_hkd').value = s.fx_hkd ?? ''; $('s-default_commission').value = s.default_commission ?? '';
+  S_EVENTS = (s.macro_events || []).map(e => ({...e}));
+  renderMacro();
+  const c = META.config;
+  $('rules').innerHTML = `紅色警告：冇止蝕（必填）· 風險回報比 &lt; ${c.RR_MIN} · 入場價高過支持位 &gt; ${c.MAX_DIST_SUPPORT_PCT}% ·
+    ${c.EVENT_WINDOW_TDAYS} 個交易日內 CPI／FOMC／其他事件 · ${c.EARNINGS_WINDOW_TDAYS} 個交易日內業績 · 新聞事件未企穩 · 未見企穩（接刀）·
+    追價（離當日高 ≤ ${c.CHASE_NEAR_HIGH_PCT}% 或由當日低反彈 ≥ ${c.CHASE_BOUNCE_PCT}%）· 最大虧損 &gt; 資金 ${c.MAX_RISK_PCT}% · 倉位 &gt; 資金 ${c.MAX_POSITION_PCT}%。
+    支持位測試 = 最近 ${c.SUPPORT_LOOKBACK_BARS} 日最低價喺支持位 ${c.SUPPORT_TEST_PCT}% 以內。新聞驅動冷靜 ${c.NEWS_COOLDOWN_MIN} 分鐘。`;
+}
+function renderMacro() {
+  $('s-events').innerHTML = S_EVENTS.map((e, i) => `<tr><td>${esc(e.date)}</td><td>${esc(META.event_types[e.type] || e.type)}</td><td>${esc(e.label)}</td>
+    <td><button class="btn btn-danger btn-sm" onclick="S_EVENTS.splice(${i},1);renderMacro()">✕</button></td></tr>`).join('') || '<tr><td colspan="4" class="empty">冇</td></tr>';
+}
+function addMacroEvent() {
+  const d = $('s-ev-date').value; if (!d) return;
+  S_EVENTS.push({date: d, type: $('s-ev-type').value, label: $('s-ev-label').value || META.event_types[$('s-ev-type').value]});
+  S_EVENTS.sort((a, b) => a.date.localeCompare(b.date)); $('s-ev-label').value = ''; renderMacro();
+}
+async function saveSettings() {
+  try {
+    await post('/api/journal/settings', {capital: $('s-capital').value, fx_hkd: $('s-fx_hkd').value,
+      default_commission: $('s-default_commission').value, macro_events: S_EVENTS});
+    META = await api('/api/journal/meta'); renderSettings();
+    $('cap-show').textContent = META.settings.capital ? money(META.settings.capital) : '未設定';
+    $('s-state').textContent = '已儲存 ' + new Date().toLocaleTimeString(); scheduleEval();
+  } catch (e) { $('s-state').textContent = e.message; }
+}
+
+init();
+</script>
+</body>
+</html>

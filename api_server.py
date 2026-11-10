@@ -80,6 +80,7 @@ from volume_profile import analyze as analyze_volume_profile, VP_LOOKBACK_DAYS, 
 import surge_strategy
 import intraday_monitor
 import rotation
+import journal
 from weekly_stats import weekly_up_down, rank_volume_ratio, RANK_TOP_N, RANK_MIN_CHANGE_PCT
 
 # Hong Kong Surge Strategy: separate blueprint + database (hk/hk_stocks.db); the US code paths are untouched.
@@ -271,6 +272,107 @@ def rotation_refresh():
     except Exception as exc:
         return jsonify({"status": "error", "error": f"{type(exc).__name__}: {exc}"}), 500
     return jsonify(res), (409 if res.get("status") == "busy" else 200)
+
+
+# ---------------------------------------------------------------------------
+# Trade Journal + Pre-Trade Check (journal.py, own page at /journal)
+# ---------------------------------------------------------------------------
+
+def _journal_call(fn, *args):
+    try:
+        out = fn(*args)
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 409
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(out)
+
+
+@app.get("/journal")
+def journal_page():
+    return render_template("journal.html")
+
+
+@app.get("/api/journal/meta")
+def journal_meta():
+    return jsonify(journal.meta())
+
+
+@app.route("/api/journal/settings", methods=["GET", "POST"])
+def journal_settings():
+    if request.method == "GET":
+        return jsonify(journal.get_settings())
+    return _journal_call(journal.save_settings, request.get_json(silent=True) or {})
+
+
+@app.get("/api/journal/context")
+def journal_context():
+    ctx = journal.get_context(request.args.get("ticker", ""), force=request.args.get("refresh") == "1")
+    return jsonify(ctx)
+
+
+@app.post("/api/journal/evaluate")
+def journal_evaluate():
+    form = request.get_json(silent=True) or {}
+    ctx = journal.get_context(form.get("ticker")) if form.get("ticker") else {}
+    res = journal.evaluate(form, ctx, journal.get_settings())
+    return jsonify(res)
+
+
+@app.get("/api/journal/trades")
+def journal_trades():
+    return jsonify(journal.list_trades(request.args.get("status") or None))
+
+
+@app.post("/api/journal/trades")
+def journal_create():
+    trade, res = journal.create_trade(request.get_json(silent=True) or {})
+    if trade is None:
+        return jsonify({"error": "Pre-Trade Check 未完成", **res}), 400
+    return jsonify({"trade": trade, **res})
+
+
+@app.get("/api/journal/trades/<int:tid>")
+def journal_get(tid):
+    t = journal.get_trade(tid)
+    return (jsonify(t), 200) if t else (jsonify({"error": "trade not found"}), 404)
+
+
+@app.delete("/api/journal/trades/<int:tid>")
+def journal_delete(tid):
+    return jsonify({"deleted": journal.delete_trade(tid)})
+
+
+@app.post("/api/journal/trades/<int:tid>/confirm")
+def journal_confirm(tid):
+    return _journal_call(journal.confirm_trade, tid)
+
+
+@app.post("/api/journal/trades/<int:tid>/cancel")
+def journal_cancel(tid):
+    return _journal_call(journal.cancel_trade, tid, (request.get_json(silent=True) or {}).get("reason"))
+
+
+@app.post("/api/journal/trades/<int:tid>/fills")
+def journal_add_fill(tid):
+    return _journal_call(journal.add_fill, tid, request.get_json(silent=True) or {})
+
+
+@app.delete("/api/journal/fills/<int:fid>")
+def journal_delete_fill(fid):
+    return _journal_call(journal.delete_fill, fid)
+
+
+@app.post("/api/journal/trades/<int:tid>/review")
+def journal_review(tid):
+    return _journal_call(journal.save_review, tid, request.get_json(silent=True) or {})
+
+
+@app.get("/api/journal/stats")
+def journal_stats():
+    return jsonify(journal.stats())
 
 
 # ---------------------------------------------------------------------------
